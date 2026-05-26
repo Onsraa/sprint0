@@ -1,0 +1,57 @@
+[
+  {
+    "name": "Maria R.",
+    "gitlab_username": "maria",
+    "skills_text": "Frontend lead. React, TypeScript, design systems, data visualization, accessibility (WCAG), component architecture, Figma-to-code. Mentors juniors. Ships polished UI fast.",
+    "trust_level": "high",
+    "history": [
+      { "task_type": "frontend:dataviz", "score": 0.93 },
+      { "task_type": "frontend:forms", "score": 0.9 },
+      { "task_type": "frontend:design-system", "score": 0.95 }
+    ]
+  },
+  {
+    "name": "Tomás S.",
+    "gitlab_username": "tomas",
+    "skills_text": "Full-stack. Node, Express, REST + GraphQL APIs, PostgreSQL schema design, React. Strong on data modeling and integrations. Comfortable end-to-end on a feature.",
+    "trust_level": "high",
+    "history": [
+      { "task_type": "backend:api", "score": 0.89 },
+      { "task_type": "db:modeling", "score": 0.86 },
+      { "task_type": "backend:integrations", "score": 0.82 }
+    ]
+  },
+  {
+    "name": "Kira B.",
+    "gitlab_username": "kira",
+    "skills_text": "Backend / infra. Python (FastAPI), Go, PostgreSQL, Redis, Docker, GitLab CI/CD, observability. Owns auth, performance, and deployment. Security-minded.",
+    "trust_level": "high",
+    "history": [
+      { "task_type": "backend:auth", "score": 0.94 },
+      { "task_type": "devops:ci", "score": 0.91 },
+      { "task_type": "backend:performance", "score": 0.88 }
+    ]
+  },
+  {
+    "name": "Alex S.",
+    "gitlab_username": "alex",
+    "skills_text": "Full-stack, mid-level. React, Node, testing (Jest, Playwright), CRUD features, bug fixing. Reliable on well-scoped work; growing on architecture.",
+    "trust_level": "medium",
+    "history": [
+      { "task_type": "frontend:forms", "score": 0.81 },
+      { "task_type": "backend:api", "score": 0.74 },
+      { "task_type": "testing:e2e", "score": 0.8 }
+    ]
+  },
+  {
+    "name": "Juno L.",
+    "gitlab_username": "juno",
+    "skills_text": "Mobile specialist. React Native, Swift, iOS/Android, push notifications, offline sync, app store deploys. Some web frontend (React).",
+    "trust_level": "medium",
+    "history": [
+      { "task_type": "mobile:react-native", "score": 0.85 },
+      { "task_type": "mobile:offline", "score": 0.78 },
+      { "task_type": "frontend:forms", "score": 0.7 }
+    ]
+  }
+]

@@ -1,0 +1,34 @@
+# Secrets / env
+.env
+.env.local
+secrets/
+*.key
+*-sa.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+*.local
+
+# OS / editor
+.DS_Store
+.idea/
+*.log
+
+# Internal docs, planning, Claude/dev files — public repo ships essential code only
+*.md
+docs/
+.mcp.json
+.env.example
+*.gitkeep

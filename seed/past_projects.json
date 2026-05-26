@@ -1,0 +1,138 @@
+[
+  {
+    "name": "zillow-clone-2024",
+    "brief_text": "Real-estate marketplace for a regional brokerage. Buyers browse listings on a map, save favorites, and book viewings. Agents get a CRM to manage leads and update listing status. Needs Stripe for premium agent subscriptions. They sent a 14-page PDF, mostly screenshots of Zillow.",
+    "tech_stack": { "frontend": "Next.js", "backend": "Node + Express", "db": "PostgreSQL + PostGIS", "infra": "Docker + GitLab CI" },
+    "epics": [
+      { "title": "Listings & map", "issues": ["Map view with clustering", "Listing detail page", "Geo search + filters"] },
+      { "title": "Agent CRM", "issues": ["Lead pipeline board", "Listing status workflow", "Agent dashboard"] },
+      { "title": "Billing", "issues": ["Stripe subscriptions", "Plan gating middleware"] }
+    ],
+    "total_estimate_days": 30,
+    "actual_days": 34,
+    "outcome_notes": "Shipped +4d. PostGIS geo-queries took longer than estimated; map clustering at scale was the bottleneck.",
+    "tags": ["maps", "listings", "crm", "payments", "real-estate"]
+  },
+  {
+    "name": "delivery-track-2024",
+    "brief_text": "Last-mile delivery tracking for a courier startup. Live driver location on a map, ETA to customer, proof-of-delivery photo upload, and a dispatcher console to reassign jobs. Realtime is the whole point.",
+    "tech_stack": { "frontend": "React Native", "backend": "Node + WebSockets", "db": "PostgreSQL + PostGIS", "infra": "Docker + GitLab CI" },
+    "epics": [
+      { "title": "Realtime tracking", "issues": ["Driver location stream (WS)", "Customer live ETA", "Map trail rendering"] },
+      { "title": "Proof of delivery", "issues": ["Photo capture + upload", "Signature pad"] },
+      { "title": "Dispatcher console", "issues": ["Job board", "Reassign + reroute"] }
+    ],
+    "total_estimate_days": 26,
+    "actual_days": 25,
+    "outcome_notes": "Shipped on time. Reused a WS gateway pattern from a prior project; realtime was smoother than feared.",
+    "tags": ["maps", "realtime", "logistics", "mobile"]
+  },
+  {
+    "name": "fintech-jr-2024",
+    "brief_text": "Personal-finance app for young adults. Connect a bank via Plaid, auto-categorize transactions, set budgets, and see a spending dashboard. KYC required for the savings feature. Security and compliance are non-negotiable.",
+    "tech_stack": { "frontend": "Next.js", "backend": "FastAPI (Python)", "db": "PostgreSQL", "infra": "Docker + GitLab CI" },
+    "epics": [
+      { "title": "Auth & KYC", "issues": ["JWT auth + refresh", "KYC identity flow", "Audit logging"] },
+      { "title": "Bank sync", "issues": ["Plaid link + webhooks", "Transaction categorizer", "Reconciliation job"] },
+      { "title": "Budgets & dashboard", "issues": ["Budget rules engine", "Spending charts"] }
+    ],
+    "total_estimate_days": 38,
+    "actual_days": 47,
+    "outcome_notes": "Shipped +9d. Plaid webhook edge cases + KYC vendor integration were badly underestimated. Payments/compliance always run long.",
+    "tags": ["auth", "stripe", "plaid", "kyc", "fintech"]
+  },
+  {
+    "name": "ledgerlite-2024",
+    "brief_text": "Lightweight bookkeeping tool for freelancers. Log income/expenses, attach receipts, generate quarterly tax summaries, export CSV. No bank sync needed — manual entry is fine.",
+    "tech_stack": { "frontend": "React", "backend": "FastAPI (Python)", "db": "PostgreSQL", "infra": "Docker" },
+    "epics": [
+      { "title": "Ledger", "issues": ["Transaction CRUD", "Receipt upload", "Categories + tags"] },
+      { "title": "Reports", "issues": ["Quarterly tax summary", "CSV export"] }
+    ],
+    "total_estimate_days": 18,
+    "actual_days": 17,
+    "outcome_notes": "Shipped early. Simple CRUD-heavy app; no integrations kept it predictable.",
+    "tags": ["finance", "crud", "reports"]
+  },
+  {
+    "name": "budgetbuddy-2023",
+    "brief_text": "Shared household budgeting. Couples track a joint budget, split categories, and get a monthly email summary. Mobile-first web app.",
+    "tech_stack": { "frontend": "React", "backend": "Node", "db": "PostgreSQL", "infra": "Docker" },
+    "epics": [
+      { "title": "Budgets", "issues": ["Shared budget model", "Category splits", "Invite partner"] },
+      { "title": "Notifications", "issues": ["Monthly email summary"] }
+    ],
+    "total_estimate_days": 22,
+    "actual_days": 21,
+    "outcome_notes": "Shipped on time. Email summaries via SES were quick.",
+    "tags": ["finance", "budgets", "notifications"]
+  },
+  {
+    "name": "redfin-tools-2025",
+    "brief_text": "Add-on tools for a real-estate site: neighborhood ratings, school scores overlay on the map, and a mortgage calculator widget. Embeds into an existing site.",
+    "tech_stack": { "frontend": "React (embeddable widgets)", "backend": "Node", "db": "PostgreSQL + PostGIS", "infra": "Docker" },
+    "epics": [
+      { "title": "Map overlays", "issues": ["Ratings layer", "School-score overlay"] },
+      { "title": "Widgets", "issues": ["Mortgage calculator", "Embeddable loader script"] }
+    ],
+    "total_estimate_days": 20,
+    "actual_days": 22,
+    "outcome_notes": "Shipped +2d. Embeddable widget cross-origin styling was fiddly.",
+    "tags": ["maps", "ratings", "real-estate", "widgets"]
+  },
+  {
+    "name": "propspot-mvp-2025",
+    "brief_text": "MVP property-listing marketplace for short-term rentals. Hosts list places, guests pay a deposit to reserve. Needs payments and a basic messaging inbox between host and guest.",
+    "tech_stack": { "frontend": "Next.js", "backend": "Node", "db": "PostgreSQL", "infra": "Docker + GitLab CI" },
+    "epics": [
+      { "title": "Listings", "issues": ["Host listing CRUD", "Search + availability calendar"] },
+      { "title": "Payments", "issues": ["Stripe deposit hold", "Payout to host"] },
+      { "title": "Messaging", "issues": ["Host-guest inbox"] }
+    ],
+    "total_estimate_days": 24,
+    "actual_days": 24,
+    "outcome_notes": "Shipped on time. Stripe deposit holds reused from an earlier marketplace.",
+    "tags": ["listings", "payments", "messaging", "marketplace"]
+  },
+  {
+    "name": "agent-crm-v2-2023",
+    "brief_text": "CRM rebuild for an insurance agency. Contact management, email sequences, and a renewals reminder system. Migrate data from their old spreadsheet mess.",
+    "tech_stack": { "frontend": "React", "backend": "Node", "db": "PostgreSQL", "infra": "Docker" },
+    "epics": [
+      { "title": "CRM core", "issues": ["Contact model + import", "Pipeline stages"] },
+      { "title": "Email", "issues": ["Sequence builder", "Renewals reminder cron"] }
+    ],
+    "total_estimate_days": 19,
+    "actual_days": 19,
+    "outcome_notes": "Shipped on time. Spreadsheet import was the riskiest piece; budgeted for it and it paid off.",
+    "tags": ["crm", "emails", "automation"]
+  },
+  {
+    "name": "shopflow-pos-2024",
+    "brief_text": "Point-of-sale + inventory for a small chain of brick-and-mortar shops. Cashier checkout on a tablet, barcode scan, live inventory across stores, and an end-of-day reconciliation report. Works offline if wifi drops.",
+    "tech_stack": { "frontend": "React (tablet PWA)", "backend": "FastAPI (Python)", "db": "PostgreSQL", "infra": "Docker + GitLab CI" },
+    "epics": [
+      { "title": "Checkout", "issues": ["Cart + barcode scan", "Offline queue + sync", "Receipt print"] },
+      { "title": "Inventory", "issues": ["Cross-store stock", "Low-stock alerts"] },
+      { "title": "Reporting", "issues": ["End-of-day reconciliation"] }
+    ],
+    "total_estimate_days": 28,
+    "actual_days": 33,
+    "outcome_notes": "Shipped +5d. Offline-sync conflict resolution was the time sink; offline-first always adds complexity.",
+    "tags": ["retail", "pos", "inventory", "offline", "pwa"]
+  },
+  {
+    "name": "fanzone-worldcup-2025",
+    "brief_text": "Fan companion app for a stadium during a big tournament. Live match info, in-seat food ordering, wayfinding to gates/restrooms, and crowd-density alerts. Huge traffic spikes on match days.",
+    "tech_stack": { "frontend": "React Native", "backend": "Node + WebSockets", "db": "PostgreSQL + Redis", "infra": "Docker + GitLab CI + autoscaling" },
+    "epics": [
+      { "title": "Live match", "issues": ["Score feed", "Push notifications"] },
+      { "title": "In-seat ordering", "issues": ["Menu + cart", "Seat delivery routing", "Payments"] },
+      { "title": "Wayfinding", "issues": ["Indoor map", "Crowd-density heatmap"] }
+    ],
+    "total_estimate_days": 35,
+    "actual_days": 41,
+    "outcome_notes": "Shipped +6d. Load testing for match-day spikes + autoscaling tuning took longer than planned.",
+    "tags": ["events", "realtime", "payments", "maps", "high-traffic"]
+  }
+]

@@ -1,0 +1,110 @@
+"""GitLab REST execution (Phase 4) — the agent's real-world ACTION.
+
+Scaffold a project under the sacrificial demo group, commit boilerplate, and
+batch-create issues (the loop runs here, server-side). httpx, sync. GitLab is
+HTTPS/443, so this is unaffected by the Atlas :27017 network issue.
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from urllib.parse import quote
+
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+BASE = os.getenv("GITLAB_BASE_URL", "https://gitlab.com").rstrip("/")
+TOKEN = os.environ["GITLAB_TOKEN"]
+DEMO_GROUP = os.getenv("GITLAB_DEMO_GROUP", "orchestrator-demo")
+_API = f"{BASE}/api/v4"
+_HEADERS = {"PRIVATE-TOKEN": TOKEN}
+
+
+def _client() -> httpx.Client:
+    return httpx.Client(base_url=_API, headers=_HEADERS, timeout=30)
+
+
+def _group_id(c: httpx.Client, group_path: str) -> int:
+    r = c.get(f"/groups/{quote(group_path, safe='')}")
+    r.raise_for_status()
+    return r.json()["id"]
+
+
+def create_project_scaffold(
+    project_name: str, labels: dict[str, str] | None = None, group: str | None = None
+) -> dict:
+    """Create a project in the demo group + its labels. Returns ids + url."""
+    group = group or DEMO_GROUP
+    with _client() as c:
+        gid = _group_id(c, group)
+        r = c.post(
+            "/projects",
+            json={"name": project_name, "namespace_id": gid, "initialize_with_readme": True, "visibility": "private"},
+        )
+        r.raise_for_status()
+        p = r.json()
+        for name, color in (labels or {}).items():
+            c.post(f"/projects/{p['id']}/labels", json={"name": name, "color": color})  # ignore dupes
+        return {"project_id": p["id"], "web_url": p["web_url"], "default_branch": p.get("default_branch", "main")}
+
+
+def commit_files(
+    project_id: int, files: list[dict], branch: str = "main", message: str = "chore: scaffold boilerplate"
+) -> dict:
+    actions = [{"action": f.get("action", "create"), "file_path": f["path"], "content": f["content"]} for f in files]
+    with _client() as c:
+        r = c.post(
+            f"/projects/{project_id}/repository/commits",
+            json={"branch": branch, "commit_message": message, "actions": actions},
+        )
+        r.raise_for_status()
+        return {"commit_sha": r.json().get("id"), "files": len(files)}
+
+
+def create_issues(project_id: int, issues: list[dict]) -> list[dict]:
+    """BATCHED issue creation — one call from the caller's view; loop is here.
+    Each issue: {title, description, labels[]}."""
+    out = []
+    with _client() as c:
+        for iss in issues:
+            r = c.post(
+                f"/projects/{project_id}/issues",
+                json={"title": iss["title"], "description": iss["description"], "labels": ",".join(iss.get("labels", []))},
+            )
+            r.raise_for_status()
+            j = r.json()
+            out.append({"iid": j["iid"], "web_url": j["web_url"]})
+    return out
+
+
+def create_branch(project_id: int, branch: str, ref: str = "main") -> dict:
+    with _client() as c:
+        r = c.post(f"/projects/{project_id}/repository/branches", params={"branch": branch, "ref": ref})
+        r.raise_for_status()
+        return r.json()
+
+
+def reopen_issue(project_id: int, iid: int, comment: str | None = None) -> dict:
+    with _client() as c:
+        r = c.put(f"/projects/{project_id}/issues/{iid}", json={"state_event": "reopen"})
+        r.raise_for_status()
+        if comment:
+            c.post(f"/projects/{project_id}/issues/{iid}/notes", json={"body": comment})
+        return {"iid": iid, "state": r.json().get("state")}
+
+
+def reset_demo(group: str | None = None) -> dict:
+    """Delete every project under the demo group, so the next demo run is clean."""
+    group = group or DEMO_GROUP
+    with _client() as c:
+        gid = _group_id(c, group)
+        r = c.get(f"/groups/{gid}/projects", params={"per_page": 100})
+        r.raise_for_status()
+        n = 0
+        for p in r.json():
+            d = c.delete(f"/projects/{p['id']}")
+            if d.status_code in (202, 204):
+                n += 1
+        return {"deleted": n}
