@@ -232,6 +232,7 @@ class QAItemResult(BaseModel):
 
 class QAReport(BaseModel):
     items: list[QAItemResult] = Field(default_factory=list)
+    reopened: list[int] = Field(default_factory=list)  # iids bounced back to re-QA (set by the endpoint)
 
 
 # ── REST request bodies (intake / relay / mid-prod) ──
