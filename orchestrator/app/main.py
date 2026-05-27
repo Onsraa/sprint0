@@ -8,6 +8,7 @@ execute hits GitLab over 443. Developers are canned for now (Atlas read = TODO).
 from __future__ import annotations
 
 import asyncio
+import difflib
 import io
 import uuid
 from typing import Optional
@@ -30,7 +31,8 @@ from app.contracts import (
 from app.execute import execute_plan, extend_project
 from app.rag import all_project_records, get_project_record, record_merge, save_project_record, update_project_record
 from app.reason import (
-    clarify_brief, close_project, delta_brief, onboard_developer, propose_architectures, qa_review, run_brief,
+    clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
+    qa_review, reconcile_links, run_brief,
 )
 
 app = FastAPI(title="sprint0", version="0.4.0")
@@ -343,13 +345,84 @@ async def close(project_id: int, req: CloseRequest) -> dict:
     return out
 
 
+# Attribution queue — merges sprint0 can't map to a roster member land here (the human
+# fallback in the attribution chain) for the manager to assign. In-memory (demo-grade).
+ATTRIBUTIONS: list[dict] = []
+
+
+def _suggest_attribution(identity: str | None) -> Optional[str]:
+    """AI best-guess: fuzzy-match an unmatched merge identity to a roster username."""
+    if not identity:
+        return None
+    keyed: dict[str, str] = {}
+    for d in team.developers():
+        for k in (d.username, d.gitlab_username, d.name):
+            if k:
+                keyed[k.lower()] = d.username
+    hit = difflib.get_close_matches(identity.lower(), list(keyed), n=1, cutoff=0.6)
+    return keyed[hit[0]] if hit else None
+
+
+class AttributionResolve(BaseModel):
+    username: str
+    task_type: Optional[str] = None
+
+
 @app.post("/api/merge")
 async def merge(req: MergeRequest) -> dict:
-    """Idea 2: passport-increment-on-merge (+ auto-promotion). If it resolves a rejected issue,
-    clear it from the re-QA queue — closing the reject→fix→re-QA loop."""
+    """Passport-increment-on-merge (+ auto-promotion). If it resolves a rejected issue, clear it
+    from the re-QA queue. If no roster member matches the merge identity → queue for manager
+    attribution (chain priority: gitlab_user_id → runner label → here, the human fallback)."""
     if req.project_id is not None and req.issue_iid is not None:
         REQA.get(req.project_id, set()).discard(req.issue_iid)
-    return await record_merge(req.gitlab_username, req.task_type, req.score)
+    result = await record_merge(req.gitlab_username, req.task_type, req.score)
+    if result:
+        return result
+    aid = f"att_{uuid.uuid4().hex[:8]}"
+    ATTRIBUTIONS.append({
+        "id": aid, "gitlab_username": req.gitlab_username, "task_type": req.task_type,
+        "score": req.score, "project_id": req.project_id, "issue_iid": req.issue_iid,
+        "suggested": _suggest_attribution(req.gitlab_username),
+    })
+    return {"needs_attribution": True, "attribution_id": aid, "suggested": ATTRIBUTIONS[-1]["suggested"]}
+
+
+@app.get("/api/attributions")
+async def list_attributions(_: DeveloperProfile = Depends(auth.current_manager)) -> list[dict]:
+    """Unattributed merges awaiting the manager's call (the non-automated-actions panel)."""
+    return ATTRIBUTIONS
+
+
+@app.post("/api/attributions/{aid}/resolve")
+async def resolve_attribution(
+    aid: str, req: AttributionResolve, _: DeveloperProfile = Depends(auth.current_manager)
+) -> dict:
+    ev = next((a for a in ATTRIBUTIONS if a["id"] == aid), None)
+    if ev is None:
+        raise HTTPException(404, "no such attribution")
+    member = team.get(req.username)
+    if member is None:
+        raise HTTPException(404, f"no member '{req.username}'")
+    grown = await record_merge(member.gitlab_username, req.task_type or ev["task_type"], ev.get("score", 0.85))
+    ATTRIBUTIONS.remove(ev)
+    await team.refresh()
+    return {"resolved": aid, "attributed_to": member.username, "profile": grown}
+
+
+@app.post("/api/members/{username}/link")
+async def link_member(username: str, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """Resolve a member's intended gitlab_username to a real account id (manual Link)."""
+    out = await link_gitlab(username)
+    await team.refresh()
+    return out
+
+
+@app.post("/api/team/reconcile")
+async def reconcile_team(_: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """Member-sync: link every still-unlinked member (e.g. after the team seats the junior)."""
+    out = await reconcile_links()
+    await team.refresh()
+    return out
 
 
 @app.get("/api/developers", response_model=list[DeveloperProfile])

@@ -214,3 +214,48 @@ async def onboard_developer(cv_text: str) -> dict:
     out = {k: v for k, v in doc.items() if k != "skill_embedding"}
     out["gitlab_linked"] = gl_user is not None
     return out
+
+
+async def link_gitlab(username: str) -> dict:
+    """Resolve a member's intended gitlab_username to a real GitLab user id (manual Link button).
+    Returns {username, gitlab_username, gitlab_user_id, linked}."""
+    from app import gitlab as gl
+    async with MongoMCP() as m:
+        rows = await m.find(DEV_COLL, projection={"_id": 0, "gitlab_username": 1}, query={"username": username})
+        if not rows:
+            return {"username": username, "gitlab_user_id": None, "linked": False}
+        gl_username = rows[0].get("gitlab_username") or username
+        try:
+            u = gl.search_user(gl_username)
+        except Exception:
+            u = None
+        uid = u["id"] if u else None
+        if uid:
+            await m.update_many(DEV_COLL, {"username": username}, {"$set": {"gitlab_user_id": uid}})
+        return {"username": username, "gitlab_username": gl_username, "gitlab_user_id": uid, "linked": uid is not None}
+
+
+async def reconcile_links() -> dict:
+    """Member-sync: link every still-unlinked member to its GitLab account (e.g. after the dev
+    team finally seats someone). Returns {linked: [...], unresolved: [...]}."""
+    from app import gitlab as gl
+    linked: list[str] = []
+    unresolved: list[str] = []
+    async with MongoMCP() as m:
+        rows = await m.find(
+            DEV_COLL, projection={"_id": 0, "username": 1, "gitlab_username": 1, "gitlab_user_id": 1}, limit=100,
+        )
+        for r in rows:
+            if r.get("gitlab_user_id"):
+                continue
+            gl_username = r.get("gitlab_username") or r.get("username")
+            try:
+                u = gl.search_user(gl_username)
+            except Exception:
+                u = None
+            if u:
+                await m.update_many(DEV_COLL, {"username": r["username"]}, {"$set": {"gitlab_user_id": u["id"]}})
+                linked.append(r["username"])
+            else:
+                unresolved.append(r["username"])
+    return {"linked": linked, "unresolved": unresolved}

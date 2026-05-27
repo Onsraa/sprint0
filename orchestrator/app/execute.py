@@ -8,7 +8,7 @@ appends to an existing project instead of scaffolding a new one.
 from __future__ import annotations
 
 from app import gitlab as gl
-from app import handoff, team
+from app import handoff, policy, team
 from app.contracts import Issue, PlanJSON
 
 _TYPE_COLOR = {"backend": "#2A6FDB", "frontend": "#F4511E", "db": "#0F8E5C", "devops": "#7C3AED", "design": "#D97706"}
@@ -120,8 +120,13 @@ def _issue_dicts(plan: PlanJSON, clone_url: str = "") -> list[dict]:
 
 
 def _invite_assignees(project_id: int, plan: PlanJSON) -> None:
-    """Native assignees must be project members — invite each assigned member (best-effort)."""
-    uids = {uid for e in plan.epics for i in e.issues if (uid := _gitlab_uid(i.assignee))}
+    """Native assignees must be project members — invite each assigned member whose craft has
+    repo access (policy). Non-code crafts (e.g. marketing) are never invited to the repo."""
+    uids = {
+        m.gitlab_user_id
+        for e in plan.epics for i in e.issues
+        if i.assignee and (m := team.get(i.assignee)) and m.gitlab_user_id and policy.needs_repo(m.discipline)
+    }
     for uid in uids:
         try:
             gl.add_member(project_id, uid)
