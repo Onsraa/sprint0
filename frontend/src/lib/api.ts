@@ -1,14 +1,14 @@
-/* Typed fetch client for the baton gateway.
+/* Typed fetch client for the sprint0 gateway.
    Base URL from VITE_API_BASE (falls back to localhost:8000).
    JSON + FormData helpers; throws on non-2xx with the response text.
 
-   Auth: the session token lives in sessionStorage (key `baton_token`) so each
+   Auth: the session token lives in sessionStorage (key `sprint0_token`) so each
    browser window logs in independently. It is sent on EVERY request as the
-   `X-Baton-User` header — server-side it is the caller's username. */
+   `X-Sprint0-User` header — server-side it is the caller's username. */
 
 const BASE: string = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
-const TOKEN_KEY = "baton_token";
+const TOKEN_KEY = "sprint0_token";
 
 export const token = {
   get(): string | null {
@@ -37,7 +37,7 @@ export const token = {
 /** Headers carrying the session token (when present). */
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const t = token.get();
-  return { ...(extra ?? {}), ...(t ? { "X-Baton-User": t } : {}) };
+  return { ...(extra ?? {}), ...(t ? { "X-Sprint0-User": t } : {}) };
 }
 
 /* ── Wire types (mirror orchestrator/app/contracts.py) ───────────────── */

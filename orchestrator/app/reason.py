@@ -176,8 +176,8 @@ async def close_project(record: dict, outcome_notes: str = "") -> dict:
         "brief_embedding": embed_document(summary),
         "total_estimate_days": total_est,
         "actual_days": total_est,  # demo: assume shipped on-estimate
-        "outcome_notes": outcome_notes or "shipped via baton relay",
-        "via": "baton-postmortem",
+        "outcome_notes": outcome_notes or "shipped via sprint0 relay",
+        "via": "sprint0-postmortem",
     }
     await record_postmortem(doc)
     return {"name": doc["name"], "added_to_memory": True}

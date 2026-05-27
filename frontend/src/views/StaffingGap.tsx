@@ -5,7 +5,7 @@ import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
 import { Mascot } from "../components/Mascot";
 
 /* Staffing step (manager, between Plan draft and Dispatch): does the team cover every
-   discipline this plan needs? For each gap, baton ranks who to STRETCH (with pros/cons +
+   discipline this plan needs? For each gap, sprint0 ranks who to STRETCH (with pros/cons +
    score) and suggests an ONBOARD — weighted by sprint flow. "Onboard" opens the CV wizard;
    "Stretch" just acknowledges (assignment already flagged the issue). */
 

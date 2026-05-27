@@ -1,6 +1,6 @@
 """The team roster — an in-memory cache of Members (DeveloperProfiles) loaded from MongoDB.
 
-baton/Mongo is the source of truth for the team; the manager curates it (seed + CV onboarding).
+sprint0/Mongo is the source of truth for the team; the manager curates it (seed + CV onboarding).
 We cache it in-process because the MongoDB MCP spins up a stdio subprocess per call — too slow to
 hit on every authed request. Refresh on startup + after each onboard.
 """

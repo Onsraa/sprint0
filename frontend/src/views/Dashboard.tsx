@@ -60,7 +60,7 @@ export function Dashboard() {
         >
           <span className="kicker" style={{ color: "var(--orange-deep)" }}>Live project {liveProjectId}</span>
           <span style={{ fontSize: 13, color: "var(--ink-soft)", flex: 1 }}>
-            Dispatched this session. Add a feature mid-production — baton drafts a delta plan and runs it through the relay.
+            Dispatched this session. Add a feature mid-production — sprint0 drafts a delta plan and runs it through the relay.
           </span>
           <button onClick={() => addFeature(liveProjectId)} className="btn btn-primary btn-sm">
             + Add feature
@@ -186,7 +186,7 @@ export function Dashboard() {
         >
           <div style={{ fontSize: 32 }}>+</div>
           <div style={{ fontWeight: 700, fontSize: 14 }}>Drop a brief</div>
-          <div style={{ fontSize: 12 }}>baton will handle the rest</div>
+          <div style={{ fontSize: 12 }}>sprint0 will handle the rest</div>
         </button>
       </div>
     </div>

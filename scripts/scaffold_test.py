@@ -10,7 +10,7 @@ from app import gitlab as gl
 
 
 def main() -> None:
-    name = f"baton-demo-{int(time.time())}"
+    name = f"sprint0-scaffold-{int(time.time())}"
     print(f"scaffolding '{name}' from canned plan ({CANNED_PLAN.project_name})…")
     res = execute_plan(CANNED_PLAN, project_name=name)
     print(f"✅ project: {res['web_url']}")

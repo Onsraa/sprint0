@@ -15,24 +15,24 @@ _TYPE_COLOR = {"backend": "#2A6FDB", "frontend": "#F4511E", "db": "#0F8E5C", "de
 _RISK_COLOR = {"low": "#2F8A4E", "medium": "#D97706", "high": "#D63E0E"}
 
 _FOCUS_SH = """#!/usr/bin/env bash
-# baton focus — collapse the working tree to ONLY this issue's files (real micro-context).
-# Usage: git checkout baton/<issue> && bash .baton/focus.sh
+# sprint0 focus — collapse the working tree to ONLY this issue's files (real micro-context).
+# Usage: git checkout sprint0/<issue> && bash .sprint0/focus.sh
 set -e
-[ -f .baton/focus.json ] || { echo "no .baton/focus.json — checkout a baton/<issue> branch first"; exit 1; }
-FILES=$(python3 -c "import json;print(' '.join(json.load(open('.baton/focus.json'))['files']))")
+[ -f .sprint0/focus.json ] || { echo "no .sprint0/focus.json — checkout a sprint0/<issue> branch first"; exit 1; }
+FILES=$(python3 -c "import json;print(' '.join(json.load(open('.sprint0/focus.json'))['files']))")
 git sparse-checkout init --no-cone
-git sparse-checkout set $FILES .baton .vscode
-echo "baton: working tree focused on:"; echo "$FILES" | tr ' ' '\\n' | sed 's/^/  - /'
+git sparse-checkout set $FILES .sprint0 .vscode
+echo "sprint0: working tree focused on:"; echo "$FILES" | tr ' ' '\\n' | sed 's/^/  - /'
 """
 
-_CI_YML = """# baton CI gate — bad merges blocked here, before the QA-agent + human sign-off.
+_CI_YML = """# sprint0 CI gate — bad merges blocked here, before the QA-agent + human sign-off.
 stages: [test]
 lint:
   stage: test
-  script: ['echo "baton CI · lint placeholder — wire eslint/ruff here"']
+  script: ['echo "sprint0 CI · lint placeholder — wire eslint/ruff here"']
 test:
   stage: test
-  script: ['echo "baton CI · acceptance tests run here; the QA relay adjudicates downstream"']
+  script: ['echo "sprint0 CI · acceptance tests run here; the QA relay adjudicates downstream"']
 """
 
 
@@ -40,7 +40,7 @@ def _issue_body(issue: Issue, clone_url: str = "") -> str:
     """Body is polymorphic on kind — the execution surface, not the workflow, changes."""
     head = f"{issue.description}\n\n---\n"
     foot = (
-        f"\n\n**Runner (baton):** @{issue.assignee or 'unassigned'} · kind: `{issue.kind}` · "
+        f"\n\n**Runner (sprint0):** @{issue.assignee or 'unassigned'} · kind: `{issue.kind}` · "
         f"risk: `{issue.risk}` · skill: `{issue.required_skill}` · est: {issue.estimate_days}d"
         + (f"\n\n> ⚠ **Stretch assignment:** {issue.stretch_flag}" if issue.stretch_flag else "")
     )
@@ -49,9 +49,9 @@ def _issue_body(issue: Issue, clone_url: str = "") -> str:
         bid = issue.id.lower()
         if clone_url:
             repo_dir = clone_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
-            fetch = f"git clone {clone_url} && cd {repo_dir} && git checkout baton/{bid} && bash .baton/focus.sh && code ."
+            fetch = f"git clone {clone_url} && cd {repo_dir} && git checkout sprint0/{bid} && bash .sprint0/focus.sh && code ."
         else:
-            fetch = f"git checkout baton/{bid} && bash .baton/focus.sh && code ."
+            fetch = f"git checkout sprint0/{bid} && bash .sprint0/focus.sh && code ."
         body = (
             f"🎯 **Micro-context** — you only need:\n{files}\n\n> {issue.context_scope.note}\n\n"
             f"**Fetch → focus → open** (VSCode; swap `code .` for your editor):\n```sh\n{fetch}\n```"
@@ -139,15 +139,15 @@ def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: 
         f"# {plan.project_name}\n\n{plan.client_summary}\n\n"
         f"## Stack\n- frontend: {ts.frontend}\n- backend: {ts.backend}\n- db: {ts.db}\n- infra: {ts.infra}\n\n"
         f"## Grounded on (agency memory)\n{', '.join(plan.grounded_on) or '—'}\n\n"
-        f"_Scaffolded by baton — {plan.timeline_weeks}-week plan, "
+        f"_Scaffolded by sprint0 — {plan.timeline_weeks}-week plan, "
         f"{sum(len(e.issues) for e in plan.epics)} issues._\n"
     )
-    # README.md already exists (repo init) → update; add the baton focus helper + a CI gate.
+    # README.md already exists (repo init) → update; add the sprint0 focus helper + a CI gate.
     gl.commit_files(
         pid,
         [
             {"path": "README.md", "action": "update", "content": readme},
-            {"path": ".baton/focus.sh", "content": _FOCUS_SH},
+            {"path": ".sprint0/focus.sh", "content": _FOCUS_SH},
             {"path": ".gitlab-ci.yml", "content": _CI_YML},
         ],
         branch=scaf["default_branch"],

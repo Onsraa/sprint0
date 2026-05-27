@@ -1,4 +1,4 @@
-"""Live end-to-end demo driver for the baton RELAY workflow — exercises every gateway
+"""Live end-to-end demo driver for the sprint0 RELAY workflow — exercises every gateway
 endpoint against a running server (localhost:8000) and LEAVES the GitLab project up.
 
 Run (with the gateway up):  uv run python scripts/demo_e2e.py

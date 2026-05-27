@@ -91,7 +91,7 @@ async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85
     async with MongoMCP() as m:
         await m.update_many(
             DEV_COLL, {"gitlab_username": gitlab_username},
-            {"$push": {"history": {"task_type": task_type, "score": score, "via": "baton-merge"}}},
+            {"$push": {"history": {"task_type": task_type, "score": score, "via": "sprint0-merge"}}},
         )
         rows = await m.find(
             DEV_COLL,

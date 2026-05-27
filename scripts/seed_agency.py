@@ -6,8 +6,8 @@ Wipes demo data, then creates 3 REAL GitLab repos (QuantaPay / TrailLog / DeskHR
   - CodeChunks    — one chunk per repo file, for chunk-level code-RAG ("find a reusable component")
   - DeveloperProfiles — the roster (re-seeded)
 
-The 3 repos live in the user's personal namespace (persistent) — NOT the sacrificial
-`orchestrator-demo` group, so `reset_demo()` never deletes them.
+The 3 repos live in the `sprint0-demo` group, topic-tagged `sprint0-seed` so the
+selective `reset_demo()` keeps them (it deletes only dispatched, untagged projects).
 
 Run: uv run python scripts/seed_agency.py   (idempotent — clears + reloads each run)
 """
@@ -98,16 +98,17 @@ def ensure_search_index(coll, name: str) -> None:
 
 
 def create_repo(name: str) -> dict:
-    """Create a private repo in the user's personal namespace (persistent — NOT the sacrificial
-    demo group). Idempotent: deletes a same-named owned project first so re-runs are clean."""
+    """Create a private repo in the `sprint0-demo` group, topic-tagged `sprint0-seed` so the
+    selective reset_demo() keeps it. Idempotent: deletes a same-named owned project first."""
     with gl._client() as c:
+        gid = gl._group_id(c, gl.DEMO_GROUP)
         for p in c.get("/projects", params={"search": name, "owned": True, "simple": True}).json():
             if p.get("path") == name or p.get("name") == name:
                 c.delete(f"/projects/{p['id']}")
                 print(f"   (deleted existing {name} for a clean re-seed)")
         # GitLab deletes async; the path can take a few seconds to free up — retry the create.
         for _ in range(12):
-            r = c.post("/projects", json={"name": name, "initialize_with_readme": True, "visibility": "private"})
+            r = c.post("/projects", json={"name": name, "namespace_id": gid, "initialize_with_readme": True, "visibility": "private", "topics": [gl.SEED_TOPIC]})
             if r.status_code < 300:
                 p = r.json()
                 return {"project_id": p["id"], "web_url": p["web_url"], "default_branch": p.get("default_branch", "main")}

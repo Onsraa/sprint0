@@ -1,4 +1,4 @@
-"""baton gateway (Phase 4) — FastAPI.
+"""sprint0 gateway (Phase 4) — FastAPI.
 
 Wires the REASON pipeline (`app.reason.run_brief`) and the EXECUTE step
 (`app.execute.execute_plan`) behind the REST/WS API the frontend calls.
@@ -33,7 +33,7 @@ from app.reason import (
     clarify_brief, close_project, delta_brief, onboard_developer, propose_architectures, qa_review, run_brief,
 )
 
-app = FastAPI(title="baton", version="0.4.0")
+app = FastAPI(title="sprint0", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -74,7 +74,7 @@ def _dev_trust() -> dict[str, dict]:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "phase": 4, "service": "baton"}
+    return {"status": "ok", "phase": 4, "service": "sprint0"}
 
 
 @app.on_event("startup")
@@ -95,7 +95,7 @@ class LoginRequest(BaseModel):
 
 @app.post("/api/auth/login")
 async def auth_login(req: LoginRequest) -> dict:
-    """Pick-your-account login (demo, no password). Token = username; sent as X-Baton-User."""
+    """Pick-your-account login (demo, no password). Token = username; sent as X-Sprint0-User."""
     return await auth.login(req.username)
 
 

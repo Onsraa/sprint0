@@ -1,8 +1,9 @@
 {
-  "_note": "Per-account demo team. Fill each gitlab_username with a REAL GitLab account you control (for native assignees). The junior is added LIVE in the demo via CV onboarding, not seeded here.",
+  "_note": "Per-account demo team — 5 REAL GitLab accounts in the sprint0-demo group (native assignees). The junior is added LIVE in the demo via CV onboarding, not seeded here. No uiux/devops lead = the deliberate gaps; the SE is maxed across all disciplines but load=100 (busy).",
   "manager": {
-    "name": "Mona Reyes",
-    "gitlab_username": "FILL_MANAGER_GITLAB",
+    "name": "Onsraa",
+    "gitlab_username": "Onsraa",
+    "email": "onsraa@sprint0.dev",
     "role": "manager",
     "seniority": "senior",
     "skills_text": "engineering manager — delivery, staffing, architecture review, stakeholder comms"
@@ -10,17 +11,19 @@
   "members": [
     {
       "name": "Sol Vega",
-      "gitlab_username": "FILL_SENIOR_GITLAB",
+      "gitlab_username": "sprint0-se",
+      "email": "se@sprint0.dev",
       "role": "developer",
       "discipline": "backend",
       "seniority": "senior",
       "load": 100,
-      "trust": { "backend": "high", "frontend": "high", "devops": "high", "qa": "high" },
-      "skills_text": "senior full-stack engineer — Node, Python, Postgres, Stripe payments, infra/CI-CD, security, code review; mentors juniors"
+      "trust": { "backend": "high", "frontend": "high", "devops": "high", "qa": "high", "uiux": "high" },
+      "skills_text": "senior full-stack engineer — Node, Python, Postgres, Stripe payments, infra/CI-CD, Terraform, security, UI/UX review, code review; mentors juniors"
     },
     {
-      "name": "Bea Oneko",
-      "gitlab_username": "FILL_BACKEND_GITLAB",
+      "name": "Florian Touraine",
+      "gitlab_username": "florian.touraine",
+      "email": "florian.touraine@sprint0.dev",
       "role": "developer",
       "discipline": "backend",
       "seniority": "mid",
@@ -30,7 +33,8 @@
     },
     {
       "name": "Finn Park",
-      "gitlab_username": "FILL_FRONTEND_GITLAB",
+      "gitlab_username": "sprint0-fe",
+      "email": "fe@sprint0.dev",
       "role": "developer",
       "discipline": "frontend",
       "seniority": "mid",
@@ -39,8 +43,9 @@
       "skills_text": "frontend engineer — React, TypeScript, Vite, UI state, maps, accessibility"
     },
     {
-      "name": "Quinn Diaz",
-      "gitlab_username": "FILL_QA_GITLAB",
+      "name": "Gabin",
+      "gitlab_username": "gabinvr",
+      "email": "gabin@sprint0.dev",
       "role": "developer",
       "discipline": "qa",
       "seniority": "mid",

@@ -110,12 +110,13 @@ def main() -> int:
     if se and sp:
         print(f"{YEL}-- senior engineer's in-progress project --{RST}")
         with gl._client() as c:
+            gid = gl._group_id(c, gl.DEMO_GROUP)
             for p in c.get("/projects", params={"search": sp["name"], "owned": True, "simple": True}).json():
                 if p.get("path") == sp["name"] or p.get("name") == sp["name"]:
                     c.delete(f"/projects/{p['id']}")
             proj = None
             for _ in range(12):
-                r = c.post("/projects", json={"name": sp["name"], "initialize_with_readme": True, "visibility": "private"})
+                r = c.post("/projects", json={"name": sp["name"], "namespace_id": gid, "initialize_with_readme": True, "visibility": "private", "topics": [gl.SEED_TOPIC]})
                 if r.status_code < 300:
                     proj = r.json()
                     break

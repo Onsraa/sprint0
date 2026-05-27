@@ -4,7 +4,7 @@ import { Mascot } from "../components/Mascot";
 import { api } from "../lib/api";
 import type { Member } from "../lib/api";
 
-/* baton — Hire wizard, wired to the real gateway: drop/paste a CV → POST /api/developers
+/* sprint0 — Hire wizard, wired to the real gateway: drop/paste a CV → POST /api/developers
    (Gemini parses it, links the GitLab user, seeds a low-trust passport in Mongo) → the new
    member joins the roster (login + assignment pool). The junior added live in the demo. */
 
@@ -66,7 +66,7 @@ export function WizardHire() {
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
               <div>
                 <div className="display" style={{ fontSize: 32, marginBottom: 6 }}>Drop their CV.</div>
-                <div style={{ fontSize: 15, color: "var(--ink-soft)" }}>baton reads it, links the GitLab account, and seeds a low-trust passport in MongoDB.</div>
+                <div style={{ fontSize: 15, color: "var(--ink-soft)" }}>sprint0 reads it, links the GitLab account, and seeds a low-trust passport in MongoDB.</div>
               </div>
               <label
                 className="card-soft"

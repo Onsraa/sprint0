@@ -15,7 +15,7 @@ import type {
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
 import { StaffingGap } from "../views/StaffingGap";
 
-/* baton — Brief Wizard, wired to the real gateway.
+/* sprint0 — Brief Wizard, wired to the real gateway.
    Drop → Clarify → Architecture → Plan draft → Trust → Dispatch.
    In feature mode (featureProjectId set) it adds a feature to a live project. */
 
@@ -131,7 +131,7 @@ export function WizardBrief() {
             <Mascot size={36} expression={step === 1 ? "focused" : step === STEP_DISPATCH ? "cheer" : "happy"} />
             <div>
               <div className="kicker">{isFeature ? "Add a feature" : "New project"}</div>
-              <div style={{ fontWeight: 800, fontSize: 16 }}>baton is on it</div>
+              <div style={{ fontWeight: 800, fontSize: 16 }}>sprint0 is on it</div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -413,7 +413,7 @@ function StepClarify({ state, setState, next }: { state: WizardState; setState: 
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28 }}>
       {/* Left: extracted spec + reuse */}
       <div>
-        <div className="kicker">What baton read</div>
+        <div className="kicker">What sprint0 read</div>
         <div className="display" style={{ fontSize: 26, margin: "6px 0 16px" }}>
           The spec.
         </div>
@@ -681,7 +681,7 @@ function StepPlan({
         <div>
           <div className="kicker">Mid-prod feature</div>
           <div className="display" style={{ fontSize: 30, marginTop: 4 }}>
-            What should baton add?
+            What should sprint0 add?
           </div>
           <div style={{ fontSize: 14, color: "var(--ink-soft)", marginTop: 6 }}>
             Grounded on the live project (#{featureProjectId}). Produces a delta plan + its own relay.

@@ -1,4 +1,4 @@
-"""Staffing advisor — when the plan needs a discipline the team can't cover, baton proposes how
+"""Staffing advisor — when the plan needs a discipline the team can't cover, sprint0 proposes how
 to fill the gap: stretch an internal dev (ranked) or onboard someone. Weighted by sprint-timing
 (stretching one dev across two PARALLEL relay gates serializes them) > skill fit > keeping seniors free.
 

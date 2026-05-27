@@ -17,7 +17,8 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 BASE = os.getenv("GITLAB_BASE_URL", "https://gitlab.com").rstrip("/")
 TOKEN = os.environ["GITLAB_TOKEN"]
-DEMO_GROUP = os.getenv("GITLAB_DEMO_GROUP", "orchestrator-demo")
+DEMO_GROUP = os.getenv("GITLAB_DEMO_GROUP", "sprint0-demo")
+SEED_TOPIC = "sprint0-seed"  # topic-tag on seed projects; reset_demo() keeps these, deletes only dispatched
 _API = f"{BASE}/api/v4"
 _HEADERS = {"PRIVATE-TOKEN": TOKEN}
 
@@ -126,7 +127,8 @@ def reopen_issue(project_id: int, iid: int, comment: str | None = None) -> dict:
 
 
 def reset_demo(group: str | None = None) -> dict:
-    """Delete every project under the demo group, so the next demo run is clean."""
+    """Delete only DISPATCHED projects under the demo group, keeping topic-tagged seed projects
+    (the agency repos + the SE's in-progress project), so re-running never nukes the seed."""
     group = group or DEMO_GROUP
     with _client() as c:
         gid = _group_id(c, group)
@@ -134,6 +136,8 @@ def reset_demo(group: str | None = None) -> dict:
         r.raise_for_status()
         n = 0
         for p in r.json():
+            if SEED_TOPIC in (p.get("topics") or []):
+                continue  # protected seed project
             d = c.delete(f"/projects/{p['id']}")
             if d.status_code in (202, 204):
                 n += 1

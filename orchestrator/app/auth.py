@@ -10,12 +10,12 @@ from app import team
 from app.contracts import DeveloperProfile
 
 
-async def current_member(x_baton_user: str | None = Header(default=None)) -> DeveloperProfile:
-    """Resolve the logged-in Member from the X-Baton-User token (= username)."""
+async def current_member(x_sprint0_user: str | None = Header(default=None)) -> DeveloperProfile:
+    """Resolve the logged-in Member from the X-Sprint0-User token (= username)."""
     await team.ensure_loaded()
-    if not x_baton_user:
+    if not x_sprint0_user:
         raise HTTPException(401, "not logged in")
-    member = team.get(x_baton_user)
+    member = team.get(x_sprint0_user)
     if member is None:
         raise HTTPException(401, "unknown account — log in again")
     return member

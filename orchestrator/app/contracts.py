@@ -105,7 +105,7 @@ class DeveloperProfile(BaseModel):
     trust_level: TrustLevel = "low"            # overall (max across disciplines) — display + back-compat
     history: list[dict] = Field(default_factory=list)
     # ── member/account fields (per-account demo: this profile IS the login account) ──
-    username: str = ""                          # baton login id; defaults to gitlab_username
+    username: str = ""                          # sprint0 login id; defaults to gitlab_username
     email: str = ""
     role: Role = "developer"
     discipline: Optional[Discipline] = None     # set for devs; None for the manager
@@ -214,6 +214,7 @@ class ProjectRecord(BaseModel):
     project_id: int
     name: str
     web_url: str = ""
+    group: str = "sprint0-demo"  # workspace group the project lives in; seam for future multi-client
     tech_stack: TechStack
     grounded_on: list[str] = Field(default_factory=list)
     plan: PlanJSON

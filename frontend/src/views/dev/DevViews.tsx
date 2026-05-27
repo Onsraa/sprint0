@@ -5,7 +5,7 @@ import { api } from "../../lib/api";
 import { DISCIPLINE_LABEL, KIND_LABEL, RISK_COLOR } from "../../lib/relayUtils";
 import { Mascot } from "../../components/Mascot";
 
-/* baton app — Developer views: Today, Active issue (per-kind), Passport.
+/* sprint0 app — Developer views: Today, Active issue (per-kind), Passport.
    All three are REAL now: Today + Active-issue read /api/me/issues, Passport reads
    /api/me. No mock data — empty states stand in until work is assigned. */
 
@@ -75,7 +75,7 @@ export function DevToday() {
             Morning, {m.name.split(/\s+/)[0]}.
           </div>
           <div style={{ fontSize: 15, color: "var(--ink-soft)", marginTop: 4 }}>
-            {issues.length > 0 ? "baton already trimmed the noise. Here's your queue." : "Nothing on your plate yet. baton will route work here."}
+            {issues.length > 0 ? "sprint0 already trimmed the noise. Here's your queue." : "Nothing on your plate yet. sprint0 will route work here."}
           </div>
         </div>
         <div className="wiggle">
@@ -116,7 +116,7 @@ export function DevToday() {
           <div style={{ padding: 16, background: "var(--cream)", borderRadius: 14, border: "1.5px solid var(--line-strong)", marginBottom: 18 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Mascot size={26} expression="working" />
-              <div style={{ fontWeight: 700, fontSize: 13 }}>baton scoped the repo for you</div>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>sprint0 scoped the repo for you</div>
               <div style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-mute)" }}>
                 <b style={{ color: "var(--orange)" }}>{first.issue.context_scope.files.length}</b> files
               </div>
@@ -308,8 +308,8 @@ function CodeSurface({ issue, files }: { issue: Issue; files: string[] }) {
   const bid = issue.id.toLowerCase();
   const dir = liveCloneUrl ? (liveCloneUrl.replace(/\/+$/, "").split("/").pop() || "repo").replace(/\.git$/, "") : "<project>";
   const cmd = liveCloneUrl
-    ? `git clone ${liveCloneUrl} && cd ${dir} && git checkout baton/${bid} && bash .baton/focus.sh && code .`
-    : `git checkout baton/${bid} && bash .baton/focus.sh && code .`;
+    ? `git clone ${liveCloneUrl} && cd ${dir} && git checkout sprint0/${bid} && bash .sprint0/focus.sh && code .`
+    : `git checkout sprint0/${bid} && bash .sprint0/focus.sh && code .`;
   return (
     <>
       <div className="card-soft" style={{ padding: 18, marginBottom: 12 }}>
