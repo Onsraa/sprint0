@@ -1,25 +1,18 @@
 import { useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
-import type { Role } from "../app/types";
-import type { Discipline, Issue, Risk } from "../lib/api";
+import type { Issue, Risk } from "../lib/api";
 import { api } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
 
 /* A discipline lead's slice of the plan. Edit issue fields inline, then pass
-   the baton (approve) or request changes → POST /ratify/{discipline}. */
-
-const ROLE_DISCIPLINE: Partial<Record<Role, Discipline>> = {
-  uiux: "uiux",
-  backend: "backend",
-  frontend: "frontend",
-  qa: "qa",
-};
+   the baton (approve) or request changes → POST /ratify/{discipline}.
+   The server returns 403 unless the caller is this discipline's lead or the
+   manager — that error surfaces in the footer. */
 
 const RISKS: Risk[] = ["low", "medium", "high"];
 
 export function RatifyPanel() {
-  const { role, plan, planId, relay, setRelay } = useApp();
-  const discipline = ROLE_DISCIPLINE[role];
+  const { discipline, plan, planId, relay, setRelay } = useApp();
 
   const slice = useMemo(
     () => (discipline ? planIssues(plan?.epics).filter((i) => i.discipline === discipline) : []),
@@ -165,6 +158,15 @@ function IssueEditor({
         <span className="chip chip-soft" style={{ fontSize: 9, padding: "1px 7px" }}>
           {value.type}
         </span>
+        {value.stretch_flag && (
+          <span
+            title={value.stretch_flag}
+            className="chip"
+            style={{ fontSize: 9, padding: "1px 7px", background: "var(--orange-soft)", borderColor: "var(--orange)", color: "var(--orange-deep)", fontWeight: 700 }}
+          >
+            ⚠ stretch
+          </span>
+        )}
         {value.assignee && (
           <span className="mono" style={{ marginLeft: "auto", fontSize: 11, color: "var(--ink-mute)" }}>
             @{value.assignee}

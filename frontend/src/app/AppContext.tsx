@@ -1,20 +1,26 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { LS } from "../lib/storage";
 import type { Mode, Project, Role, View, WizardKind } from "./types";
-import type { PlanJSON, RelayState } from "../lib/api";
+import type { Discipline, Member, PlanJSON, RelayState } from "../lib/api";
+import { api, token } from "../lib/api";
 
 interface AppContextValue {
-  setupDone: boolean;
-  setSetupDone: Dispatch<SetStateAction<boolean>>;
+  /** Auth state. `null` member while loading or logged out → AppShell shows <Login/>. */
+  member: Member | null;
+  authLoading: boolean;
+  login: (username: string) => Promise<Member>;
+  logout: () => void;
+  /** Derived persona for nav/views. */
   role: Role;
-  setRole: Dispatch<SetStateAction<Role>>;
+  /** The member's real relay discipline (devs only; null for manager). */
+  discipline: Discipline | null;
   mode: Mode;
   view: View;
   setView: Dispatch<SetStateAction<View>>;
@@ -25,10 +31,6 @@ interface AppContextValue {
   /** Existing project id to extend when the wizard opens in mid-prod feature mode. */
   featureProjectId: number | null;
   setFeatureProjectId: Dispatch<SetStateAction<number | null>>;
-  devTrust: number;
-  setDevTrust: Dispatch<SetStateAction<number>>;
-  tweaksOpen: boolean;
-  setTweaksOpen: Dispatch<SetStateAction<boolean>>;
   activeIssue: string | null;
   setActiveIssue: Dispatch<SetStateAction<string | null>>;
   activeDev: string | null;
@@ -60,7 +62,7 @@ export function useApp(): AppContextValue {
 const MANAGER_VIEWS: View[] = ["dashboard", "team", "relay"];
 const DEV_VIEWS: View[] = ["today", "issue", "passport", "ratify", "qa"];
 
-/** Where each role lands. */
+/** Where each persona lands. */
 const ROLE_HOME: Record<Role, View> = {
   manager: "dashboard",
   uiux: "ratify",
@@ -69,20 +71,38 @@ const ROLE_HOME: Record<Role, View> = {
   qa: "qa",
 };
 
+/** Map a member to the legacy persona used for nav + view-gating.
+ *  Manager → "manager"; a dev's discipline drives the rest (devops has no
+ *  dedicated surface → falls back to the generic dev nav via "backend"). */
+function memberToRole(member: Member | null): Role {
+  if (!member || member.role === "manager") return "manager";
+  switch (member.discipline) {
+    case "uiux":
+    case "backend":
+    case "frontend":
+    case "qa":
+      return member.discipline;
+    default:
+      return "backend";
+  }
+}
+
 function roleToMode(role: Role): Mode {
   return role === "manager" ? "manager" : "dev";
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [setupDone, setSetupDone] = useState<boolean>(() => LS.get("setup", false));
-  const [role, setRole] = useState<Role>(() => LS.get<Role>("role", "manager"));
+  const [member, setMember] = useState<Member | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(() => token.get() != null);
+
+  const role = memberToRole(member);
+  const discipline = member && member.role === "developer" ? member.discipline : null;
   const mode = roleToMode(role);
-  const [view, setView] = useState<View>(() => ROLE_HOME[LS.get<Role>("role", "manager")]);
+
+  const [view, setView] = useState<View>("dashboard");
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardKind, setWizardKind] = useState<WizardKind>("brief");
   const [featureProjectId, setFeatureProjectId] = useState<number | null>(null);
-  const [devTrust, setDevTrust] = useState<number>(() => LS.get("devTrust", 65));
-  const [tweaksOpen, setTweaksOpen] = useState(false);
   const [activeIssue, setActiveIssue] = useState<string | null>(null);
   const [activeDev, setActiveDev] = useState<string | null>(null);
 
@@ -92,14 +112,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [liveProjectId, setLiveProjectId] = useState<number | null>(null);
   const [liveCloneUrl, setLiveCloneUrl] = useState<string | null>(null);
 
+  // Restore the session on mount: if a token exists, resolve the member.
   useEffect(() => {
-    LS.set("role", role);
-  }, [role]);
-  useEffect(() => {
-    LS.set("devTrust", devTrust);
-  }, [devTrust]);
+    if (token.get() == null) return;
+    let cancelled = false;
+    setAuthLoading(true);
+    api
+      .me()
+      .then((m) => {
+        if (cancelled) return;
+        setMember(m);
+        setView(ROLE_HOME[memberToRole(m)]);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        token.clear(); // stale / unknown token
+        setMember(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  // Keep the active view valid for the current role; switching roles lands on home.
+  const login = useCallback(async (username: string): Promise<Member> => {
+    const res = await api.login(username);
+    token.set(res.token);
+    setMember(res.member);
+    setView(ROLE_HOME[memberToRole(res.member)]);
+    return res.member;
+  }, []);
+
+  const logout = useCallback(() => {
+    token.clear();
+    setMember(null);
+    setPlan(null);
+    setPlanId(null);
+    setRelay(null);
+    setLiveProjectId(null);
+    setLiveCloneUrl(null);
+    setWizardOpen(false);
+    setView("dashboard");
+  }, []);
+
+  // Keep the active view valid for the current persona.
   useEffect(() => {
     const valid = mode === "manager" ? MANAGER_VIEWS : DEV_VIEWS;
     setView((v) => (valid.includes(v) ? v : ROLE_HOME[role]));
@@ -155,10 +213,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const value: AppContextValue = {
-    setupDone,
-    setSetupDone,
+    member,
+    authLoading,
+    login,
+    logout,
     role,
-    setRole,
+    discipline,
     mode,
     view,
     setView,
@@ -168,10 +228,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWizardKind,
     featureProjectId,
     setFeatureProjectId,
-    devTrust,
-    setDevTrust,
-    tweaksOpen,
-    setTweaksOpen,
     activeIssue,
     setActiveIssue,
     activeDev,

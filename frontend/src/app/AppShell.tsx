@@ -1,7 +1,8 @@
 import { useApp } from "./AppContext";
 import type { Mode, Role, View } from "./types";
-import { Sprint0Logo } from "../components/Mascot";
-import { SetupGate } from "../views/SetupGate";
+import type { Member } from "../lib/api";
+import { Mascot, Sprint0Logo } from "../components/Mascot";
+import { Login } from "../views/Login";
 import { Dashboard } from "../views/Dashboard";
 import { TeamView } from "../views/Team";
 import { DevToday, DevIssue, DevPassport } from "../views/dev/DevViews";
@@ -9,12 +10,12 @@ import { RelayBoard } from "../views/RelayBoard";
 import { RatifyPanel } from "../views/RatifyPanel";
 import { QAGate } from "../views/QAGate";
 import { Wizard } from "../wizard/Wizard";
-import { TweaksPanel } from "../tweaks/TweaksPanel";
 
 export function AppShell() {
-  const { setupDone, wizardOpen, wizardKind, tweaksOpen } = useApp();
+  const { member, authLoading, wizardOpen, wizardKind } = useApp();
 
-  if (!setupDone) return <SetupGate />;
+  if (authLoading) return <SessionLoading />;
+  if (!member) return <Login />;
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--cream)" }}>
@@ -26,7 +27,19 @@ export function AppShell() {
         </div>
       </main>
       {wizardOpen && <Wizard kind={wizardKind} />}
-      {tweaksOpen && <TweaksPanel />}
+    </div>
+  );
+}
+
+function SessionLoading() {
+  return (
+    <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "var(--cream)" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+        <Mascot size={64} expression="working" className="wiggle" />
+        <div className="mono" style={{ fontSize: 13, color: "var(--ink-mute)" }}>
+          restoring your session…
+        </div>
+      </div>
     </div>
   );
 }
@@ -63,8 +76,9 @@ function navFor(role: Role): NavItem[] {
 }
 
 function Sidebar() {
-  const { role, view, setView, setWizardOpen, setWizardKind, setTweaksOpen } = useApp();
+  const { member, role, view, setView, setWizardOpen, setWizardKind, setFeatureProjectId, logout } = useApp();
   const items = navFor(role);
+  const isManager = role === "manager";
 
   return (
     <aside
@@ -82,12 +96,11 @@ function Sidebar() {
         <Sprint0Logo size={18} />
       </div>
 
-      <RoleSwitcher />
-
-      {role === "manager" ? (
+      {isManager ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <button
             onClick={() => {
+              setFeatureProjectId(null);
               setWizardKind("brief");
               setWizardOpen(true);
             }}
@@ -150,18 +163,19 @@ function Sidebar() {
       </nav>
 
       <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-        <button
-          onClick={() => setTweaksOpen(true)}
-          style={{ fontSize: 12, color: "var(--ink-mute)", padding: "6px 10px", textAlign: "left", fontWeight: 600 }}
-        >
-          ⚙ Tweaks
-        </button>
         <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--positive)", flexShrink: 0 }} />
           <span style={{ fontSize: 11, color: "var(--ink-mute)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>
             MCP · online
           </span>
         </div>
+        <button
+          onClick={logout}
+          style={{ fontSize: 12, color: "var(--ink-mute)", padding: "6px 10px", textAlign: "left", fontWeight: 600 }}
+          title={member ? `Signed in as ${member.username}` : undefined}
+        >
+          ⏻ Log out
+        </button>
       </div>
     </aside>
   );
@@ -175,43 +189,24 @@ const ROLE_LABEL: Record<Role, string> = {
   qa: "QA tester",
 };
 
-const ROLE_ORDER: Role[] = ["manager", "uiux", "backend", "frontend", "qa"];
+const TRUST_COLOR: Record<string, string> = {
+  high: "var(--positive)",
+  medium: "var(--info)",
+  low: "var(--ink-mute)",
+};
 
-function RoleSwitcher() {
-  const { role, setRole } = useApp();
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div className="kicker" style={{ fontSize: 10 }}>
-        Acting as
-      </div>
-      <select
-        value={role}
-        onChange={(e) => setRole(e.target.value as Role)}
-        style={{
-          padding: "9px 12px",
-          borderRadius: 10,
-          border: "1.5px solid var(--line-strong)",
-          background: "var(--cream-deep)",
-          fontWeight: 700,
-          fontSize: 13,
-          color: "var(--ink)",
-          fontFamily: "inherit",
-          outline: "none",
-          cursor: "pointer",
-        }}
-      >
-        {ROLE_ORDER.map((r) => (
-          <option key={r} value={r}>
-            {ROLE_LABEL[r]}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
+function initialsOf(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 }
 
 function TopBar() {
-  const { role, view, devTrust } = useApp();
+  const { member, role, view } = useApp();
   const titles: Partial<Record<View, string>> = {
     dashboard: "Projects",
     team: "Team",
@@ -223,12 +218,8 @@ function TopBar() {
     qa: "QA gate",
   };
   const isManager = role === "manager";
-  const tier =
-    devTrust < 35
-      ? { t: "Apprentice", c: "#888" }
-      : devTrust < 75
-        ? { t: "Trusted", c: "var(--info)" }
-        : { t: "Senior", c: "var(--positive)" };
+  const m = member as Member;
+  const trustC = TRUST_COLOR[m.trust_level] ?? "var(--ink-mute)";
 
   return (
     <header
@@ -252,7 +243,7 @@ function TopBar() {
             whiteSpace: "nowrap",
           }}
         >
-          {isManager ? "AGENCY · DUSK STUDIO" : `${ROLE_LABEL[role].toUpperCase()} · MARIA R.`}
+          {ROLE_LABEL[role].toUpperCase()} · {m.name.toUpperCase()}
         </div>
         <div className="display" style={{ fontSize: 22, marginTop: 2 }}>
           {titles[view] ?? "—"}
@@ -272,9 +263,9 @@ function TopBar() {
               fontWeight: 700,
             }}
           >
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: tier.c }} />
-            <span style={{ color: tier.c }}>{tier.t}</span>
-            <span style={{ color: "var(--ink-mute)", fontFamily: "var(--font-mono)" }}>{devTrust}</span>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: trustC }} />
+            <span style={{ color: trustC, textTransform: "capitalize" }}>{m.trust_level} trust</span>
+            <span style={{ color: "var(--ink-mute)", fontFamily: "var(--font-mono)" }}>load {m.load}%</span>
           </div>
         )}
         <div
@@ -291,7 +282,7 @@ function TopBar() {
             border: "2px solid var(--ink)",
           }}
         >
-          {isManager ? "EM" : "MR"}
+          {initialsOf(m.name) || "?"}
         </div>
       </div>
     </header>

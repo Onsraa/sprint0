@@ -13,6 +13,7 @@ import type {
   TechStack,
 } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
+import { StaffingGap } from "../views/StaffingGap";
 
 /* baton — Brief Wizard, wired to the real gateway.
    Drop → Clarify → Architecture → Plan draft → Trust → Dispatch.
@@ -23,9 +24,14 @@ const STEPS = [
   { id: "clarify", label: "Clarify" },
   { id: "arch", label: "Architecture" },
   { id: "plan", label: "Plan" },
+  { id: "staffing", label: "Staffing" },
   { id: "trust", label: "Trust" },
   { id: "dispatch", label: "Dispatch" },
 ];
+
+const STEP_STAFFING = 4;
+const STEP_TRUST = 5;
+const STEP_DISPATCH = 6;
 
 interface WizardState {
   briefId: string | null;
@@ -41,6 +47,7 @@ type SetState = Dispatch<SetStateAction<WizardState>>;
 export function WizardBrief() {
   const {
     setWizardOpen,
+    setWizardKind,
     featureProjectId,
     setFeatureProjectId,
     plan,
@@ -121,7 +128,7 @@ export function WizardBrief() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Mascot size={36} expression={step === 1 ? "focused" : step === 5 ? "cheer" : "happy"} />
+            <Mascot size={36} expression={step === 1 ? "focused" : step === STEP_DISPATCH ? "cheer" : "happy"} />
             <div>
               <div className="kicker">{isFeature ? "Add a feature" : "New project"}</div>
               <div style={{ fontWeight: 800, fontSize: 16 }}>baton is on it</div>
@@ -192,12 +199,17 @@ export function WizardBrief() {
               next={next}
             />
           )}
-          {step === 4 && <StepTrust state={state} setState={setState} planId={planId} relay={relay} setRelay={setRelay} />}
-          {step === 5 && <StepDispatch planId={planId} setRelay={setRelay} setLiveProjectId={setLiveProjectId} setLiveCloneUrl={setLiveCloneUrl} onClose={close} />}
+          {step === STEP_STAFFING && (
+            <StaffingGap planId={planId} onOnboard={() => setWizardKind("hire")} next={next} />
+          )}
+          {step === STEP_TRUST && <StepTrust state={state} setState={setState} planId={planId} relay={relay} setRelay={setRelay} />}
+          {step === STEP_DISPATCH && (
+            <StepDispatch planId={planId} setRelay={setRelay} setLiveProjectId={setLiveProjectId} setLiveCloneUrl={setLiveCloneUrl} onClose={close} />
+          )}
         </div>
 
         {/* Footer nav (dispatch step has its own controls) */}
-        {step !== 5 && (
+        {step !== STEP_DISPATCH && (
           <div
             style={{
               padding: "16px 24px",
@@ -230,13 +242,13 @@ export function WizardBrief() {
 
 /* The Continue button knows which steps gate on async work vs simple advance. */
 function StepNext({ step, state, planId, next }: { step: number; state: WizardState; planId: string | null; next: () => void }) {
-  // Steps with their own primary action inside the body (Drop, Plan): hide footer Continue.
-  if (step === 0 || step === 3) return null;
+  // Steps with their own primary action inside the body (Drop, Plan, Staffing): hide footer Continue.
+  if (step === 0 || step === 3 || step === STEP_STAFFING) return null;
   const disabled =
-    (step === 1 && !state.spec) || (step === 2 && state.arch.length === 0) || (step === 4 && !planId);
+    (step === 1 && !state.spec) || (step === 2 && state.arch.length === 0) || (step === STEP_TRUST && !planId);
   return (
     <button onClick={next} className="btn btn-primary btn-sm" disabled={disabled} style={{ opacity: disabled ? 0.5 : 1 }}>
-      {step === 4 ? "To dispatch →" : "Continue →"}
+      {step === STEP_TRUST ? "To dispatch →" : "Continue →"}
     </button>
   );
 }
@@ -742,6 +754,9 @@ function StepPlan({
                       {issue.id}
                     </span>
                     <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{issue.title}</span>
+                    {issue.stretch_flag && (
+                      <span title={issue.stretch_flag} style={{ color: "var(--warn)", fontSize: 12, fontWeight: 800 }}>⚠</span>
+                    )}
                     <span style={{ fontSize: 10, fontWeight: 700, color: RISK_COLOR[issue.risk] }}>{issue.risk}</span>
                     <span className="chip" style={{ fontSize: 9, padding: "1px 7px" }}>{DISCIPLINE_LABEL[issue.discipline]}</span>
                     <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>{issue.estimate_days}d</span>
@@ -785,7 +800,7 @@ function StepPlan({
 
       <div style={{ marginTop: 18 }}>
         <button onClick={next} className="btn btn-primary btn-sm">
-          Set trust →
+          Check staffing →
         </button>
       </div>
     </div>

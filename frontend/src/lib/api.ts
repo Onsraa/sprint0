@@ -1,8 +1,44 @@
 /* Typed fetch client for the baton gateway.
    Base URL from VITE_API_BASE (falls back to localhost:8000).
-   JSON + FormData helpers; throws on non-2xx with the response text. */
+   JSON + FormData helpers; throws on non-2xx with the response text.
+
+   Auth: the session token lives in sessionStorage (key `baton_token`) so each
+   browser window logs in independently. It is sent on EVERY request as the
+   `X-Baton-User` header — server-side it is the caller's username. */
 
 const BASE: string = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+
+const TOKEN_KEY = "baton_token";
+
+export const token = {
+  get(): string | null {
+    try {
+      return sessionStorage.getItem(TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  },
+  set(value: string): void {
+    try {
+      sessionStorage.setItem(TOKEN_KEY, value);
+    } catch {
+      /* ignore disabled storage */
+    }
+  },
+  clear(): void {
+    try {
+      sessionStorage.removeItem(TOKEN_KEY);
+    } catch {
+      /* ignore */
+    }
+  },
+};
+
+/** Headers carrying the session token (when present). */
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const t = token.get();
+  return { ...(extra ?? {}), ...(t ? { "X-Baton-User": t } : {}) };
+}
 
 /* ── Wire types (mirror orchestrator/app/contracts.py) ───────────────── */
 
@@ -54,6 +90,8 @@ export interface Issue {
   depends_on: string[];
   api_contract: string | null;
   context: Record<string, unknown>;
+  /** Set by the assignment engine when a dev is stretched out of discipline. */
+  stretch_flag: string | null;
 }
 
 export interface Epic {
@@ -163,14 +201,82 @@ export interface RejectResult {
 }
 
 export type TrustLevel = "low" | "medium" | "high";
+export type MemberRole = "manager" | "developer";
+export type Seniority = "junior" | "mid" | "senior";
 
-export interface DeveloperProfile {
+/** A team member = a login account (the manager or a developer). */
+export interface Member {
+  username: string;
   name: string;
+  email: string;
+  role: MemberRole;
+  discipline: Discipline | null;
+  seniority: Seniority;
+  load: number; // 0-100 capacity used
+  gitlab_user_id: number | null;
   gitlab_username: string;
   skills_text: string;
+  /** Per-discipline trust tier; falls back to trust_level. */
+  trust: Partial<Record<Discipline, TrustLevel>>;
   trust_level: TrustLevel;
   history: Record<string, unknown>[];
   promoted?: boolean;
+}
+
+/** Back-compat alias — the onboarding/merge endpoints still call it a profile. */
+export type DeveloperProfile = Member;
+
+/** A single issue assigned to the logged-in member (from /api/me/issues). */
+export interface MyIssue {
+  project_id: number;
+  project: string;
+  epic: string;
+  issue: Issue;
+}
+
+export interface MyIssuesResponse {
+  username: string;
+  count: number;
+  issues: MyIssue[];
+}
+
+/* ── Staffing (gap coverage + stretch/onboard recommendations) ── */
+export interface StretchCandidate {
+  username: string;
+  name: string;
+  discipline: Discipline | null;
+  score: number;
+  pros: string[];
+  cons: string[];
+}
+
+export interface OnboardSuggestion {
+  suggestion: string;
+  pros: string[];
+  cons: string[];
+}
+
+export interface StaffingRecommendation {
+  discipline: Discipline;
+  stretch_candidates: StretchCandidate[];
+  onboard: OnboardSuggestion;
+  weighted_by: string;
+}
+
+export interface CoverageRow {
+  discipline: Discipline;
+  covered: boolean;
+  lead: string | null;
+  recommendation: StaffingRecommendation | null;
+}
+
+export interface StaffingResponse {
+  coverage: CoverageRow[];
+}
+
+export interface LoginResponse {
+  token: string;
+  member: Member;
 }
 
 export interface CloseResult {
@@ -191,24 +297,35 @@ async function unwrap<T>(res: Response): Promise<T> {
 async function jpost<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return unwrap<T>(res);
 }
 
 async function jget<T>(path: string): Promise<T> {
-  return unwrap<T>(await fetch(BASE + path));
+  return unwrap<T>(await fetch(BASE + path, { headers: authHeaders() }));
 }
 
 async function fpost<T>(path: string, form: FormData): Promise<T> {
-  return unwrap<T>(await fetch(BASE + path, { method: "POST", body: form }));
+  return unwrap<T>(await fetch(BASE + path, { method: "POST", headers: authHeaders(), body: form }));
 }
 
 /* ── Endpoints ───────────────────────────────────────────────────────── */
 
 export const api = {
   base: BASE,
+
+  /* Auth / identity (per-account) */
+  login(username: string): Promise<LoginResponse> {
+    return jpost("/api/auth/login", { username });
+  },
+  me(): Promise<Member> {
+    return jget("/api/me");
+  },
+  myIssues(): Promise<MyIssuesResponse> {
+    return jget("/api/me/issues");
+  },
 
   /* Briefs / intake */
   createBrief(input: { text?: string; file?: File }): Promise<{ brief_id: string }> {
@@ -246,6 +363,9 @@ export const api = {
     body: { edits?: Issue[]; note?: string; approve?: boolean },
   ): Promise<RelayState> {
     return jpost(`/api/plans/${planId}/ratify/${discipline}`, body);
+  },
+  staffing(planId: string): Promise<StaffingResponse> {
+    return jget(`/api/plans/${planId}/staffing`);
   },
 
   /* Dispatch + mid-prod */

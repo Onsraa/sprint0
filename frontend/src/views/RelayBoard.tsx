@@ -1,7 +1,6 @@
 import { useApp } from "../app/AppContext";
-import type { Role } from "../app/types";
 import type { Discipline, Gate } from "../lib/api";
-import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, statusStyle } from "../lib/relayUtils";
+import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, statusStyle } from "../lib/relayUtils";
 
 /* The ratification relay: {uiux ∥ backend ∥ devops} → frontend → qa.
    Manager sees every gate; a lead sees their own gate highlighted with a
@@ -11,16 +10,9 @@ const ROW_1: Discipline[] = ["uiux", "backend", "devops"];
 const ROW_2: Discipline[] = ["frontend"];
 const ROW_3: Discipline[] = ["qa"];
 
-const ROLE_DISCIPLINE: Partial<Record<Role, Discipline>> = {
-  uiux: "uiux",
-  backend: "backend",
-  frontend: "frontend",
-  qa: "qa",
-};
-
 export function RelayBoard() {
-  const { relay, plan, role, setView } = useApp();
-  const mine = ROLE_DISCIPLINE[role];
+  const { relay, plan, discipline, setView } = useApp();
+  const mine = discipline;
 
   if (!relay || !plan) {
     return (
@@ -32,6 +24,8 @@ export function RelayBoard() {
 
   const byDiscipline = new Map(relay.gates.map((g) => [g.discipline, g]));
   const baton = new Set(relay.baton);
+  // Disciplines whose slice contains a stretched assignment (⚠ on the gate).
+  const stretched = new Set(planIssues(plan.epics).filter((i) => i.stretch_flag).map((i) => i.discipline));
 
   const renderRow = (disc: Discipline[]) =>
     disc
@@ -43,6 +37,7 @@ export function RelayBoard() {
           gate={g}
           holdsBaton={baton.has(g.discipline)}
           isMine={mine === g.discipline}
+          isStretched={stretched.has(g.discipline)}
           onRatify={mine === g.discipline ? () => setView("ratify") : undefined}
         />
       ));
@@ -96,11 +91,13 @@ function GateCard({
   gate,
   holdsBaton,
   isMine,
+  isStretched,
   onRatify,
 }: {
   gate: Gate;
   holdsBaton: boolean;
   isMine: boolean;
+  isStretched: boolean;
   onRatify?: () => void;
 }) {
   const st = statusStyle(gate.status);
@@ -126,9 +123,12 @@ function GateCard({
           🎽 baton
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span style={{ width: 12, height: 12, borderRadius: 3, background: accent, border: "1.5px solid var(--ink)" }} />
         <div style={{ fontWeight: 800, fontSize: 15 }}>{DISCIPLINE_LABEL[gate.discipline]}</div>
+        {isStretched && (
+          <span title="a stretched assignment in this slice" style={{ color: "var(--warn)", fontSize: 13, fontWeight: 800 }}>⚠</span>
+        )}
         {isMine && (
           <span className="chip" style={{ fontSize: 9, padding: "1px 7px", marginLeft: "auto" }}>
             you
