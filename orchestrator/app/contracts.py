@@ -18,6 +18,8 @@ TrustLevel = Literal["low", "medium", "high"]
 Discipline = Literal["uiux", "backend", "frontend", "qa", "devops"]
 Kind = Literal["code", "design", "audit", "content", "infra", "runbook"]
 GateStatus = Literal["pending", "locked", "auto_passed", "ratified", "changes_requested"]
+Role = Literal["manager", "developer"]
+Seniority = Literal["junior", "mid", "senior"]
 
 _TYPE_TO_DISCIPLINE: dict[str, Discipline] = {
     "backend": "backend", "db": "backend", "frontend": "frontend", "design": "uiux", "devops": "devops",
@@ -59,6 +61,7 @@ class Issue(BaseModel):
     depends_on: list[str] = Field(default_factory=list)  # upstream issue ids whose done-artifact feeds this one
     api_contract: Optional[str] = None  # mock payload a backend issue produces; flows into FE micro-context
     context: IssueContext = Field(default_factory=IssueContext)  # kind-specific extras, filled at ratify
+    stretch_flag: Optional[str] = None  # set by assignment when a dev is stretched out of discipline (e.g. "no prior uiux")
 
     @model_validator(mode="after")
     def _fill_kind(self) -> "Issue":
@@ -99,8 +102,27 @@ class DeveloperProfile(BaseModel):
     name: str
     gitlab_username: str
     skills_text: str
-    trust_level: TrustLevel = "low"
+    trust_level: TrustLevel = "low"            # overall (max across disciplines) — display + back-compat
     history: list[dict] = Field(default_factory=list)
+    # ── member/account fields (per-account demo: this profile IS the login account) ──
+    username: str = ""                          # baton login id; defaults to gitlab_username
+    email: str = ""
+    role: Role = "developer"
+    discipline: Optional[Discipline] = None     # set for devs; None for the manager
+    seniority: Seniority = "mid"
+    load: int = 0                               # 0-100 capacity used; >=100 → unavailable
+    gitlab_user_id: Optional[int] = None        # real GitLab user → native assignee; None = label-only
+    trust: dict[str, TrustLevel] = Field(default_factory=dict)  # per-discipline tier (overrides trust_level)
+
+    @model_validator(mode="after")
+    def _default_username(self) -> "DeveloperProfile":
+        if not self.username:
+            self.username = self.gitlab_username
+        return self
+
+    def trust_in(self, discipline: str | None) -> TrustLevel:
+        """Per-discipline trust, falling back to the overall trust_level."""
+        return self.trust.get(discipline or "", self.trust_level)
 
 
 # ── REST request/response helpers (spec §5.4) ───────────────────────

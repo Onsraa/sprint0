@@ -106,7 +106,8 @@ async def _match_and_assign(plan: PlanJSON, m: MongoMCP) -> None:
     skill_dev: dict[str, list[dict]] = {}
     for skill, vec in zip(skills, skill_vecs):
         skill_dev[skill] = await m.vector_search(
-            DEV_COLL, DEV_INDEX, "skill_embedding", vec, k=3, projection={"name": 1, "gitlab_username": 1, "trust_level": 1}
+            DEV_COLL, DEV_INDEX, "skill_embedding", vec, k=5,
+            projection={"name": 1, "gitlab_username": 1, "trust_level": 1, "trust": 1, "discipline": 1, "load": 1, "role": 1},
         )
     assign_developers(plan, skill_dev)
 
@@ -186,14 +187,30 @@ async def onboard_developer(cv_text: str) -> dict:
     """Cold-Start onboarding (Idea: add a runner): CV → Gemini parse → upsert a
     DeveloperProfile (Trust: Low) into Atlas via the MCP."""
     profile = await generate_cv_profile(cv_text)
+    gl_user = None
+    try:
+        from app import gitlab as gl
+        gl_user = gl.search_user(profile.gitlab_username)  # link the real GitLab account (native assignee)
+    except Exception:
+        pass
     doc = {
         "name": profile.name,
         "gitlab_username": profile.gitlab_username,
+        "username": profile.gitlab_username,
+        "email": "",
         "skills_text": profile.skills_text,
         "skill_embedding": embed_document(profile.skills_text),
+        "role": "developer",
+        "discipline": None,          # manager may set; None → out-of-discipline work is flagged stretch
+        "seniority": "junior",
+        "load": 0,
+        "gitlab_user_id": gl_user["id"] if gl_user else None,
         "trust_level": "low",
+        "trust": {},
         "history": [],
     }
     async with MongoMCP() as m:
         await m.insert_many(DEV_COLL, [doc])
-    return {k: v for k, v in doc.items() if k != "skill_embedding"}
+    out = {k: v for k, v in doc.items() if k != "skill_embedding"}
+    out["gitlab_linked"] = gl_user is not None
+    return out

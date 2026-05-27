@@ -8,7 +8,7 @@ appends to an existing project instead of scaffolding a new one.
 from __future__ import annotations
 
 from app import gitlab as gl
-from app import handoff
+from app import handoff, team
 from app.contracts import Issue, PlanJSON
 
 _TYPE_COLOR = {"backend": "#2A6FDB", "frontend": "#F4511E", "db": "#0F8E5C", "devops": "#7C3AED", "design": "#D97706"}
@@ -42,6 +42,7 @@ def _issue_body(issue: Issue, clone_url: str = "") -> str:
     foot = (
         f"\n\n**Runner (baton):** @{issue.assignee or 'unassigned'} · kind: `{issue.kind}` · "
         f"risk: `{issue.risk}` · skill: `{issue.required_skill}` · est: {issue.estimate_days}d"
+        + (f"\n\n> ⚠ **Stretch assignment:** {issue.stretch_flag}" if issue.stretch_flag else "")
     )
     if issue.kind in ("code", "infra"):
         files = "\n".join(f"- `{f}`" for f in issue.context_scope.files)
@@ -96,6 +97,11 @@ def _plan_labels(plan: PlanJSON) -> dict[str, str]:
     return labels
 
 
+def _gitlab_uid(username: str | None) -> int | None:
+    m = team.get(username or "")
+    return m.gitlab_user_id if m else None
+
+
 def _issue_dicts(plan: PlanJSON, clone_url: str = "") -> list[dict]:
     out: list[dict] = []
     for epic in plan.epics:
@@ -103,8 +109,24 @@ def _issue_dicts(plan: PlanJSON, clone_url: str = "") -> list[dict]:
             lbls = [f"type:{i.type}", f"risk:{i.risk}", f"epic:{epic.id}"]
             if i.assignee:
                 lbls.append(f"runner:{i.assignee}")
-            out.append({"title": f"[{epic.title}] {i.title}", "description": _issue_body(i, clone_url), "labels": lbls})
+            if i.stretch_flag:
+                lbls.append("stretch")
+            uid = _gitlab_uid(i.assignee)
+            out.append({
+                "title": f"[{epic.title}] {i.title}", "description": _issue_body(i, clone_url),
+                "labels": lbls, "assignee_ids": [uid] if uid else [],
+            })
     return out
+
+
+def _invite_assignees(project_id: int, plan: PlanJSON) -> None:
+    """Native assignees must be project members — invite each assigned member (best-effort)."""
+    uids = {uid for e in plan.epics for i in e.issues if (uid := _gitlab_uid(i.assignee))}
+    for uid in uids:
+        try:
+            gl.add_member(project_id, uid)
+        except Exception:
+            pass  # already a member
 
 
 def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: bool = True) -> dict:
@@ -131,6 +153,7 @@ def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: 
         branch=scaf["default_branch"],
     )
 
+    _invite_assignees(pid, plan)  # native assignees must be project members first
     created = gl.create_issues(pid, _issue_dicts(plan, scaf.get("clone_url", "")))
 
     extra: dict = {}
@@ -149,6 +172,7 @@ def extend_project(plan: PlanJSON, project_id: int, default_branch: str = "main"
     """Mid-prod: append a delta plan's issues + focus branches to an EXISTING project."""
     clone_url = gl.get_project(project_id).get("http_url_to_repo", "")
     gl.create_labels(project_id, _plan_labels(plan))
+    _invite_assignees(project_id, plan)
     created = gl.create_issues(project_id, _issue_dicts(plan, clone_url))
     branches = handoff.commit_context_branches(project_id, plan, default_branch=default_branch)
     return {"issues_created": len(created), "context_branches": len(branches)}

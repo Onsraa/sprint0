@@ -1,0 +1,62 @@
+{
+  "_note": "Per-account demo team. Fill each gitlab_username with a REAL GitLab account you control (for native assignees). The junior is added LIVE in the demo via CV onboarding, not seeded here.",
+  "manager": {
+    "name": "Mona Reyes",
+    "gitlab_username": "FILL_MANAGER_GITLAB",
+    "role": "manager",
+    "seniority": "senior",
+    "skills_text": "engineering manager — delivery, staffing, architecture review, stakeholder comms"
+  },
+  "members": [
+    {
+      "name": "Sol Vega",
+      "gitlab_username": "FILL_SENIOR_GITLAB",
+      "role": "developer",
+      "discipline": "backend",
+      "seniority": "senior",
+      "load": 100,
+      "trust": { "backend": "high", "frontend": "high", "devops": "high", "qa": "high" },
+      "skills_text": "senior full-stack engineer — Node, Python, Postgres, Stripe payments, infra/CI-CD, security, code review; mentors juniors"
+    },
+    {
+      "name": "Bea Oneko",
+      "gitlab_username": "FILL_BACKEND_GITLAB",
+      "role": "developer",
+      "discipline": "backend",
+      "seniority": "mid",
+      "load": 0,
+      "trust": { "backend": "high" },
+      "skills_text": "backend engineer — Node, Express, Postgres, REST APIs, auth, webhooks"
+    },
+    {
+      "name": "Finn Park",
+      "gitlab_username": "FILL_FRONTEND_GITLAB",
+      "role": "developer",
+      "discipline": "frontend",
+      "seniority": "mid",
+      "load": 0,
+      "trust": { "frontend": "high" },
+      "skills_text": "frontend engineer — React, TypeScript, Vite, UI state, maps, accessibility"
+    },
+    {
+      "name": "Quinn Diaz",
+      "gitlab_username": "FILL_QA_GITLAB",
+      "role": "developer",
+      "discipline": "qa",
+      "seniority": "mid",
+      "load": 0,
+      "trust": { "qa": "high" },
+      "skills_text": "QA engineer — end-to-end testing, acceptance criteria, Playwright, bug triage, release sign-off"
+    }
+  ],
+  "senior_project": {
+    "name": "atlas-billing-revamp",
+    "client_summary": "Internal billing-ledger revamp — Sol's current full-time engagement.",
+    "issues": [
+      "Migrate invoicing to the new double-entry ledger",
+      "Backfill historical transactions + reconciliation job",
+      "Harden Stripe webhook retries + idempotency",
+      "Cut over reporting to the new ledger schema"
+    ]
+  }
+}

@@ -12,7 +12,7 @@ import io
 import uuid
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,7 +20,7 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import handoff, relay
+from app import auth, handoff, relay, staffing, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
@@ -28,7 +28,7 @@ from app.contracts import (
     QAReport, RatifyRequest, RelayState,
 )
 from app.execute import execute_plan, extend_project
-from app.rag import get_project_record, record_merge, save_project_record, update_project_record
+from app.rag import all_project_records, get_project_record, record_merge, save_project_record, update_project_record
 from app.reason import (
     clarify_brief, close_project, delta_brief, onboard_developer, propose_architectures, qa_review, run_brief,
 )
@@ -62,14 +62,58 @@ PROJECTS: dict[int, PlanJSON] = {}  # project_id → live plan (for QA review + 
 REQA: dict[int, set] = {}  # project_id → reopened issue iids awaiting re-QA (the reject→fix→re-QA loop)
 
 
-def _dev_trust() -> dict[str, str]:
-    """gitlab_username → trust_level for the roster (onboarded/unknown default to low)."""
-    return {d.gitlab_username: d.trust_level for d in CANNED_DEVELOPERS}
+def _dev_trust() -> dict[str, dict]:
+    """username / gitlab_username → {trust: per-discipline dict, trust_level} for relay auto-pass."""
+    out: dict[str, dict] = {}
+    for mbr in team.all_members() or CANNED_DEVELOPERS:
+        entry = {"trust": getattr(mbr, "trust", {}) or {}, "trust_level": mbr.trust_level}
+        out[mbr.username if hasattr(mbr, "username") and mbr.username else mbr.gitlab_username] = entry
+        out[mbr.gitlab_username] = entry
+    return out
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "phase": 4, "service": "baton"}
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    """Load the team roster + persisted projects so per-account views are instant + complete."""
+    try:
+        await team.refresh()
+        for rec in await all_project_records():
+            if rec.get("plan"):
+                PROJECTS[rec["project_id"]] = PlanJSON(**rec["plan"])
+    except Exception:
+        pass  # Atlas may be momentarily unreachable; lazy-load on first authed request
+
+
+class LoginRequest(BaseModel):
+    username: str
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: LoginRequest) -> dict:
+    """Pick-your-account login (demo, no password). Token = username; sent as X-Baton-User."""
+    return await auth.login(req.username)
+
+
+@app.get("/api/me", response_model=DeveloperProfile)
+async def me(member: DeveloperProfile = Depends(auth.current_member)) -> DeveloperProfile:
+    return member
+
+
+@app.get("/api/me/issues")
+async def my_issues(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Every issue across known projects assigned to the caller — real, empty until assigned."""
+    out = []
+    for pid, plan in PROJECTS.items():
+        for epic in plan.epics:
+            for i in epic.issues:
+                if i.assignee in (member.username, member.gitlab_username):
+                    out.append({"project_id": pid, "project": plan.project_name, "epic": epic.title, "issue": i.model_dump()})
+    return {"username": member.username, "count": len(out), "issues": out}
 
 
 @app.post("/api/briefs")
@@ -162,15 +206,31 @@ async def apply_dial(plan_id: str, req: DialRequest) -> RelayState:
 
 
 @app.post("/api/plans/{plan_id}/ratify/{discipline}", response_model=RelayState)
-async def ratify_gate(plan_id: str, discipline: str, req: RatifyRequest) -> RelayState:
-    """A discipline lead adjusts their slice (edits) and passes the baton."""
+async def ratify_gate(
+    plan_id: str, discipline: str, req: RatifyRequest,
+    member: DeveloperProfile = Depends(auth.current_member),
+) -> RelayState:
+    """The discipline lead — or the MANAGER, for an orphan gate (no one holds that discipline) —
+    adjusts the slice and passes the baton."""
     state, plan = RELAYS.get(plan_id), PLANS.get(plan_id)
     if state is None or plan is None:
         raise HTTPException(404, "plan not found")
     if discipline not in {g.discipline for g in state.gates}:
         raise HTTPException(404, f"no {discipline} gate")
+    if member.role != "manager" and member.discipline != discipline:
+        raise HTTPException(403, f"only the {discipline} lead or the manager can ratify this gate")
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
     return state
+
+
+@app.get("/api/plans/{plan_id}/staffing")
+async def plan_staffing(plan_id: str) -> dict:
+    """Team-coverage + gap recommendations (who to stretch / onboard) for the manager."""
+    plan = PLANS.get(plan_id)
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    await team.ensure_loaded()
+    return {"coverage": staffing.coverage(plan, team.all_members())}
 
 
 @app.post("/api/plans/{plan_id}/approve")
@@ -294,7 +354,8 @@ async def merge(req: MergeRequest) -> dict:
 
 @app.get("/api/developers", response_model=list[DeveloperProfile])
 async def list_developers() -> list[DeveloperProfile]:
-    return CANNED_DEVELOPERS
+    await team.ensure_loaded()
+    return team.developers() or CANNED_DEVELOPERS
 
 
 @app.post("/api/developers", response_model=DeveloperProfile)
@@ -311,7 +372,9 @@ async def add_developer(text: Optional[str] = Form(None), file: Optional[UploadF
             cv = raw.decode("utf-8", "ignore").strip()
     if not cv:
         raise HTTPException(400, "empty CV")
-    return DeveloperProfile(**await onboard_developer(cv))
+    member = DeveloperProfile(**await onboard_developer(cv))
+    await team.refresh()  # the new member joins the roster immediately (login + assignment pool)
+    return member
 
 
 @app.websocket("/api/plans/{plan_id}/events")

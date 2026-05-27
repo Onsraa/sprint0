@@ -66,8 +66,14 @@ def _recompute_baton(state: RelayState) -> None:
     state.baton = baton
 
 
-def auto_pass(state: RelayState, plan: PlanJSON, dev_trust: dict[str, str], dial: int) -> None:
-    """Auto-ratify any active gate whose whole slice clears trust×risk under the dial.
+def _tier(dev_trust: dict[str, dict], username: str | None, discipline: str) -> str:
+    """The assignee's PER-DISCIPLINE trust (falls back to their overall trust_level)."""
+    m = dev_trust.get(username or "", {})
+    return (m.get("trust") or {}).get(discipline) or m.get("trust_level", "low")
+
+
+def auto_pass(state: RelayState, plan: PlanJSON, dev_trust: dict[str, dict], dial: int) -> None:
+    """Auto-ratify any active gate whose whole slice clears per-discipline trust×risk under the dial.
     Cascades: passing uiux+backend can unlock frontend, which may then auto-pass too."""
     by_disc = _issues_by_discipline(plan)
     all_issues = [i for e in plan.epics for i in e.issues]
@@ -82,7 +88,7 @@ def auto_pass(state: RelayState, plan: PlanJSON, dev_trust: dict[str, str], dial
             issues = all_issues if g.discipline == "qa" else by_disc.get(g.discipline, [])  # qa accepts everything
             cleared = bool(issues) and all(
                 _RANK[i.risk] <= max_auto
-                and _RANK.get(dev_trust.get(i.assignee or "", "low"), 0) >= _RANK[i.risk]
+                and _RANK.get(_tier(dev_trust, i.assignee, i.discipline), 0) >= _RANK[i.risk]
                 for i in issues
             )
             if cleared:

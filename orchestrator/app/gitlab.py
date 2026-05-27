@@ -58,6 +58,21 @@ def get_project(project_id: int) -> dict:
         return r.json()
 
 
+def search_user(username: str) -> dict | None:
+    """Find a real GitLab user by username (for native-assignee linking)."""
+    with _client() as c:
+        r = c.get("/users", params={"username": username})
+        r.raise_for_status()
+        users = r.json()
+        return users[0] if users else None
+
+
+def add_member(project_id: int, user_id: int, access_level: int = 30) -> None:
+    """Invite a user to a project (Developer=30) so they can be a native assignee. Dupes ignored."""
+    with _client() as c:
+        c.post(f"/projects/{project_id}/members", json={"user_id": user_id, "access_level": access_level})
+
+
 def create_labels(project_id: int, labels: dict[str, str]) -> None:
     """Best-effort label creation on an existing project (dupes ignored). Used by mid-prod."""
     with _client() as c:
@@ -84,10 +99,10 @@ def create_issues(project_id: int, issues: list[dict]) -> list[dict]:
     out = []
     with _client() as c:
         for iss in issues:
-            r = c.post(
-                f"/projects/{project_id}/issues",
-                json={"title": iss["title"], "description": iss["description"], "labels": ",".join(iss.get("labels", []))},
-            )
+            body = {"title": iss["title"], "description": iss["description"], "labels": ",".join(iss.get("labels", []))}
+            if iss.get("assignee_ids"):
+                body["assignee_ids"] = iss["assignee_ids"]  # native GitLab assignees (real avatars)
+            r = c.post(f"/projects/{project_id}/issues", json=body)
             r.raise_for_status()
             j = r.json()
             out.append({"iid": j["iid"], "web_url": j["web_url"]})

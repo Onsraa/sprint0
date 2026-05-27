@@ -59,9 +59,22 @@ def embed_document(text: str) -> list[float]:
     return _embed([text], input_type="document")[0]
 
 
-def _promote(history: list[dict]) -> str:
-    """Trust tier from the merge record: low → medium (≥3 good merges) → high (≥6, avg ≥0.8)."""
-    good = [h for h in history if h.get("score", 0) >= 0.7]
+_RANK = {"low": 0, "medium": 1, "high": 2}
+_DISC_ALIAS = {"db": "backend", "design": "uiux"}
+
+
+def _discipline_of(task_type: str) -> str:
+    a = (task_type or "").split(":")[0].strip().lower()
+    return _DISC_ALIAS.get(a, a)
+
+
+def _promote(history: list[dict], discipline: str | None = None) -> str:
+    """Trust tier from good merges (score ≥0.7), optionally scoped to one discipline:
+    low → medium (≥3) → high (≥6, avg ≥0.8)."""
+    good = [
+        h for h in history
+        if h.get("score", 0) >= 0.7 and (discipline is None or _discipline_of(h.get("task_type", "")) == discipline)
+    ]
     n = len(good)
     avg = sum(h.get("score", 0) for h in good) / n if n else 0
     if n >= 6 and avg >= 0.8:
@@ -72,27 +85,37 @@ def _promote(history: list[dict]) -> str:
 
 
 async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85) -> dict:
-    """Passport-increment-on-merge (Idea 2): push a history entry (MongoDB WRITE via the MCP),
-    then auto-promote trust_level when the track record earns it."""
+    """Passport-increment-on-merge: push a history entry, then grow the merged DISCIPLINE's
+    trust + the skill profile — the passport becomes living per-discipline (junior → UI/UX)."""
+    disc = _discipline_of(task_type)
     async with MongoMCP() as m:
         await m.update_many(
-            DEV_COLL,
-            {"gitlab_username": gitlab_username},
+            DEV_COLL, {"gitlab_username": gitlab_username},
             {"$push": {"history": {"task_type": task_type, "score": score, "via": "baton-merge"}}},
         )
         rows = await m.find(
             DEV_COLL,
-            projection={"_id": 0, "gitlab_username": 1, "trust_level": 1, "history": 1},
+            projection={"_id": 0, "gitlab_username": 1, "trust_level": 1, "trust": 1, "history": 1, "skills_text": 1},
             query={"gitlab_username": gitlab_username},
         )
         if not rows:
             return {}
         dev = rows[0]
-        new_trust = _promote(dev.get("history", []))
-        if new_trust != dev.get("trust_level"):
-            await m.update_many(DEV_COLL, {"gitlab_username": gitlab_username}, {"$set": {"trust_level": new_trust}})
-            dev["trust_level"], dev["promoted"] = new_trust, True
-    return dev
+        trust = dev.get("trust") or {}
+        new_tier = _promote(dev.get("history", []), disc)
+        promoted = new_tier != trust.get(disc)
+        trust[disc] = new_tier
+        overall = max(trust.values(), key=lambda t: _RANK.get(t, 0), default="low")
+        sets: dict = {"trust": trust, "trust_level": overall}
+        skills = dev.get("skills_text", "")
+        if disc and disc not in skills.lower():  # grew into a new discipline → extend + re-embed
+            skills = f"{skills}, {disc}".strip(", ")
+            sets["skills_text"] = skills
+            sets["skill_embedding"] = embed_document(skills)
+        await m.update_many(DEV_COLL, {"gitlab_username": gitlab_username}, {"$set": sets})
+        dev.update(sets)
+        dev["promoted"], dev["grew_discipline"] = promoted, disc
+    return {k: v for k, v in dev.items() if k != "skill_embedding"}
 
 
 async def save_project_record(record: dict) -> None:
@@ -111,6 +134,11 @@ async def get_project_record(project_id: int) -> dict:
     async with MongoMCP() as m:
         rows = await m.find(PROJ_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=1)
     return rows[0] if rows else {}
+
+
+async def all_project_records() -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(PROJ_COLL, projection={"_id": 0}, limit=50)
 
 
 async def record_postmortem(doc: dict) -> None:
