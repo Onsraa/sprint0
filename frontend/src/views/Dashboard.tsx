@@ -1,6 +1,5 @@
 import { useApp } from "../app/AppContext";
 import type { ProjectStatus } from "../app/types";
-import { Mascot } from "../components/Mascot";
 
 const statusMap: Record<ProjectStatus, { t: string; c: string }> = {
   parsing: { t: "Parsing", c: "var(--info)" },
@@ -27,45 +26,31 @@ export function Dashboard() {
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
       {/* Hero strip */}
       <div
-        className="card"
         style={{
-          padding: 28,
+          padding: "28px 0",
           marginBottom: 28,
-          background: "linear-gradient(110deg, var(--orange) 0%, var(--orange-deep) 100%)",
-          color: "var(--paper)",
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: "flex-end",
+          borderBottom: "1.5px solid var(--line)",
         }}
       >
         <div>
-          <div className="kicker" style={{ color: "rgba(255,255,255,0.7)" }}>
-            This week
+          <div className="kicker">This week</div>
+          <div className="display" style={{ fontSize: 36, marginTop: 6 }}>
+            2 sprints shipped. 47 issues closed.
           </div>
-          <div className="display" style={{ fontSize: 32, marginTop: 6 }}>
-            baton shipped 2 sprints + 47 issues.
+          <div style={{ fontSize: 13, color: "var(--ink-mute)", marginTop: 6, fontFamily: "var(--font-mono)" }}>
+            avg brief → scaffold: 53s · 0 escalations
           </div>
-          <div style={{ fontSize: 14, opacity: 0.9, marginTop: 6 }}>avg time brief → scaffold: 53s · 0 escalations</div>
         </div>
-        <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
-          <div className="wiggle">
-            <Mascot size={92} expression="cheer" outline="var(--paper)" color="var(--orange-deep)" />
-          </div>
-          <button
-            onClick={newProject}
-            className="btn"
-            style={{
-              background: "var(--paper)",
-              color: "var(--ink)",
-              borderColor: "var(--ink)",
-              boxShadow: "0 4px 0 var(--ink)",
-              padding: "16px 24px",
-              fontSize: 15,
-            }}
-          >
-            + New project
-          </button>
-        </div>
+        <button
+          onClick={newProject}
+          className="btn btn-primary"
+          style={{ padding: "16px 24px", fontSize: 15 }}
+        >
+          + New project
+        </button>
       </div>
 
       {liveProjectId != null && (
@@ -82,23 +67,6 @@ export function Dashboard() {
           </button>
         </div>
       )}
-
-      {/* Quick stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 28 }}>
-        {[
-          { l: "Active sprints", n: "2", c: "var(--orange)" },
-          { l: "In review", n: "1", c: "var(--warn)" },
-          { l: "Shipped this Q", n: "8", c: "var(--positive)" },
-          { l: "Memory size", n: "127", c: "var(--info)" },
-        ].map((s, i) => (
-          <div key={i} className="card-soft card-hover" style={{ padding: 16 }}>
-            <div className="kicker">{s.l}</div>
-            <div className="display" style={{ fontSize: 40, color: s.c, marginTop: 4 }}>
-              {s.n}
-            </div>
-          </div>
-        ))}
-      </div>
 
       {/* Project list */}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>

@@ -50,6 +50,7 @@ export function WizardBrief() {
     relay,
     setRelay,
     setLiveProjectId,
+    setLiveCloneUrl,
   } = useApp();
 
   const isFeature = featureProjectId != null;
@@ -192,7 +193,7 @@ export function WizardBrief() {
             />
           )}
           {step === 4 && <StepTrust state={state} setState={setState} planId={planId} relay={relay} setRelay={setRelay} />}
-          {step === 5 && <StepDispatch planId={planId} setRelay={setRelay} setLiveProjectId={setLiveProjectId} onClose={close} />}
+          {step === 5 && <StepDispatch planId={planId} setRelay={setRelay} setLiveProjectId={setLiveProjectId} setLiveCloneUrl={setLiveCloneUrl} onClose={close} />}
         </div>
 
         {/* Footer nav (dispatch step has its own controls) */}
@@ -973,11 +974,13 @@ function StepDispatch({
   planId,
   setRelay,
   setLiveProjectId,
+  setLiveCloneUrl,
   onClose,
 }: {
   planId: string | null;
   setRelay: Dispatch<SetStateAction<RelayState | null>>;
   setLiveProjectId: Dispatch<SetStateAction<number | null>>;
+  setLiveCloneUrl: Dispatch<SetStateAction<string | null>>;
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -993,6 +996,7 @@ function StepDispatch({
       const res = await api.dispatch(planId, mode);
       setResult(res);
       setLiveProjectId(res.project_id);
+      setLiveCloneUrl(res.clone_url || (res.web_url ? res.web_url + ".git" : null));
       try {
         setRelay(await api.relay(planId));
       } catch {

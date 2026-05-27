@@ -39,3 +39,12 @@
 #root {
   min-height: 100vh;
 }
+
+/* Global input focus ring — replaces outline:none pattern throughout */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  border-color: var(--orange) !important;
+  box-shadow: 0 0 0 3px var(--orange-soft) !important;
+  outline: none;
+}

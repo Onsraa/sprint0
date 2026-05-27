@@ -36,7 +36,7 @@ test:
 """
 
 
-def _issue_body(issue: Issue) -> str:
+def _issue_body(issue: Issue, clone_url: str = "") -> str:
     """Body is polymorphic on kind — the execution surface, not the workflow, changes."""
     head = f"{issue.description}\n\n---\n"
     foot = (
@@ -45,9 +45,15 @@ def _issue_body(issue: Issue) -> str:
     )
     if issue.kind in ("code", "infra"):
         files = "\n".join(f"- `{f}`" for f in issue.context_scope.files)
+        bid = issue.id.lower()
+        if clone_url:
+            repo_dir = clone_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
+            fetch = f"git clone {clone_url} && cd {repo_dir} && git checkout baton/{bid} && bash .baton/focus.sh && code ."
+        else:
+            fetch = f"git checkout baton/{bid} && bash .baton/focus.sh && code ."
         body = (
             f"🎯 **Micro-context** — you only need:\n{files}\n\n> {issue.context_scope.note}\n\n"
-            f"```sh\ngit checkout baton/{issue.id.lower()} && bash .baton/focus.sh\n```"
+            f"**Fetch → focus → open** (VSCode; swap `code .` for your editor):\n```sh\n{fetch}\n```"
         )
         if issue.api_contract:
             body += f"\n\n**API contract (mock payload) — produced here:**\n```json\n{issue.api_contract}\n```"
@@ -90,14 +96,14 @@ def _plan_labels(plan: PlanJSON) -> dict[str, str]:
     return labels
 
 
-def _issue_dicts(plan: PlanJSON) -> list[dict]:
+def _issue_dicts(plan: PlanJSON, clone_url: str = "") -> list[dict]:
     out: list[dict] = []
     for epic in plan.epics:
         for i in epic.issues:
             lbls = [f"type:{i.type}", f"risk:{i.risk}", f"epic:{epic.id}"]
             if i.assignee:
                 lbls.append(f"runner:{i.assignee}")
-            out.append({"title": f"[{epic.title}] {i.title}", "description": _issue_body(i), "labels": lbls})
+            out.append({"title": f"[{epic.title}] {i.title}", "description": _issue_body(i, clone_url), "labels": lbls})
     return out
 
 
@@ -125,7 +131,7 @@ def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: 
         branch=scaf["default_branch"],
     )
 
-    created = gl.create_issues(pid, _issue_dicts(plan))
+    created = gl.create_issues(pid, _issue_dicts(plan, scaf.get("clone_url", "")))
 
     extra: dict = {}
     if with_handoff:  # per-kind focus branches + a QA-only issue (the relay's tail)
@@ -134,14 +140,15 @@ def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: 
         extra = {"context_branches": len(branches), "qa_issue_iid": qa.get("iid")}
 
     return {
-        "web_url": scaf["web_url"], "project_id": pid, "default_branch": scaf["default_branch"],
-        "issues_created": len(created), **extra,
+        "web_url": scaf["web_url"], "clone_url": scaf.get("clone_url", ""), "project_id": pid,
+        "default_branch": scaf["default_branch"], "issues_created": len(created), **extra,
     }
 
 
 def extend_project(plan: PlanJSON, project_id: int, default_branch: str = "main") -> dict:
     """Mid-prod: append a delta plan's issues + focus branches to an EXISTING project."""
+    clone_url = gl.get_project(project_id).get("http_url_to_repo", "")
     gl.create_labels(project_id, _plan_labels(plan))
-    created = gl.create_issues(project_id, _issue_dicts(plan))
+    created = gl.create_issues(project_id, _issue_dicts(plan, clone_url))
     branches = handoff.commit_context_branches(project_id, plan, default_branch=default_branch)
     return {"issues_created": len(created), "context_branches": len(branches)}

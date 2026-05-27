@@ -133,6 +133,7 @@ export interface DispatchResult {
   plan_id: string;
   mode: "copilot" | "autonomous";
   web_url: string;
+  clone_url?: string;
   project_id: number;
   default_branch: string;
   issues_created: number;

@@ -44,6 +44,9 @@ interface AppContextValue {
   /** GitLab project id once dispatched (for QA / mid-prod). */
   liveProjectId: number | null;
   setLiveProjectId: Dispatch<SetStateAction<number | null>>;
+  /** GitLab clone URL of the dispatched project (for the dev fetch block). */
+  liveCloneUrl: string | null;
+  setLiveCloneUrl: Dispatch<SetStateAction<string | null>>;
 }
 
 const AppCtx = createContext<AppContextValue | null>(null);
@@ -87,6 +90,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [planId, setPlanId] = useState<string | null>(null);
   const [relay, setRelay] = useState<RelayState | null>(null);
   const [liveProjectId, setLiveProjectId] = useState<number | null>(null);
+  const [liveCloneUrl, setLiveCloneUrl] = useState<string | null>(null);
 
   useEffect(() => {
     LS.set("role", role);
@@ -181,6 +185,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setRelay,
     liveProjectId,
     setLiveProjectId,
+    liveCloneUrl,
+    setLiveCloneUrl,
   };
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

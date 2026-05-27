@@ -157,7 +157,7 @@ function IssueEditor({
 }) {
   const isBackend = value.discipline === "backend";
   return (
-    <div className="card-soft" style={{ padding: 16, borderLeft: `4px solid ${accent}` }}>
+    <div className="card-soft" style={{ padding: 16, borderColor: accent }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span className="mono" style={{ fontSize: 12, color: "var(--ink-mute)" }}>
           {value.id}
@@ -262,7 +262,6 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 8,
   fontSize: 14,
   background: "var(--paper)",
-  outline: "none",
   fontFamily: "inherit",
   width: "100%",
 };

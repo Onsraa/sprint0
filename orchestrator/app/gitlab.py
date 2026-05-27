@@ -47,7 +47,15 @@ def create_project_scaffold(
         p = r.json()
         for name, color in (labels or {}).items():
             c.post(f"/projects/{p['id']}/labels", json={"name": name, "color": color})  # ignore dupes
-        return {"project_id": p["id"], "web_url": p["web_url"], "default_branch": p.get("default_branch", "main")}
+        return {"project_id": p["id"], "web_url": p["web_url"], "clone_url": p.get("http_url_to_repo", ""), "default_branch": p.get("default_branch", "main")}
+
+
+def get_project(project_id: int) -> dict:
+    """Fetch a project's metadata (for its clone URL / default branch)."""
+    with _client() as c:
+        r = c.get(f"/projects/{project_id}")
+        r.raise_for_status()
+        return r.json()
 
 
 def create_labels(project_id: int, labels: dict[str, str]) -> None:

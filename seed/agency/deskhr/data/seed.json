@@ -1,0 +1,136 @@
+{
+  "_comment": "Bundled demo dataset for DeskHR. No database required — the API routes read this file directly. The reference week (Mon 2026-05-25 .. Sun 2026-05-31) is fixed so utilization, attrition, and shift-conflict demos are deterministic regardless of the real date.",
+  "referenceWeek": { "start": "2026-05-25", "end": "2026-05-31" },
+  "departments": [
+    { "id": 1, "name": "Support" },
+    { "id": 2, "name": "Operations" },
+    { "id": 3, "name": "Engineering" }
+  ],
+  "employees": [
+    {
+      "id": 1,
+      "full_name": "Ada Okafor",
+      "email": "ada@deskhr.example",
+      "role": "hr_admin",
+      "department_id": 3,
+      "manager_id": null,
+      "weekly_contract_hours": 40,
+      "hired_at": "2023-02-01",
+      "terminated_at": null
+    },
+    {
+      "id": 2,
+      "full_name": "Bruno Castellano",
+      "email": "bruno@deskhr.example",
+      "role": "manager",
+      "department_id": 1,
+      "manager_id": 1,
+      "weekly_contract_hours": 40,
+      "hired_at": "2023-06-15",
+      "terminated_at": null
+    },
+    {
+      "id": 3,
+      "full_name": "Chen Wei",
+      "email": "chen@deskhr.example",
+      "role": "employee",
+      "department_id": 1,
+      "manager_id": 2,
+      "weekly_contract_hours": 40,
+      "hired_at": "2024-01-10",
+      "terminated_at": null
+    },
+    {
+      "id": 4,
+      "full_name": "Dolores Reyes",
+      "email": "dolores@deskhr.example",
+      "role": "employee",
+      "department_id": 1,
+      "manager_id": 2,
+      "weekly_contract_hours": 30,
+      "hired_at": "2024-03-22",
+      "terminated_at": null
+    },
+    {
+      "id": 5,
+      "full_name": "Ezra Whitfield",
+      "email": "ezra@deskhr.example",
+      "role": "employee",
+      "department_id": 2,
+      "manager_id": 2,
+      "weekly_contract_hours": 40,
+      "hired_at": "2023-09-05",
+      "terminated_at": null
+    },
+    {
+      "id": 6,
+      "full_name": "Fatima Noor",
+      "email": "fatima@deskhr.example",
+      "role": "employee",
+      "department_id": 2,
+      "manager_id": 2,
+      "weekly_contract_hours": 40,
+      "hired_at": "2022-11-30",
+      "terminated_at": null
+    },
+    {
+      "id": 7,
+      "full_name": "Gregor Halvorsen",
+      "email": "gregor@deskhr.example",
+      "role": "employee",
+      "department_id": 3,
+      "manager_id": 1,
+      "weekly_contract_hours": 40,
+      "hired_at": "2024-02-18",
+      "terminated_at": null
+    },
+    {
+      "id": 8,
+      "full_name": "Priya Anand",
+      "email": "priya@deskhr.example",
+      "role": "employee",
+      "department_id": 2,
+      "manager_id": 2,
+      "weekly_contract_hours": 40,
+      "hired_at": "2023-04-01",
+      "terminated_at": "2026-05-12"
+    }
+  ],
+  "shifts": [
+    { "id": 1, "employee_id": 3, "starts_at": "2026-05-25T09:00:00", "ends_at": "2026-05-25T17:00:00", "role_label": "Support desk" },
+    { "id": 2, "employee_id": 3, "starts_at": "2026-05-26T09:00:00", "ends_at": "2026-05-26T17:00:00", "role_label": "Support desk" },
+    { "id": 3, "employee_id": 3, "starts_at": "2026-05-27T09:00:00", "ends_at": "2026-05-27T17:00:00", "role_label": "Support desk" },
+    { "id": 4, "employee_id": 4, "starts_at": "2026-05-25T10:00:00", "ends_at": "2026-05-25T16:00:00", "role_label": "Support desk" },
+    { "id": 5, "employee_id": 4, "starts_at": "2026-05-27T10:00:00", "ends_at": "2026-05-27T16:00:00", "role_label": "Support desk" },
+
+    { "id": 6, "employee_id": 5, "starts_at": "2026-05-25T06:00:00", "ends_at": "2026-05-25T16:00:00", "role_label": "Ops floor" },
+    { "id": 7, "employee_id": 5, "starts_at": "2026-05-26T06:00:00", "ends_at": "2026-05-26T16:00:00", "role_label": "Ops floor" },
+    { "id": 8, "employee_id": 5, "starts_at": "2026-05-27T06:00:00", "ends_at": "2026-05-27T16:00:00", "role_label": "Ops floor" },
+    { "id": 9, "employee_id": 5, "starts_at": "2026-05-28T06:00:00", "ends_at": "2026-05-28T16:00:00", "role_label": "Ops floor" },
+    { "id": 10, "employee_id": 5, "starts_at": "2026-05-29T06:00:00", "ends_at": "2026-05-29T16:00:00", "role_label": "Ops floor" },
+
+    { "id": 11, "employee_id": 6, "starts_at": "2026-05-25T08:00:00", "ends_at": "2026-05-25T14:00:00", "role_label": "Ops floor" },
+    { "id": 12, "employee_id": 6, "starts_at": "2026-05-27T08:00:00", "ends_at": "2026-05-27T14:00:00", "role_label": "Ops floor" },
+
+    { "id": 13, "employee_id": 7, "starts_at": "2026-05-26T09:00:00", "ends_at": "2026-05-26T13:00:00", "role_label": "On-call" }
+  ],
+  "availability": [
+    { "employee_id": 3, "windows": [
+      { "start": "2026-05-25T08:00:00", "end": "2026-05-25T18:00:00" },
+      { "start": "2026-05-26T08:00:00", "end": "2026-05-26T18:00:00" },
+      { "start": "2026-05-27T08:00:00", "end": "2026-05-27T18:00:00" }
+    ] },
+    { "employee_id": 5, "windows": [
+      { "start": "2026-05-25T06:00:00", "end": "2026-05-25T20:00:00" },
+      { "start": "2026-05-26T06:00:00", "end": "2026-05-26T20:00:00" },
+      { "start": "2026-05-27T06:00:00", "end": "2026-05-27T20:00:00" },
+      { "start": "2026-05-28T06:00:00", "end": "2026-05-28T20:00:00" },
+      { "start": "2026-05-29T06:00:00", "end": "2026-05-29T20:00:00" }
+    ] },
+    { "employee_id": 4, "windows": [
+      { "start": "2026-05-25T08:00:00", "end": "2026-05-25T18:00:00" },
+      { "start": "2026-05-26T08:00:00", "end": "2026-05-26T18:00:00" },
+      { "start": "2026-05-27T08:00:00", "end": "2026-05-27T18:00:00" }
+    ] }
+  ]
+}

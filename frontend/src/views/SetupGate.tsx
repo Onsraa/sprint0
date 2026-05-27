@@ -175,33 +175,19 @@ function SetupWelcome() {
   return (
     <div>
       <div className="kicker">What I do</div>
-      <div className="display" style={{ fontSize: 32, margin: "6px 0 24px" }}>
+      <div className="display" style={{ fontSize: 32, margin: "6px 0 32px" }}>
         Three things, well.
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
         {bullets.map((b, i) => (
           <div
             key={i}
-            className="card-soft"
-            style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center", animation: `pop-in 400ms ${i * 0.12}s both` }}
+            style={{ display: "flex", gap: 16, alignItems: "flex-start", animation: `pop-in 400ms ${i * 0.12}s both` }}
           >
-            <div
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 8,
-                background: "var(--orange)",
-                color: "var(--paper)",
-                display: "grid",
-                placeItems: "center",
-                fontWeight: 800,
-                fontSize: 13,
-                border: "1.5px solid var(--ink)",
-              }}
-            >
-              {i + 1}
-            </div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>{b}</div>
+            <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: 13, color: "var(--orange)", minWidth: 20, paddingTop: 1 }}>
+              {String(i + 1).padStart(2, "0")}
+            </span>
+            <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.4 }}>{b}</div>
           </div>
         ))}
       </div>
@@ -399,14 +385,14 @@ function SetupReady() {
           <div
             key={i}
             className="card-soft card-hover"
-            style={{ padding: 16, display: "flex", alignItems: "center", gap: 14, animation: `pop-in 400ms ${i * 0.08}s both`, cursor: "pointer" }}
+            style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, animation: `pop-in 400ms ${i * 0.08}s both`, cursor: "pointer" }}
           >
-            <div style={{ width: 8, height: 40, background: c.color, borderRadius: 4 }} />
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 15 }}>{c.t}</div>
               <div style={{ fontSize: 12, color: "var(--ink-mute)" }}>{c.d}</div>
             </div>
-            <div style={{ fontSize: 18, color: "var(--ink-mute)" }}>→</div>
+            <span style={{ fontSize: 16, color: "var(--ink-faint)" }}>→</span>
           </div>
         ))}
       </div>

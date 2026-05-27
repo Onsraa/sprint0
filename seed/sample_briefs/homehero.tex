@@ -1,0 +1,70 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{hyperref}
+
+\definecolor{ink}{HTML}{1A1410}
+\definecolor{accent}{HTML}{F4511E}
+\definecolor{soft}{HTML}{5A5048}
+
+\titleformat{\section}{\large\bfseries\color{accent}}{}{0pt}{}
+\titlespacing{\section}{0pt}{12pt}{4pt}
+\setlist[itemize]{leftmargin=1.2em,itemsep=2pt,topsep=2pt}
+\hypersetup{hidelinks}
+\color{ink}
+\pagestyle{empty}
+
+\begin{document}
+
+{\Huge\bfseries HomeHero}\\[2pt]
+{\large\color{soft} Project Brief \textemdash{} working title}\\[6pt]
+{\color{soft}\textbf{Client:} HomeHero Inc. --- an on-demand home-services marketplace startup.}
+
+\vspace{8pt}\hrule\vspace{10pt}
+
+\section*{Context}
+HomeHero wants to launch a marketplace connecting homeowners with vetted local service pros
+(cleaners, handymen, electricians). Customers book and pay in-app; pros get jobs, navigate to the
+home, and get paid out. In their words: \textit{``Think Uber for home services, but trustworthy.''}
+
+\section*{Who uses it}
+\begin{itemize}
+  \item \textbf{Customers} --- browse pros, book + pay, track the pro en route, rate them.
+  \item \textbf{Service pros} (mobile, in the field) --- accept jobs, see their schedule, navigate, get paid.
+  \item \textbf{Ops admins} --- oversee pros, payouts, disputes, and marketplace health.
+\end{itemize}
+
+\section*{Must have}
+\begin{itemize}
+  \item Accounts + secure login for customers and pros (pros need ID verification).
+  \item In-app payments: customers pay per job; pros get payouts; the platform takes a cut. Plus a
+        ``HomeHero Plus'' subscription for frequent customers.
+  \item Live tracking: the customer sees the pro's location + ETA on a map once a job starts.
+  \item Notifications: booking confirmed, pro on the way, job done, payment receipt.
+  \item A pro dashboard (today's jobs, earnings, schedule) and an ops dashboard (active jobs, pro
+        utilization, revenue).
+  \item Scheduling: pros set availability; customers book open slots.
+\end{itemize}
+
+\section*{The new bits we're excited about (still fuzzy)}
+\begin{itemize}
+  \item \textbf{Surge pricing} when demand is high. \textit{(How is surge computed --- per area? time-based? capped?)}
+  \item \textbf{In-app chat} between customers and pros. \textit{(Real-time, or async messages? moderated?)}
+  \item \textbf{Photo-based reviews} --- customers post before/after photos. \textit{(Who moderates? required or optional? tied to the star rating?)}
+\end{itemize}
+
+\section*{Constraints / vibes}
+\begin{itemize}
+  \item Launch a pilot in one city in about 10 weeks.
+  \item Mobile-first for pros --- they're on phones in the field with spotty connectivity.
+  \item ``Reuse what we can --- we don't want to rebuild payments or maps from scratch.''
+\end{itemize}
+
+\vspace{8pt}
+{\color{soft}\textit{(No stack specified --- open to the team's recommendation.)}}
+
+\end{document}

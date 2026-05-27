@@ -1,6 +1,6 @@
 import { useApp } from "./AppContext";
 import type { Mode, Role, View } from "./types";
-import { Mascot, Sprint0Logo } from "../components/Mascot";
+import { Sprint0Logo } from "../components/Mascot";
 import { SetupGate } from "../views/SetupGate";
 import { Dashboard } from "../views/Dashboard";
 import { TeamView } from "../views/Team";
@@ -149,31 +149,18 @@ function Sidebar() {
         ))}
       </nav>
 
-      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
         <button
           onClick={() => setTweaksOpen(true)}
           style={{ fontSize: 12, color: "var(--ink-mute)", padding: "6px 10px", textAlign: "left", fontWeight: 600 }}
         >
           ⚙ Tweaks
         </button>
-        <div style={{ padding: 12, background: "var(--cream)", borderRadius: 12, border: "1.5px solid var(--line-strong)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <Mascot size={28} expression="happy" />
-            <div style={{ fontSize: 12, fontWeight: 700 }}>baton is awake</div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              gap: 6,
-              alignItems: "center",
-              fontSize: 10,
-              color: "var(--ink-mute)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--positive)" }} />
+        <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--positive)", flexShrink: 0 }} />
+          <span style={{ fontSize: 11, color: "var(--ink-mute)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>
             MCP · online
-          </div>
+          </span>
         </div>
       </div>
     </aside>

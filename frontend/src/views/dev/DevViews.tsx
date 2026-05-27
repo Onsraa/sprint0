@@ -23,7 +23,7 @@ interface Tier {
 
 /* Trust tier helper */
 function tierFor(t: number): Tier {
-  if (t < 35) return { t: "Apprentice", c: "#888", ring: "#bbb", desc: "Low-risk issues. Micro-contexted." };
+  if (t < 35) return { t: "Apprentice", c: "var(--ink-mute)", ring: "var(--ink-faint)", desc: "Low-risk issues. Micro-contexted." };
   if (t < 75) return { t: "Trusted", c: "var(--info)", ring: "#7AA5E8", desc: "Mid-risk features. Mentored on architecture." };
   return { t: "Senior", c: "var(--positive)", ring: "#7BC79A", desc: "Full repo access. Reviews juniors." };
 }
@@ -288,19 +288,16 @@ function DevIssueMock() {
           </p>
 
           {/* Why-each-file explanations */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
-            <div className="kicker">Why these files</div>
+          <div style={{ display: "flex", flexDirection: "column", marginBottom: 18 }}>
+            <div className="kicker" style={{ marginBottom: 10 }}>Why these files</div>
             {whyFiles.map((x, i) => (
-              <div key={x.f} className="card-soft" style={{
-                padding: 12, display: "flex", gap: 12, alignItems: "flex-start",
-                background: "var(--paper)",
+              <div key={x.f} style={{
+                padding: "10px 0", display: "flex", gap: 12, alignItems: "flex-start",
+                borderBottom: i < whyFiles.length - 1 ? "1px solid var(--line)" : "none",
               }}>
-                <div style={{
-                  width: 22, height: 22, borderRadius: "50%",
-                  background: "var(--orange)", color: "var(--paper)",
-                  display: "grid", placeItems: "center", fontWeight: 800, fontSize: 11,
-                  flexShrink: 0,
-                }}>{i + 1}</div>
+                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: 11, color: "var(--orange)", minWidth: 18, paddingTop: 1 }}>
+                  {String(i + 1).padStart(2, "0")}
+                </span>
                 <div>
                   <div className="mono" style={{ fontSize: 12, fontWeight: 700 }}>{x.f}</div>
                   <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 2 }}>{x.w}</div>
@@ -383,7 +380,12 @@ function ActiveIssuePanel({ issue }: { issue: Issue }) {
 }
 
 function CodeSurface({ issue, files }: { issue: Issue; files: string[] }) {
-  const cmd = `git checkout baton/${issue.id} && bash .baton/focus.sh`;
+  const { liveCloneUrl } = useApp();
+  const bid = issue.id.toLowerCase();
+  const dir = liveCloneUrl ? (liveCloneUrl.replace(/\/+$/, "").split("/").pop() || "repo").replace(/\.git$/, "") : "<project>";
+  const cmd = liveCloneUrl
+    ? `git clone ${liveCloneUrl} && cd ${dir} && git checkout baton/${bid} && bash .baton/focus.sh && code .`
+    : `git checkout baton/${bid} && bash .baton/focus.sh && code .`;
   return (
     <>
       <div className="card-soft" style={{ padding: 18, marginBottom: 12 }}>
@@ -412,8 +414,8 @@ function CodeSurface({ issue, files }: { issue: Issue; files: string[] }) {
         className="mono"
         style={{ background: "var(--ink)", color: "var(--paper)", borderRadius: 12, padding: 16, fontSize: 13, marginBottom: 12, boxShadow: "4px 4px 0 var(--orange)" }}
       >
-        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginBottom: 8 }}>focus your workspace on this issue</div>
-        <div style={{ color: "var(--orange)" }}>$ {cmd}</div>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginBottom: 8 }}>fetch → focus → open (VSCode; swap `code .` for your editor)</div>
+        <div style={{ color: "var(--orange)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>$ {cmd}</div>
       </div>
 
       {issue.api_contract && (
@@ -578,12 +580,12 @@ export function DevPassport() {
         {/* Right column: stats + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div className="card-soft" style={{ padding: 18 }}>
-            <div className="kicker" style={{ marginBottom: 8 }}>Lifetime</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+            <div className="kicker" style={{ marginBottom: 12 }}>Lifetime</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px 24px" }}>
               {lifetime.map((s) => (
-                <div key={s.l} style={{ padding: 10, background: "var(--cream)", borderRadius: 8 }}>
-                  <div className="display" style={{ fontSize: 22, color: "var(--orange)" }}>{s.n}</div>
-                  <div style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 600, textTransform: "uppercase" }}>{s.l}</div>
+                <div key={s.l} style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+                  <span className="mono" style={{ fontWeight: 800, fontSize: 20, color: "var(--ink)" }}>{s.n}</span>
+                  <span style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 600 }}>{s.l}</span>
                 </div>
               ))}
             </div>

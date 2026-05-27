@@ -21,7 +21,7 @@ const TEAM: Dev[] = [
   { i: "KB", n: "Kira B.", role: "BE", trust: 91, color: "#0F8E5C", projects: ["fintech-jr-v2", "luxe-real-estate"], load: 80, top: ["Data", "DevOps", "Backend"], onboarded: "3y ago" },
   { i: "AS", n: "Alex S.", role: "FS", trust: 64, color: "#7C3AED", projects: ["courier-track"], load: 25, top: ["Frontend", "Backend"], onboarded: "6mo ago" },
   { i: "JL", n: "Juno L.", role: "Mobile", trust: 72, color: "#D97706", projects: ["courier-track", "luxe-real-estate"], load: 90, top: ["Mobile", "Frontend"], onboarded: "1y ago" },
-  { i: "NP", n: "Nia P.", role: "FE", trust: 22, color: "#888", projects: [], load: 10, top: ["Frontend"], onboarded: "3d ago", isNew: true },
+  { i: "NP", n: "Nia P.", role: "FE", trust: 22, color: "var(--ink-mute)", projects: [], load: 10, top: ["Frontend"], onboarded: "3d ago", isNew: true },
 ];
 
 export function TeamView() {
@@ -29,9 +29,10 @@ export function TeamView() {
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
         <div>
-          <p style={{ color: "var(--ink-soft)", maxWidth: 520, margin: 0, fontSize: 15 }}>
+          <div className="display" style={{ fontSize: 28, marginBottom: 6 }}>The team.</div>
+          <p style={{ color: "var(--ink-soft)", maxWidth: 520, margin: 0, fontSize: 14 }}>
             Live passports. Trust grows with every successful merge. New hires start at <b>Apprentice</b> and earn their way up.
           </p>
         </div>
@@ -41,7 +42,7 @@ export function TeamView() {
       {/* Tier strips */}
       <TierStrip name="Senior" range="75+" devs={TEAM.filter((d) => d.trust >= 75)} color="var(--positive)" />
       <TierStrip name="Trusted" range="35–74" devs={TEAM.filter((d) => d.trust >= 35 && d.trust < 75)} color="var(--info)" />
-      <TierStrip name="Apprentice" range="<35" devs={TEAM.filter((d) => d.trust < 35)} color="#888" />
+      <TierStrip name="Apprentice" range="<35" devs={TEAM.filter((d) => d.trust < 35)} color="var(--ink-mute)" />
     </div>
   );
 }
@@ -68,7 +69,7 @@ function TierStrip({ name, range, devs, color }: { name: string; range: string; 
 
 function DevCard({ d }: { d: Dev }) {
   return (
-    <div className="card-soft card-hover" style={{ padding: 16, cursor: "pointer" }}>
+    <div className="card-soft" style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <div style={{
           width: 44, height: 44, borderRadius: "50%",

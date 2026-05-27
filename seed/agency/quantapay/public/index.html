@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QuantaPay — demo</title>
+  <style>
+    :root {
+      --bg: #0b1020; --panel: #141a2e; --panel-2: #1b2238; --line: #283150;
+      --ink: #e8edf7; --muted: #94a0bd; --brand: #6d8bff; --brand-2: #4ade80;
+      --danger: #ff6b6b; --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(1200px 600px at 70% -10%, #1a2440 0, transparent 55%), var(--bg);
+      background-color: var(--bg); color: var(--ink); min-height: 100vh;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 40px 20px 80px; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .logo {
+      width: 34px; height: 34px; border-radius: 9px;
+      background: linear-gradient(135deg, var(--brand), #9b6dff);
+      display: grid; place-items: center; font-weight: 800; color: #fff;
+    }
+    h1 { font-size: 22px; margin: 0; letter-spacing: -0.3px; }
+    .sub { color: var(--muted); margin: 0 0 28px; font-size: 13px; }
+    .grid { display: grid; gap: 18px; grid-template-columns: 1fr; }
+    @media (min-width: 760px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .card {
+      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 20px;
+    }
+    .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 14px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 5px; }
+    input {
+      width: 100%; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line);
+      background: var(--panel-2); color: var(--ink); font-size: 14px; outline: none;
+    }
+    input:focus { border-color: var(--brand); }
+    button {
+      cursor: pointer; border: 0; border-radius: 9px; padding: 10px 14px; font-weight: 600;
+      font-size: 14px; color: #0b1020; background: var(--brand); margin-top: 12px;
+    }
+    button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    button.green { background: var(--brand-2); }
+    button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge {
+      display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    }
+    .badge.active { background: rgba(74,222,128,.15); color: var(--brand-2); }
+    .badge.none { background: rgba(148,160,189,.15); color: var(--muted); }
+    .badge.canceled { background: rgba(255,107,107,.15); color: var(--danger); }
+    .muted { color: var(--muted); font-size: 13px; }
+    .plan {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
+    }
+    .plan b { font-size: 15px; }
+    .secret {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+      background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px;
+      padding: 10px; word-break: break-all; margin-top: 8px;
+    }
+    .qr { width: 150px; height: 150px; border-radius: 10px; margin-top: 10px; background: #fff; }
+    #log {
+      grid-column: 1 / -1; background: #0a0e1c; border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 14px; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+      max-height: 220px; overflow: auto; white-space: pre-wrap; color: #9fb3d9;
+    }
+    .hidden { display: none; }
+    .pill { font-size: 12px; color: var(--muted); }
+    .ok { color: var(--brand-2); }
+    .err { color: var(--danger); }
+    .mock-note {
+      grid-column: 1/-1; font-size: 12px; color: var(--muted);
+      border-left: 3px solid var(--brand); padding: 8px 12px; background: rgba(109,139,255,.06);
+      border-radius: 0 8px 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo">Q</div>
+      <div>
+        <h1>QuantaPay</h1>
+        <p class="sub">Self-contained demo · mock Stripe · SQLite · zero keys</p>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="mock-note">
+        This is a local demo. Stripe is <b>mocked in-process</b> (no key needed) and 2FA is
+        <b>real TOTP</b> — the secret/QR are shown on screen so you can test without a phone.
+      </div>
+
+      <!-- AUTH -->
+      <div class="card" id="authCard">
+        <h2>1 · Account</h2>
+        <label>Email</label>
+        <input id="email" type="email" value="demo@quantapay.dev" />
+        <label>Password</label>
+        <input id="password" type="password" value="hunter2hunter2" />
+        <div class="row">
+          <button id="signupBtn">Sign up</button>
+          <button id="loginBtn" class="ghost">Log in</button>
+        </div>
+
+        <div id="mfaPrompt" class="hidden">
+          <label>2FA code (login)</label>
+          <input id="loginCode" inputmode="numeric" placeholder="6-digit code" />
+          <button id="loginVerifyBtn" class="green">Verify &amp; finish login</button>
+        </div>
+
+        <p id="authStatus" class="muted" style="margin-top:14px"></p>
+      </div>
+
+      <!-- 2FA SETUP -->
+      <div class="card" id="twofaCard">
+        <h2>2 · Two-factor (TOTP)</h2>
+        <p class="muted">Enroll an authenticator. We print the secret + QR so no phone is required.</p>
+        <button id="setupBtn" disabled>Set up 2FA</button>
+
+        <div id="twofaDetails" class="hidden">
+          <img id="qr" class="qr" alt="TOTP QR" />
+          <div class="secret" id="secretBox"></div>
+          <p class="pill">Paste the secret into a TOTP generator (or use the printed code), then enter it below.</p>
+          <label>Code from your authenticator</label>
+          <input id="setupCode" inputmode="numeric" placeholder="6-digit code" />
+          <button id="verifyBtn" class="green">Verify &amp; enable</button>
+        </div>
+        <p id="twofaStatus" class="muted" style="margin-top:10px"></p>
+      </div>
+
+      <!-- SUBSCRIBE -->
+      <div class="card" id="plansCard">
+        <h2>3 · Subscribe</h2>
+        <div id="plans"></div>
+        <p id="subStatus" class="muted"></p>
+      </div>
+
+      <!-- SUBSCRIPTION STATUS -->
+      <div class="card" id="statusCard">
+        <h2>4 · Subscription status</h2>
+        <div id="subView"><span class="badge none">none</span></div>
+        <button id="refreshBtn" class="ghost" disabled>Refresh</button>
+        <button id="cancelBtn" class="danger hidden">Cancel at period end</button>
+      </div>
+
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let accessToken = null;
+    let currentUserId = null;
+
+    function log(msg, cls = '') {
+      const el = $('log');
+      const time = new Date().toLocaleTimeString();
+      el.innerHTML += `<div class="${cls}">[${time}] ${msg}</div>`;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    async function api(path, { method = 'GET', body, auth = false } = {}) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (auth && accessToken) headers.Authorization = `Bearer ${accessToken}`;
+      const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      let data = {};
+      try { data = await res.json(); } catch (_) {}
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    function setLoggedIn(user, token) {
+      accessToken = token;
+      currentUserId = user.id;
+      $('authStatus').innerHTML = `Logged in as <b>${user.email}</b> · 2FA ${user.mfaEnabled ? 'enabled' : 'off'}`;
+      $('authStatus').className = 'ok';
+      $('setupBtn').disabled = false;
+      $('refreshBtn').disabled = false;
+      $('mfaPrompt').classList.add('hidden');
+      loadPlans();
+      refreshSubscription();
+    }
+
+    // --- Auth ---------------------------------------------------------------
+    $('signupBtn').onclick = async () => {
+      const email = $('email').value, password = $('password').value;
+      const { ok, data } = await api('/api/signup', { method: 'POST', body: { email, password } });
+      if (!ok) return log(`signup failed: ${data.error}`, 'err');
+      log(`signed up ${email} (stripe customer ${data.user.stripeCustomerId})`, 'ok');
+      setLoggedIn(data.user, data.accessToken);
+    };
+
+    $('loginBtn').onclick = async () => {
+      const email = $('email').value, password = $('password').value;
+      const { ok, data } = await api('/api/login', { method: 'POST', body: { email, password } });
+      if (!ok) return log(`login failed: ${data.error}`, 'err');
+      if (data.mfaRequired) {
+        currentUserId = data.userId;
+        $('mfaPrompt').classList.remove('hidden');
+        log('password OK — 2FA code required', '');
+        return;
+      }
+      log(`logged in ${email}`, 'ok');
+      setLoggedIn(data.user, data.accessToken);
+    };
+
+    $('loginVerifyBtn').onclick = async () => {
+      const token = $('loginCode').value.trim();
+      const { ok, data } = await api('/api/login/2fa', { method: 'POST', body: { userId: currentUserId, token } });
+      if (!ok) return log(`2FA login failed: ${data.error}`, 'err');
+      log('2FA verified — full session issued', 'ok');
+      setLoggedIn(data.user, data.accessToken);
+    };
+
+    // --- 2FA setup ----------------------------------------------------------
+    $('setupBtn').onclick = async () => {
+      const { ok, data } = await api('/api/2fa/setup', { method: 'POST', auth: true });
+      if (!ok) return log(`2FA setup failed: ${data.error}`, 'err');
+      $('twofaDetails').classList.remove('hidden');
+      $('qr').src = data.qrDataUrl;
+      $('secretBox').textContent = 'secret: ' + data.secret;
+      log('2FA secret generated (shown on screen + server console)', 'ok');
+    };
+
+    $('verifyBtn').onclick = async () => {
+      const token = $('setupCode').value.trim();
+      const { ok, data } = await api('/api/2fa/verify', { method: 'POST', auth: true, body: { token } });
+      if (!ok) { $('twofaStatus').className = 'err'; $('twofaStatus').textContent = 'invalid code, try again'; return log('2FA verify failed', 'err'); }
+      accessToken = data.accessToken; // re-issued with mfa:true
+      $('twofaStatus').className = 'ok';
+      $('twofaStatus').textContent = '2FA enabled ✓';
+      $('authStatus').innerHTML = `Logged in as <b>${data.user.email}</b> · 2FA enabled`;
+      log('2FA enabled — session upgraded to mfa:true', 'ok');
+    };
+
+    // --- Plans / subscribe --------------------------------------------------
+    async function loadPlans() {
+      const { data } = await api('/api/plans');
+      $('plans').innerHTML = '';
+      data.plans.forEach((p) => {
+        const div = document.createElement('div');
+        div.className = 'plan';
+        div.innerHTML = `<span><b>${p.name}</b> <span class="muted">$${(p.amount/100).toFixed(2)}/${p.interval}</span></span>`;
+        const btn = document.createElement('button');
+        btn.textContent = 'Subscribe';
+        btn.onclick = () => subscribe(p.priceId);
+        div.appendChild(btn);
+        $('plans').appendChild(div);
+      });
+    }
+
+    async function subscribe(priceId) {
+      $('subStatus').textContent = 'creating mock checkout session…';
+      const { ok, data } = await api('/api/subscribe', { method: 'POST', auth: true, body: { priceId } });
+      if (!ok) { $('subStatus').className = 'err'; return $('subStatus').textContent = 'subscribe failed: ' + data.error; }
+      log(`mock Checkout Session created: ${data.sessionId}`, '');
+      log(`(real Stripe would redirect to a hosted page; auto-completing the mock)`, '');
+      // "Complete" the fake hosted checkout immediately.
+      const done = await api('/api/mock-checkout/complete', { method: 'POST', auth: true, body: { sessionId: data.sessionId } });
+      if (!done.ok) { $('subStatus').className = 'err'; return $('subStatus').textContent = 'checkout failed: ' + done.data.error; }
+      $('subStatus').className = 'ok';
+      $('subStatus').textContent = 'payment completed (mock) — subscription created';
+      log(`subscription ${done.data.subscriptionId} created → webhook fired`, 'ok');
+      // Webhook persists async; poll a few times.
+      pollSubscription(5);
+    }
+
+    async function pollSubscription(tries) {
+      for (let i = 0; i < tries; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        const sub = await refreshSubscription(true);
+        if (sub) return;
+      }
+    }
+
+    // --- Status -------------------------------------------------------------
+    async function refreshSubscription(quiet = false) {
+      const { ok, data } = await api('/api/subscription', { auth: true });
+      if (!ok) return null;
+      const sub = data.subscription;
+      const view = $('subView');
+      if (!sub) {
+        view.innerHTML = '<span class="badge none">none</span> <span class="muted">no active subscription</span>';
+        $('cancelBtn').classList.add('hidden');
+        return null;
+      }
+      const cls = sub.status === 'active' || sub.status === 'trialing' ? 'active' : (sub.status === 'canceled' ? 'canceled' : 'none');
+      const planName = data.plan ? data.plan.name : sub.stripePriceId;
+      view.innerHTML = `<span class="badge ${cls}">${sub.status}</span>
+        <span class="muted">${planName} · renews ${new Date(sub.currentPeriodEnd).toLocaleDateString()}${sub.cancelAtPeriodEnd ? ' · cancels at period end' : ''}</span>`;
+      $('cancelBtn').classList.toggle('hidden', sub.status === 'canceled');
+      if (!quiet) log(`subscription status: ${sub.status} (${planName})`, 'ok');
+      return sub;
+    }
+
+    $('refreshBtn').onclick = () => refreshSubscription();
+    $('cancelBtn').onclick = async () => {
+      const { ok, data } = await api('/api/subscription/cancel', { method: 'POST', auth: true });
+      if (!ok) return log('cancel failed: ' + data.error, 'err');
+      log('cancel requested → webhook fired', '');
+      pollSubscription(5);
+    };
+
+    log('ready. Sign up (or log in) to begin.', '');
+  </script>
+</body>
+</html>
