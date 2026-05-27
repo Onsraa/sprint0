@@ -1,0 +1,183 @@
+import { useApp } from "../app/AppContext";
+import type { Role } from "../app/types";
+import type { Discipline, Gate } from "../lib/api";
+import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, statusStyle } from "../lib/relayUtils";
+
+/* The ratification relay: {uiux ∥ backend ∥ devops} → frontend → qa.
+   Manager sees every gate; a lead sees their own gate highlighted with a
+   Ratify action that jumps to the ratify panel. */
+
+const ROW_1: Discipline[] = ["uiux", "backend", "devops"];
+const ROW_2: Discipline[] = ["frontend"];
+const ROW_3: Discipline[] = ["qa"];
+
+const ROLE_DISCIPLINE: Partial<Record<Role, Discipline>> = {
+  uiux: "uiux",
+  backend: "backend",
+  frontend: "frontend",
+  qa: "qa",
+};
+
+export function RelayBoard() {
+  const { relay, plan, role, setView } = useApp();
+  const mine = ROLE_DISCIPLINE[role];
+
+  if (!relay || !plan) {
+    return (
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <EmptyRelay />
+      </div>
+    );
+  }
+
+  const byDiscipline = new Map(relay.gates.map((g) => [g.discipline, g]));
+  const baton = new Set(relay.baton);
+
+  const renderRow = (disc: Discipline[]) =>
+    disc
+      .map((d) => byDiscipline.get(d))
+      .filter((g): g is Gate => Boolean(g))
+      .map((g) => (
+        <GateCard
+          key={g.discipline}
+          gate={g}
+          holdsBaton={baton.has(g.discipline)}
+          isMine={mine === g.discipline}
+          onRatify={mine === g.discipline ? () => setView("ratify") : undefined}
+        />
+      ));
+
+  return (
+    <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+      <div style={{ marginBottom: 22 }}>
+        <div className="kicker">Ratification relay</div>
+        <div className="display" style={{ fontSize: 28, marginTop: 4 }}>
+          {plan.project_name} — pass the baton.
+        </div>
+        <div style={{ fontSize: 14, color: "var(--ink-soft)", marginTop: 6 }}>
+          {"{UI/UX ∥ Backend ∥ DevOps} → Frontend → QA. "}
+          {baton.size > 0 ? (
+            <>
+              Baton held by{" "}
+              <b style={{ color: "var(--ink)" }}>
+                {relay.baton.map((d) => DISCIPLINE_LABEL[d]).join(", ")}
+              </b>
+              .
+            </>
+          ) : (
+            <b style={{ color: "var(--positive)" }}>All gates cleared.</b>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${ROW_1.length}, 1fr)`, gap: 12, width: "100%" }}>
+          {renderRow(ROW_1)}
+        </div>
+        <Connector />
+        <div style={{ width: "60%", maxWidth: 360 }}>{renderRow(ROW_2)}</div>
+        <Connector />
+        <div style={{ width: "60%", maxWidth: 360 }}>{renderRow(ROW_3)}</div>
+      </div>
+    </div>
+  );
+}
+
+function Connector() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "var(--ink-faint)" }}>
+      <div style={{ width: 2, height: 18, background: "var(--line-strong)" }} />
+      <div style={{ fontSize: 14, marginTop: -4 }}>▼</div>
+    </div>
+  );
+}
+
+function GateCard({
+  gate,
+  holdsBaton,
+  isMine,
+  onRatify,
+}: {
+  gate: Gate;
+  holdsBaton: boolean;
+  isMine: boolean;
+  onRatify?: () => void;
+}) {
+  const st = statusStyle(gate.status);
+  const accent = DISCIPLINE_COLOR[gate.discipline];
+  const done = gate.status === "ratified" || gate.status === "auto_passed";
+
+  return (
+    <div
+      className="card-soft"
+      style={{
+        padding: 16,
+        position: "relative",
+        borderWidth: isMine || holdsBaton ? 2 : 1,
+        borderColor: holdsBaton ? "var(--orange)" : isMine ? accent : "var(--line-strong)",
+        boxShadow: holdsBaton ? "4px 4px 0 var(--orange)" : undefined,
+      }}
+    >
+      {holdsBaton && (
+        <div
+          className="chip chip-orange"
+          style={{ position: "absolute", top: -11, right: 12, fontSize: 10, padding: "3px 9px" }}
+        >
+          🎽 baton
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <span style={{ width: 12, height: 12, borderRadius: 3, background: accent, border: "1.5px solid var(--ink)" }} />
+        <div style={{ fontWeight: 800, fontSize: 15 }}>{DISCIPLINE_LABEL[gate.discipline]}</div>
+        {isMine && (
+          <span className="chip" style={{ fontSize: 9, padding: "1px 7px", marginLeft: "auto" }}>
+            you
+          </span>
+        )}
+      </div>
+
+      <div
+        className="chip"
+        style={{ background: st.bg, color: st.fg, borderColor: st.border, fontSize: 11, padding: "4px 10px" }}
+      >
+        {done && <span>✓</span>}
+        {st.label}
+      </div>
+
+      {gate.depends_on.length > 0 && (
+        <div className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", marginTop: 10 }}>
+          waits on: {gate.depends_on.map((d) => DISCIPLINE_LABEL[d]).join(" · ")}
+        </div>
+      )}
+      {gate.note && (
+        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.4 }}>{gate.note}</div>
+      )}
+
+      {onRatify && !done && (
+        <button
+          onClick={onRatify}
+          className="btn btn-sm btn-primary"
+          style={{ marginTop: 12, width: "100%", justifyContent: "center" }}
+        >
+          Ratify my slice →
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EmptyRelay() {
+  return (
+    <div
+      className="card-soft"
+      style={{ padding: 40, textAlign: "center", border: "2px dashed var(--line-strong)" }}
+    >
+      <div className="display" style={{ fontSize: 22, marginBottom: 8 }}>
+        No plan in the relay yet.
+      </div>
+      <div style={{ fontSize: 14, color: "var(--ink-soft)" }}>
+        Drop a brief from the manager wizard — a plan draft enters the relay and shows up here.
+      </div>
+    </div>
+  );
+}

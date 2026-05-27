@@ -17,7 +17,7 @@ from google.adk.agents import Agent
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-from app.contracts import ArchitectureOptions, ParsedCV, PlanJSON
+from app.contracts import ArchitectureOptions, ClarifiedSpec, ParsedCV, PlanJSON, QAReport
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -78,6 +78,28 @@ async def generate_architectures(prompt: str) -> ArchitectureOptions:
     return ArchitectureOptions.model_validate_json(await _run_agent(architect_agent, prompt))
 
 
+INSTRUCTION_CLARIFY = """You read a messy client BRIEF and produce a clarified spec for a \
+project manager — the manager's first interaction before any planning.
+
+Extract: a one-sentence `goal`; the `users` (roles who use it); the `must_haves` (concrete \
+features the brief states clearly); and explicit `constraints` (deadline, platform, budget, \
+performance vibes). Then surface 2-4 `ambiguities`: features the brief mentions but leaves \
+genuinely unclear at the PRODUCT level — never technical/stack questions. Each ambiguity: a \
+stable `id` ("amb-1", "amb-2", …), the `feature` name, a crisp `question`, and 2-3 plausible \
+`options` (interpretations) to choose from. Leave each `resolution` null.
+
+You are also given SIMILAR PAST PROJECTS from agency memory. In `reuse`, propose which \
+capabilities to reuse/adapt/drop and from which project (`from_project` = its name, `feature` \
+= the capability, `action` ∈ {reuse, adapt, drop}). Never invent features the brief doesn't \
+support. Return only the structured spec."""
+
+clarify_agent = Agent(name="sprint0_clarify", model=MODEL, instruction=INSTRUCTION_CLARIFY, output_schema=ClarifiedSpec)
+
+
+async def generate_clarification(prompt: str) -> ClarifiedSpec:
+    return ClarifiedSpec.model_validate_json(await _run_agent(clarify_agent, prompt))
+
+
 INSTRUCTION_ONBOARD = """You parse a developer's CV/resume into a profile for an agency \
 roster. Extract their real `name`, a sensible lowercase `gitlab_username` derived from the \
 name (e.g. "nia-petrova"), and a rich `skills_text` summary (languages, frameworks, domains, \
@@ -89,3 +111,21 @@ onboard_agent = Agent(name="sprint0_onboard", model=MODEL, instruction=INSTRUCTI
 
 async def generate_cv_profile(cv_text: str) -> ParsedCV:
     return ParsedCV.model_validate_json(await _run_agent(onboard_agent, cv_text))
+
+
+INSTRUCTION_QA = """You are a QA engineer doing a first-pass acceptance review of a delivered \
+sprint, BEFORE the human QA tester signs off — your job is to do the grunt work so the human \
+only adjudicates what matters. You are given the ISSUES (id, title, type, risk, description). \
+For EACH issue return a QAItemResult with its `issue_id`, `title`, and a `verdict`:
+- "pass" — straightforward, low-risk, clearly satisfiable by a competent implementation.
+- "needs_human" — security/payments/data, high risk, or acceptance that truly needs a human to \
+eyeball on staging.
+- "fail" — only if the issue as written is internally contradictory or clearly under-specified.
+Add a one-line `note` per item. Be conservative: route risk to humans. Return only the \
+structured QAReport; leave `reopened` empty."""
+
+qa_agent = Agent(name="sprint0_qa", model=MODEL, instruction=INSTRUCTION_QA, output_schema=QAReport)
+
+
+async def generate_qa_report(prompt: str) -> QAReport:
+    return QAReport.model_validate_json(await _run_agent(qa_agent, prompt))

@@ -55,7 +55,7 @@ export function SetupGate() {
           <h1 className="display" style={{ fontSize: 56, lineHeight: 1, margin: "12px 0 16px" }}>
             {step === 0 && (
               <>
-                Hi, I'm <span style={{ whiteSpace: "nowrap" }}>Zero. →</span>
+                Hi, I'm <span style={{ whiteSpace: "nowrap" }}>baton. →</span>
               </>
             )}
             {step === 1 && (
@@ -227,7 +227,7 @@ function SetupAccount({ email, setEmail, org, setOrg }: AccountProps) {
         <Field label="Agency / org name" value={org} onChange={setOrg} placeholder="Dusk Studio" />
         <Field label="Work email" value={email} onChange={setEmail} placeholder="you@dusk.studio" type="email" />
         <div style={{ padding: 12, background: "var(--cream)", borderRadius: 10, fontSize: 12, color: "var(--ink-mute)", lineHeight: 1.5 }}>
-          Zero will sign Sprint 0 client reports as <b>{org || "your-org"}</b>. You can change this later.
+          baton will sign Sprint 0 client reports as <b>{org || "your-org"}</b>. You can change this later.
         </div>
       </div>
     </div>

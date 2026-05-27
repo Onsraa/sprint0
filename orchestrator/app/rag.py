@@ -28,6 +28,7 @@ PP_COLL = os.getenv("PAST_PROJECTS_COLLECTION", "PastProjects")
 DEV_COLL = os.getenv("DEVELOPER_PROFILES_COLLECTION", "DeveloperProfiles")
 PP_INDEX = os.getenv("PAST_PROJECTS_VECTOR_INDEX", "pp_vector_index")
 DEV_INDEX = os.getenv("DEVELOPER_VECTOR_INDEX", "dev_vector_index")
+PROJ_COLL = os.getenv("PROJECT_RECORDS_COLLECTION", "ProjectRecords")
 
 _vo = voyageai.Client(api_key=os.environ["VOYAGE_API_KEY"])
 
@@ -58,8 +59,21 @@ def embed_document(text: str) -> list[float]:
     return _embed([text], input_type="document")[0]
 
 
+def _promote(history: list[dict]) -> str:
+    """Trust tier from the merge record: low → medium (≥3 good merges) → high (≥6, avg ≥0.8)."""
+    good = [h for h in history if h.get("score", 0) >= 0.7]
+    n = len(good)
+    avg = sum(h.get("score", 0) for h in good) / n if n else 0
+    if n >= 6 and avg >= 0.8:
+        return "high"
+    if n >= 3:
+        return "medium"
+    return "low"
+
+
 async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85) -> dict:
-    """Passport-increment-on-merge (Idea 2): push a history entry — a MongoDB WRITE via the MCP."""
+    """Passport-increment-on-merge (Idea 2): push a history entry (MongoDB WRITE via the MCP),
+    then auto-promote trust_level when the track record earns it."""
     async with MongoMCP() as m:
         await m.update_many(
             DEV_COLL,
@@ -71,7 +85,39 @@ async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85
             projection={"_id": 0, "gitlab_username": 1, "trust_level": 1, "history": 1},
             query={"gitlab_username": gitlab_username},
         )
+        if not rows:
+            return {}
+        dev = rows[0]
+        new_trust = _promote(dev.get("history", []))
+        if new_trust != dev.get("trust_level"):
+            await m.update_many(DEV_COLL, {"gitlab_username": gitlab_username}, {"$set": {"trust_level": new_trust}})
+            dev["trust_level"], dev["promoted"] = new_trust, True
+    return dev
+
+
+async def save_project_record(record: dict) -> None:
+    """Persist a scaffolded project (milestone write) so mid-prod feature-adds can
+    ground against its real state later. Each dispatch is a new GitLab project_id → insert."""
+    async with MongoMCP() as m:
+        await m.insert_many(PROJ_COLL, [record])
+
+
+async def update_project_record(project_id: int, patch: dict) -> None:
+    async with MongoMCP() as m:
+        await m.update_many(PROJ_COLL, {"project_id": project_id}, {"$set": patch})
+
+
+async def get_project_record(project_id: int) -> dict:
+    async with MongoMCP() as m:
+        rows = await m.find(PROJ_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=1)
     return rows[0] if rows else {}
+
+
+async def record_postmortem(doc: dict) -> None:
+    """On project close, write an outcome doc into agency memory (PastProjects) so future
+    grounding improves. Embedding is added by the caller (reason.py) when a brief summary exists."""
+    async with MongoMCP() as m:
+        await m.insert_many(PP_COLL, [doc])
 
 
 def _parse_docs(text: str) -> list[dict]:

@@ -50,6 +50,13 @@ def create_project_scaffold(
         return {"project_id": p["id"], "web_url": p["web_url"], "default_branch": p.get("default_branch", "main")}
 
 
+def create_labels(project_id: int, labels: dict[str, str]) -> None:
+    """Best-effort label creation on an existing project (dupes ignored). Used by mid-prod."""
+    with _client() as c:
+        for name, color in (labels or {}).items():
+            c.post(f"/projects/{project_id}/labels", json={"name": name, "color": color})
+
+
 def commit_files(
     project_id: int, files: list[dict], branch: str = "main", message: str = "chore: scaffold boilerplate"
 ) -> dict:

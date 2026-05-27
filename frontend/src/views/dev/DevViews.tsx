@@ -1,8 +1,18 @@
 import { useMemo, useState } from "react";
 import { useApp } from "../../app/AppContext";
+import type { Role } from "../../app/types";
+import type { Discipline, Issue } from "../../lib/api";
+import { KIND_LABEL, planIssues, RISK_COLOR } from "../../lib/relayUtils";
 import { Mascot } from "../../components/Mascot";
 
-/* sprint0 app — Developer mode views: Today, Issue (HERO), Passport */
+/* baton app — Developer views: Today, Active issue (per-kind), Passport */
+
+const ROLE_DISCIPLINE: Partial<Record<Role, Discipline>> = {
+  uiux: "uiux",
+  backend: "backend",
+  frontend: "frontend",
+  qa: "qa",
+};
 
 interface Tier {
   t: string;
@@ -39,7 +49,7 @@ export function DevToday() {
           <div className="kicker">Tuesday, 9:14 AM</div>
           <div className="display" style={{ fontSize: 36, marginTop: 6 }}>Morning, Maria.</div>
           <div style={{ fontSize: 15, color: "var(--ink-soft)", marginTop: 4 }}>
-            One thing to ship today. Zero already trimmed the noise.
+            One thing to ship today. baton already trimmed the noise.
           </div>
         </div>
         <div className="wiggle"><Mascot size={76} expression="happy" /></div>
@@ -63,7 +73,7 @@ export function DevToday() {
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
             <Mascot size={26} expression="working" />
-            <div style={{ fontWeight: 700, fontSize: 13 }}>Zero pruned the repo for you</div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>baton pruned the repo for you</div>
             <div style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-mute)" }}>
               <b style={{ color: "var(--orange)" }}>3</b> / 187 files
             </div>
@@ -146,7 +156,20 @@ interface TreeNode {
   ghost?: boolean;
 }
 
+/* Live: pick the active issue for this role's discipline and render a per-kind
+   surface. Falls back to the scripted demo issue when no plan is loaded. */
 export function DevIssue() {
+  const { role, plan, activeIssue } = useApp();
+  const discipline = ROLE_DISCIPLINE[role];
+  const issues = planIssues(plan?.epics);
+  const mine = discipline ? issues.filter((i) => i.discipline === discipline) : issues;
+  const active = (activeIssue && issues.find((i) => i.id === activeIssue)) || mine[0] || null;
+
+  if (!active) return <DevIssueMock />;
+  return <ActiveIssuePanel issue={active} />;
+}
+
+function DevIssueMock() {
   const { devTrust } = useApp();
   const tier = tierFor(devTrust);
   const [showAll, setShowAll] = useState(false);
@@ -245,7 +268,7 @@ export function DevIssue() {
 
         <div style={{ padding: 12, marginTop: 12, background: "var(--orange-tint)", borderRadius: 10, fontSize: 11, color: "var(--ink-soft)", lineHeight: 1.5 }}>
           <b style={{ color: "var(--orange-deep)" }}>Why these 3?</b><br />
-          Zero traced the bug from the GitLab issue → session middleware → DB schema. Everything else is noise.
+          baton traced the bug from the GitLab issue → session middleware → DB schema. Everything else is noise.
         </div>
       </div>
 
@@ -290,7 +313,7 @@ export function DevIssue() {
             <button className="btn btn-primary">Start work →</button>
             <button className="btn btn-ghost btn-sm">Open in IDE</button>
             <div style={{ marginLeft: "auto", display: "flex", gap: 8, fontSize: 12, color: "var(--ink-mute)" }}>
-              <span>assigned by Zero · trust-matched</span>
+              <span>assigned by baton · trust-matched</span>
             </div>
           </div>
         </div>
@@ -308,6 +331,186 @@ export function DevIssue() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   ACTIVE ISSUE — per-kind execution surface
+   ============================================================ */
+function ActiveIssuePanel({ issue }: { issue: Issue }) {
+  const { plan } = useApp();
+  const files = issue.context_scope.files;
+
+  return (
+    <div style={{ maxWidth: 980, margin: "0 auto" }}>
+      <div className="card-soft" style={{ padding: 24, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+          <div className="mono" style={{ fontSize: 13, color: "var(--ink-mute)" }}>{issue.id}</div>
+          <div className="chip chip-soft" style={{ fontSize: 10, padding: "3px 8px" }}>{KIND_LABEL[issue.kind]}</div>
+          <div className="chip" style={{ fontSize: 10, padding: "3px 8px" }}>est {issue.estimate_days}d</div>
+          <div className="chip" style={{ fontSize: 10, padding: "3px 8px", borderColor: RISK_COLOR[issue.risk], color: RISK_COLOR[issue.risk] }}>
+            {issue.risk} risk
+          </div>
+          {plan && (
+            <div style={{ marginLeft: "auto", fontSize: 11, color: "var(--ink-mute)", fontFamily: "var(--font-mono)" }}>
+              {plan.project_name}
+            </div>
+          )}
+        </div>
+        <div className="display" style={{ fontSize: 28, marginBottom: 10 }}>{issue.title}</div>
+        <p style={{ color: "var(--ink-soft)", fontSize: 14, lineHeight: 1.55, margin: "0 0 8px" }}>{issue.description}</p>
+        {issue.required_skill && (
+          <div style={{ fontSize: 12, color: "var(--ink-mute)" }}>
+            skill: <b style={{ color: "var(--ink)" }}>{issue.required_skill}</b>
+            {issue.assignee && <> · assigned <b style={{ color: "var(--ink)" }}>@{issue.assignee}</b></>}
+          </div>
+        )}
+        {issue.depends_on.length > 0 && (
+          <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", marginTop: 8 }}>
+            depends on: {issue.depends_on.join(" · ")}
+          </div>
+        )}
+      </div>
+
+      {/* kind-specific surface */}
+      {(issue.kind === "code" || issue.kind === "infra") && <CodeSurface issue={issue} files={files} />}
+      {issue.kind === "design" && <DesignSurface issue={issue} />}
+      {issue.kind === "audit" && <AuditSurface issue={issue} />}
+      {(issue.kind === "content" || issue.kind === "runbook") && <GenericSurface issue={issue} />}
+    </div>
+  );
+}
+
+function CodeSurface({ issue, files }: { issue: Issue; files: string[] }) {
+  const cmd = `git checkout baton/${issue.id} && bash .baton/focus.sh`;
+  return (
+    <>
+      <div className="card-soft" style={{ padding: 18, marginBottom: 12 }}>
+        <div className="kicker" style={{ marginBottom: 10 }}>
+          Context scope · {files.length} {files.length === 1 ? "file" : "files"}
+        </div>
+        {issue.context_scope.note && (
+          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>{issue.context_scope.note}</div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {files.length === 0 && <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No files scoped yet.</div>}
+          {files.map((f) => (
+            <div
+              key={f}
+              className="mono"
+              style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <span style={{ color: "var(--orange)" }}>●</span>
+              {f}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div
+        className="mono"
+        style={{ background: "var(--ink)", color: "var(--paper)", borderRadius: 12, padding: 16, fontSize: 13, marginBottom: 12, boxShadow: "4px 4px 0 var(--orange)" }}
+      >
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginBottom: 8 }}>focus your workspace on this issue</div>
+        <div style={{ color: "var(--orange)" }}>$ {cmd}</div>
+      </div>
+
+      {issue.api_contract && (
+        <div className="card-soft" style={{ padding: 18 }}>
+          <div className="kicker" style={{ marginBottom: 8 }}>API contract</div>
+          <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--ink-soft)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {issue.api_contract}
+          </pre>
+        </div>
+      )}
+    </>
+  );
+}
+
+function DesignSurface({ issue }: { issue: Issue }) {
+  const figma = typeof issue.context.figma_file === "string" ? (issue.context.figma_file as string) : null;
+  return (
+    <>
+      <div className="card-soft" style={{ padding: 18, marginBottom: 12 }}>
+        <div className="kicker" style={{ marginBottom: 8 }}>Design brief</div>
+        <div style={{ fontSize: 14, color: "var(--ink-soft)", lineHeight: 1.5 }}>
+          {issue.context_scope.note || issue.description}
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div className="card-soft" style={{ padding: 18 }}>
+          <div className="kicker" style={{ marginBottom: 8 }}>Figma</div>
+          {figma ? (
+            <a href={figma} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, color: "var(--info)", textDecoration: "underline", textUnderlineOffset: 3, wordBreak: "break-all" }}>
+              {figma}
+            </a>
+          ) : (
+            <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No Figma file linked yet.</div>
+          )}
+        </div>
+        <div className="card-soft" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="kicker">Deliverable</div>
+          <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Attach the frames you ship for this issue.</div>
+          <button className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }}>+ Attach frames</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function AuditSurface({ issue }: { issue: Issue }) {
+  const pages = Array.isArray(issue.context.target_pages) ? (issue.context.target_pages as string[]) : issue.context_scope.files;
+  const rubric = Array.isArray(issue.context.rubric)
+    ? (issue.context.rubric as string[])
+    : typeof issue.context.rubric === "string"
+      ? [issue.context.rubric as string]
+      : [];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div className="card-soft" style={{ padding: 18 }}>
+        <div className="kicker" style={{ marginBottom: 10 }}>Target pages</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {pages.length === 0 && <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No pages specified.</div>}
+          {pages.map((p) => (
+            <div key={p} className="mono" style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)" }}>
+              {p}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="card-soft" style={{ padding: 18 }}>
+        <div className="kicker" style={{ marginBottom: 10 }}>Rubric</div>
+        {rubric.length === 0 ? (
+          <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>{issue.context_scope.note || "Use the standard accessibility + UX rubric."}</div>
+        ) : (
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.6 }}>
+            {rubric.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GenericSurface({ issue }: { issue: Issue }) {
+  return (
+    <div className="card-soft" style={{ padding: 18 }}>
+      <div className="kicker" style={{ marginBottom: 8 }}>{KIND_LABEL[issue.kind]} brief</div>
+      <div style={{ fontSize: 14, color: "var(--ink-soft)", lineHeight: 1.5 }}>
+        {issue.context_scope.note || issue.description}
+      </div>
+      {issue.context_scope.files.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 12 }}>
+          {issue.context_scope.files.map((f) => (
+            <div key={f} className="mono" style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)" }}>
+              {f}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

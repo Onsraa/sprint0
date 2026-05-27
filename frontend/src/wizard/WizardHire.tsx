@@ -315,7 +315,7 @@ function HireStepParse() {
       <div>
         <div className="kicker">Extracted from CV</div>
         <div className="display" style={{ fontSize: 26, marginTop: 6, marginBottom: 18 }}>
-          What Zero read.
+          What baton read.
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {facts.map(

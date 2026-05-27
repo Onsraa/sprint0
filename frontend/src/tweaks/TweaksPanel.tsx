@@ -1,12 +1,20 @@
 import { useApp } from "../app/AppContext";
-import type { Mode } from "../app/types";
+import type { Role } from "../app/types";
 
-/* Bottom-right tweaks drawer: mode toggle + live trust slider.
+/* Bottom-right tweaks drawer: role switcher + live trust slider.
    Dragging trust updates the dev tier badge in the topbar in real time. */
 
+const ROLE_LABEL: Record<Role, string> = {
+  manager: "Manager",
+  uiux: "UI/UX lead",
+  backend: "Backend dev",
+  frontend: "Frontend dev",
+  qa: "QA tester",
+};
+const ROLE_ORDER: Role[] = ["manager", "uiux", "backend", "frontend", "qa"];
+
 export function TweaksPanel() {
-  const { mode, setMode, devTrust, setDevTrust, setTweaksOpen } = useApp();
-  const modes: Mode[] = ["manager", "dev"];
+  const { role, setRole, devTrust, setDevTrust, setTweaksOpen } = useApp();
   const tier =
     devTrust < 35
       ? { t: "Apprentice", c: "#888" }
@@ -39,36 +47,30 @@ export function TweaksPanel() {
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-mute)", marginBottom: 6 }}>Mode</div>
-        <div
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-mute)", marginBottom: 6 }}>Acting as</div>
+        <select
+          value={role}
+          onChange={(e) => setRole(e.target.value as Role)}
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            background: "var(--cream-deep)",
+            width: "100%",
+            padding: "9px 12px",
             borderRadius: 10,
-            padding: 3,
             border: "1.5px solid var(--line-strong)",
+            background: "var(--cream-deep)",
+            fontWeight: 700,
+            fontSize: 12,
+            color: "var(--ink)",
+            fontFamily: "inherit",
+            outline: "none",
+            cursor: "pointer",
           }}
         >
-          {modes.map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 7,
-                fontSize: 12,
-                fontWeight: 700,
-                background: mode === m ? "var(--paper)" : "transparent",
-                color: mode === m ? "var(--ink)" : "var(--ink-mute)",
-                boxShadow: mode === m ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
-                transition: "all 180ms",
-              }}
-            >
-              {m === "manager" ? "Manager" : "Developer"}
-            </button>
+          {ROLE_ORDER.map((r) => (
+            <option key={r} value={r}>
+              {ROLE_LABEL[r]}
+            </option>
           ))}
-        </div>
+        </select>
       </div>
 
       <div>

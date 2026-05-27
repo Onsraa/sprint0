@@ -1,10 +1,13 @@
 import { useApp } from "./AppContext";
-import type { Mode, View } from "./types";
+import type { Mode, Role, View } from "./types";
 import { Mascot, Sprint0Logo } from "../components/Mascot";
 import { SetupGate } from "../views/SetupGate";
 import { Dashboard } from "../views/Dashboard";
 import { TeamView } from "../views/Team";
 import { DevToday, DevIssue, DevPassport } from "../views/dev/DevViews";
+import { RelayBoard } from "../views/RelayBoard";
+import { RatifyPanel } from "../views/RatifyPanel";
+import { QAGate } from "../views/QAGate";
 import { Wizard } from "../wizard/Wizard";
 import { TweaksPanel } from "../tweaks/TweaksPanel";
 
@@ -34,19 +37,34 @@ interface NavItem {
   icon: string;
 }
 
-function Sidebar() {
-  const { mode, view, setView, setWizardOpen, setWizardKind, setTweaksOpen } = useApp();
-
-  const managerNav: NavItem[] = [
-    { id: "dashboard", label: "Projects", icon: "▦" },
-    { id: "team", label: "Team", icon: "◉" },
-  ];
-  const devNav: NavItem[] = [
-    { id: "today", label: "Today", icon: "◎" },
+/** Nav per persona. Manager runs intake/relay; leads ratify + work; QA runs the gate. */
+function navFor(role: Role): NavItem[] {
+  if (role === "manager") {
+    return [
+      { id: "dashboard", label: "Projects", icon: "▦" },
+      { id: "team", label: "Team", icon: "◉" },
+      { id: "relay", label: "Relay", icon: "🎽" },
+    ];
+  }
+  if (role === "qa") {
+    return [
+      { id: "qa", label: "QA gate", icon: "✓" },
+      { id: "today", label: "Today", icon: "◎" },
+      { id: "passport", label: "My Passport", icon: "★" },
+    ];
+  }
+  // discipline leads (uiux / backend / frontend)
+  return [
+    { id: "ratify", label: "Ratify", icon: "🎽" },
     { id: "issue", label: "Active issue", icon: "▶" },
+    { id: "today", label: "Today", icon: "◎" },
     { id: "passport", label: "My Passport", icon: "★" },
   ];
-  const items = mode === "manager" ? managerNav : devNav;
+}
+
+function Sidebar() {
+  const { role, view, setView, setWizardOpen, setWizardKind, setTweaksOpen } = useApp();
+  const items = navFor(role);
 
   return (
     <aside
@@ -64,9 +82,9 @@ function Sidebar() {
         <Sprint0Logo size={18} />
       </div>
 
-      <ModeToggle />
+      <RoleSwitcher />
 
-      {mode === "manager" ? (
+      {role === "manager" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <button
             onClick={() => {
@@ -76,7 +94,7 @@ function Sidebar() {
             className="btn btn-primary"
             style={{ justifyContent: "center", padding: "11px 14px", fontSize: 14 }}
           >
-            + New Sprint 0
+            + New project
           </button>
           <button
             onClick={() => {
@@ -99,10 +117,10 @@ function Sidebar() {
           }}
         >
           <div className="kicker" style={{ color: "var(--orange-deep)" }}>
-            Today's focus
+            Your discipline
           </div>
-          <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>auth-flow #142</div>
-          <div style={{ fontSize: 11, color: "var(--ink-mute)", marginTop: 2 }}>3 files · 2h estimate</div>
+          <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>{ROLE_LABEL[role]}</div>
+          <div style={{ fontSize: 11, color: "var(--ink-mute)", marginTop: 2 }}>ratify your slice · pass the baton</div>
         </div>
       )}
 
@@ -141,7 +159,7 @@ function Sidebar() {
         <div style={{ padding: 12, background: "var(--cream)", borderRadius: 12, border: "1.5px solid var(--line-strong)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <Mascot size={28} expression="happy" />
-            <div style={{ fontSize: 12, fontWeight: 700 }}>Zero is awake</div>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>baton is awake</div>
           </div>
           <div
             style={{
@@ -162,49 +180,62 @@ function Sidebar() {
   );
 }
 
-function ModeToggle() {
-  const { mode, setMode } = useApp();
-  const modes: Mode[] = ["manager", "dev"];
+const ROLE_LABEL: Record<Role, string> = {
+  manager: "Manager",
+  uiux: "UI/UX lead",
+  backend: "Backend dev",
+  frontend: "Frontend dev",
+  qa: "QA tester",
+};
+
+const ROLE_ORDER: Role[] = ["manager", "uiux", "backend", "frontend", "qa"];
+
+function RoleSwitcher() {
+  const { role, setRole } = useApp();
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        background: "var(--cream-deep)",
-        borderRadius: 10,
-        padding: 3,
-        border: "1.5px solid var(--line-strong)",
-        position: "relative",
-      }}
-    >
-      {modes.map((m) => (
-        <button
-          key={m}
-          onClick={() => setMode(m)}
-          style={{
-            padding: "8px 10px",
-            borderRadius: 7,
-            fontSize: 12,
-            fontWeight: 700,
-            background: mode === m ? "var(--paper)" : "transparent",
-            color: mode === m ? "var(--ink)" : "var(--ink-mute)",
-            boxShadow: mode === m ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
-            transition: "all 180ms",
-          }}
-        >
-          {m === "manager" ? "Manager" : "Developer"}
-        </button>
-      ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div className="kicker" style={{ fontSize: 10 }}>
+        Acting as
+      </div>
+      <select
+        value={role}
+        onChange={(e) => setRole(e.target.value as Role)}
+        style={{
+          padding: "9px 12px",
+          borderRadius: 10,
+          border: "1.5px solid var(--line-strong)",
+          background: "var(--cream-deep)",
+          fontWeight: 700,
+          fontSize: 13,
+          color: "var(--ink)",
+          fontFamily: "inherit",
+          outline: "none",
+          cursor: "pointer",
+        }}
+      >
+        {ROLE_ORDER.map((r) => (
+          <option key={r} value={r}>
+            {ROLE_LABEL[r]}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
 
 function TopBar() {
-  const { mode, view, devTrust } = useApp();
-  const titles: Record<Mode, Partial<Record<View, string>>> = {
-    manager: { dashboard: "Projects", team: "Team" },
-    dev: { today: "Today", issue: "auth-flow #142", passport: "My Passport" },
+  const { role, view, devTrust } = useApp();
+  const titles: Partial<Record<View, string>> = {
+    dashboard: "Projects",
+    team: "Team",
+    relay: "Ratification relay",
+    today: "Today",
+    issue: "Active issue",
+    passport: "My Passport",
+    ratify: "Ratify",
+    qa: "QA gate",
   };
+  const isManager = role === "manager";
   const tier =
     devTrust < 35
       ? { t: "Apprentice", c: "#888" }
@@ -234,14 +265,14 @@ function TopBar() {
             whiteSpace: "nowrap",
           }}
         >
-          {mode === "manager" ? "AGENCY · DUSK STUDIO" : "DEVELOPER · MARIA R."}
+          {isManager ? "AGENCY · DUSK STUDIO" : `${ROLE_LABEL[role].toUpperCase()} · MARIA R.`}
         </div>
         <div className="display" style={{ fontSize: 22, marginTop: 2 }}>
-          {titles[mode][view] ?? "—"}
+          {titles[view] ?? "—"}
         </div>
       </div>
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        {mode === "dev" && (
+        {!isManager && (
           <div
             style={{
               display: "flex",
@@ -259,27 +290,12 @@ function TopBar() {
             <span style={{ color: "var(--ink-mute)", fontFamily: "var(--font-mono)" }}>{devTrust}</span>
           </div>
         )}
-        <button
-          style={{
-            padding: "8px 14px",
-            borderRadius: 999,
-            background: "var(--cream-deep)",
-            fontSize: 13,
-            color: "var(--ink-soft)",
-            fontWeight: 600,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <span>⌘K</span> Search
-        </button>
         <div
           style={{
             width: 36,
             height: 36,
             borderRadius: "50%",
-            background: mode === "manager" ? "var(--orange)" : "var(--info)",
+            background: isManager ? "var(--orange)" : "var(--info)",
             color: "var(--paper)",
             display: "grid",
             placeItems: "center",
@@ -288,7 +304,7 @@ function TopBar() {
             border: "2px solid var(--ink)",
           }}
         >
-          {mode === "manager" ? "EM" : "MR"}
+          {isManager ? "EM" : "MR"}
         </div>
       </div>
     </header>
@@ -297,11 +313,13 @@ function TopBar() {
 
 function MainView() {
   const { mode, view } = useApp();
-  if (mode === "manager") {
+  const m: Mode = mode;
+  if (m === "manager") {
     return (
       <div style={{ padding: "24px 32px 40px" }}>
         {view === "dashboard" && <Dashboard />}
         {view === "team" && <TeamView />}
+        {view === "relay" && <RelayBoard />}
       </div>
     );
   }
@@ -310,6 +328,8 @@ function MainView() {
       {view === "today" && <DevToday />}
       {view === "issue" && <DevIssue />}
       {view === "passport" && <DevPassport />}
+      {view === "ratify" && <RatifyPanel />}
+      {view === "qa" && <QAGate />}
     </div>
   );
 }

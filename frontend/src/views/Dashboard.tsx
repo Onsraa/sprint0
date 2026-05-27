@@ -10,7 +10,18 @@ const statusMap: Record<ProjectStatus, { t: string; c: string }> = {
 };
 
 export function Dashboard() {
-  const { projects, setWizardOpen } = useApp();
+  const { projects, setWizardOpen, setWizardKind, setFeatureProjectId, liveProjectId } = useApp();
+
+  const newProject = () => {
+    setFeatureProjectId(null);
+    setWizardKind("brief");
+    setWizardOpen(true);
+  };
+  const addFeature = (projectId: number) => {
+    setFeatureProjectId(projectId);
+    setWizardKind("brief");
+    setWizardOpen(true);
+  };
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -32,7 +43,7 @@ export function Dashboard() {
             This week
           </div>
           <div className="display" style={{ fontSize: 32, marginTop: 6 }}>
-            Zero shipped 2 sprints + 47 issues.
+            baton shipped 2 sprints + 47 issues.
           </div>
           <div style={{ fontSize: 14, opacity: 0.9, marginTop: 6 }}>avg time brief → scaffold: 53s · 0 escalations</div>
         </div>
@@ -41,7 +52,7 @@ export function Dashboard() {
             <Mascot size={92} expression="cheer" outline="var(--paper)" color="var(--orange-deep)" />
           </div>
           <button
-            onClick={() => setWizardOpen(true)}
+            onClick={newProject}
             className="btn"
             style={{
               background: "var(--paper)",
@@ -52,10 +63,25 @@ export function Dashboard() {
               fontSize: 15,
             }}
           >
-            + New Sprint 0
+            + New project
           </button>
         </div>
       </div>
+
+      {liveProjectId != null && (
+        <div
+          className="card-soft"
+          style={{ padding: 16, marginBottom: 20, display: "flex", alignItems: "center", gap: 12, background: "var(--orange-tint)", borderColor: "var(--orange-soft)" }}
+        >
+          <span className="kicker" style={{ color: "var(--orange-deep)" }}>Live project {liveProjectId}</span>
+          <span style={{ fontSize: 13, color: "var(--ink-soft)", flex: 1 }}>
+            Dispatched this session. Add a feature mid-production — baton drafts a delta plan and runs it through the relay.
+          </span>
+          <button onClick={() => addFeature(liveProjectId)} className="btn btn-primary btn-sm">
+            + Add feature
+          </button>
+        </div>
+      )}
 
       {/* Quick stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 28 }}>
@@ -168,7 +194,7 @@ export function Dashboard() {
 
         {/* Empty card */}
         <button
-          onClick={() => setWizardOpen(true)}
+          onClick={newProject}
           className="card-soft"
           style={{
             padding: 32,
@@ -192,7 +218,7 @@ export function Dashboard() {
         >
           <div style={{ fontSize: 32 }}>+</div>
           <div style={{ fontWeight: 700, fontSize: 14 }}>Drop a brief</div>
-          <div style={{ fontSize: 12 }}>Zero will handle the rest</div>
+          <div style={{ fontSize: 12 }}>baton will handle the rest</div>
         </button>
       </div>
     </div>

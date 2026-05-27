@@ -32,20 +32,33 @@ def _vscode_settings(context_files: list[str], issue_id: str, note: str) -> str:
     )
 
 
+_BRANCH_KINDS = {"code", "infra"}  # only these get a repo branch; design/audit/content live as issues + attachments
+
+
+def _focus_json(issue) -> str:
+    """The file list `.baton/focus.sh` reads to collapse the working tree via sparse-checkout."""
+    return json.dumps({"issue": issue.id, "files": issue.context_scope.files, "note": issue.context_scope.note}, indent=2)
+
+
 def commit_context_branches(project_id: int, plan: PlanJSON, default_branch: str = "main") -> list[str]:
-    """One branch per issue, each carrying a `.vscode/settings.json` scoped to its files."""
+    """One branch per CODE/INFRA issue, carrying `.baton/focus.json` (the sparse-checkout
+    list) + `.vscode/settings.json` (noise hiding + metadata). Non-code kinds get no branch."""
     made: list[str] = []
     for epic in plan.epics:
         for issue in epic.issues:
+            if (issue.kind or "code") not in _BRANCH_KINDS:
+                continue
             branch = f"baton/{issue.id.lower()}"
             try:
                 gl.create_branch(project_id, branch, ref=default_branch)
-                content = _vscode_settings(issue.context_scope.files, issue.id, issue.context_scope.note)
                 gl.commit_files(
                     project_id,
-                    [{"path": ".vscode/settings.json", "content": content}],
+                    [
+                        {"path": ".baton/focus.json", "content": _focus_json(issue)},
+                        {"path": ".vscode/settings.json", "content": _vscode_settings(issue.context_scope.files, issue.id, issue.context_scope.note)},
+                    ],
                     branch=branch,
-                    message=f"chore(baton): micro-context for {issue.id}",
+                    message=f"chore(baton): focus context for {issue.id}",
                 )
                 made.append(branch)
             except Exception:

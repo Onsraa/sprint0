@@ -7,19 +7,24 @@ import {
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { LS } from "../lib/storage";
-import type { Mode, Project, View, WizardKind } from "./types";
+import type { Mode, Project, Role, View, WizardKind } from "./types";
+import type { PlanJSON, RelayState } from "../lib/api";
 
 interface AppContextValue {
   setupDone: boolean;
   setSetupDone: Dispatch<SetStateAction<boolean>>;
+  role: Role;
+  setRole: Dispatch<SetStateAction<Role>>;
   mode: Mode;
-  setMode: Dispatch<SetStateAction<Mode>>;
   view: View;
   setView: Dispatch<SetStateAction<View>>;
   wizardOpen: boolean;
   setWizardOpen: Dispatch<SetStateAction<boolean>>;
   wizardKind: WizardKind;
   setWizardKind: Dispatch<SetStateAction<WizardKind>>;
+  /** Existing project id to extend when the wizard opens in mid-prod feature mode. */
+  featureProjectId: number | null;
+  setFeatureProjectId: Dispatch<SetStateAction<number | null>>;
   devTrust: number;
   setDevTrust: Dispatch<SetStateAction<number>>;
   tweaksOpen: boolean;
@@ -29,6 +34,16 @@ interface AppContextValue {
   activeDev: string | null;
   setActiveDev: Dispatch<SetStateAction<string | null>>;
   projects: Project[];
+  /** Live plan produced by the wizard — drives the relay/ratify/qa surfaces. */
+  plan: PlanJSON | null;
+  setPlan: Dispatch<SetStateAction<PlanJSON | null>>;
+  planId: string | null;
+  setPlanId: Dispatch<SetStateAction<string | null>>;
+  relay: RelayState | null;
+  setRelay: Dispatch<SetStateAction<RelayState | null>>;
+  /** GitLab project id once dispatched (for QA / mid-prod). */
+  liveProjectId: number | null;
+  setLiveProjectId: Dispatch<SetStateAction<number | null>>;
 }
 
 const AppCtx = createContext<AppContextValue | null>(null);
@@ -39,35 +54,53 @@ export function useApp(): AppContextValue {
   return ctx;
 }
 
-const MANAGER_VIEWS: View[] = ["dashboard", "team"];
-const DEV_VIEWS: View[] = ["today", "issue", "passport"];
+const MANAGER_VIEWS: View[] = ["dashboard", "team", "relay"];
+const DEV_VIEWS: View[] = ["today", "issue", "passport", "ratify", "qa"];
+
+/** Where each role lands. */
+const ROLE_HOME: Record<Role, View> = {
+  manager: "dashboard",
+  uiux: "ratify",
+  backend: "ratify",
+  frontend: "ratify",
+  qa: "qa",
+};
+
+function roleToMode(role: Role): Mode {
+  return role === "manager" ? "manager" : "dev";
+}
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [setupDone, setSetupDone] = useState<boolean>(() => LS.get("setup", false));
-  const [mode, setMode] = useState<Mode>(() => LS.get<Mode>("mode", "manager"));
-  const [view, setView] = useState<View>("dashboard");
+  const [role, setRole] = useState<Role>(() => LS.get<Role>("role", "manager"));
+  const mode = roleToMode(role);
+  const [view, setView] = useState<View>(() => ROLE_HOME[LS.get<Role>("role", "manager")]);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardKind, setWizardKind] = useState<WizardKind>("brief");
+  const [featureProjectId, setFeatureProjectId] = useState<number | null>(null);
   const [devTrust, setDevTrust] = useState<number>(() => LS.get("devTrust", 65));
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [activeIssue, setActiveIssue] = useState<string | null>(null);
   const [activeDev, setActiveDev] = useState<string | null>(null);
 
+  const [plan, setPlan] = useState<PlanJSON | null>(null);
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [relay, setRelay] = useState<RelayState | null>(null);
+  const [liveProjectId, setLiveProjectId] = useState<number | null>(null);
+
   useEffect(() => {
-    LS.set("mode", mode);
-  }, [mode]);
+    LS.set("role", role);
+  }, [role]);
   useEffect(() => {
     LS.set("devTrust", devTrust);
   }, [devTrust]);
 
-  // Keep the active view valid for the current mode.
+  // Keep the active view valid for the current role; switching roles lands on home.
   useEffect(() => {
-    if (mode === "manager") {
-      setView((v) => (MANAGER_VIEWS.includes(v) ? v : "dashboard"));
-    } else {
-      setView((v) => (DEV_VIEWS.includes(v) ? v : "today"));
-    }
-  }, [mode]);
+    const valid = mode === "manager" ? MANAGER_VIEWS : DEV_VIEWS;
+    setView((v) => (valid.includes(v) ? v : ROLE_HOME[role]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
 
   const projects = useMemo<Project[]>(
     () => [
@@ -120,14 +153,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppContextValue = {
     setupDone,
     setSetupDone,
+    role,
+    setRole,
     mode,
-    setMode,
     view,
     setView,
     wizardOpen,
     setWizardOpen,
     wizardKind,
     setWizardKind,
+    featureProjectId,
+    setFeatureProjectId,
     devTrust,
     setDevTrust,
     tweaksOpen,
@@ -137,6 +173,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     activeDev,
     setActiveDev,
     projects,
+    plan,
+    setPlan,
+    planId,
+    setPlanId,
+    relay,
+    setRelay,
+    liveProjectId,
+    setLiveProjectId,
   };
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
