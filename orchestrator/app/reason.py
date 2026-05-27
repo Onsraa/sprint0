@@ -13,7 +13,7 @@ from app.agent import (
 from app.assign import assign_developers
 from app.contracts import ArchitectureOptions, ClarifiedSpec, Constraints, PlanJSON, QAReport, TechStack
 from app.rag import (
-    DEV_COLL, DEV_INDEX, PP_COLL, PP_INDEX, MongoMCP,
+    DEV_COLL, DEV_INDEX, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
     embed_document, embed_queries, embed_query, record_postmortem,
 )
 
@@ -33,6 +33,14 @@ def _format_past(projects: list[dict]) -> str:
     return "\n".join(lines) or "(no close matches)"
 
 
+def _format_code(chunks: list[dict]) -> str:
+    lines = [
+        f"- {c.get('project')} · {c.get('file_path')} → {c.get('web_url', '')}\n    {(c.get('excerpt', '') or '')[:240].strip()}"
+        for c in chunks
+    ]
+    return "\n".join(lines) or "(no reusable code found)"
+
+
 def _format_roster(devs: list[dict]) -> str:
     return "\n".join(
         f"- @{d.get('gitlab_username')} ({d.get('trust_level')}): {d.get('skills_text', '')}" for d in devs
@@ -47,7 +55,7 @@ def _format_constraints(c: Constraints | None) -> str:
 
 async def propose_architectures(brief_text: str, constraints: Constraints | None = None) -> ArchitectureOptions:
     async with MongoMCP() as m:
-        past = await m.vector_search(PP_COLL, PP_INDEX, "brief_embedding", embed_query(brief_text), k=3, projection=_PP_PROJECTION)
+        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)
     prompt = (
         f"CLIENT BRIEF:\n{brief_text}\n\n"
@@ -62,14 +70,20 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
 async def clarify_brief(brief_text: str, constraints: Constraints | None = None) -> ClarifiedSpec:
     """Intake step: extract the spec, flag unclear *features* as ambiguity cards, and propose
     memory-grounded reuse — the manager's first panel, before architecture + planning."""
+    qv = embed_query(brief_text)
     async with MongoMCP() as m:
-        past = await m.vector_search(
-            PP_COLL, PP_INDEX, "brief_embedding", embed_query(brief_text), k=3, projection=_PP_PROJECTION
+        past = await m.hybrid_search(
+            PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION
         )
+        try:
+            code = await m.code_search(qv, k=5)
+        except Exception:
+            code = []  # code-RAG index not present yet (pre-reseed) → skip the reuse-code section
     prompt = (
         f"CLIENT BRIEF:\n{brief_text}\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
         f"SIMILAR PAST PROJECTS (agency memory):\n{_format_past(past)}\n\n"
+        f"REUSABLE CODE (chunk-level code-RAG over agency repos — cite specific files in reuse proposals):\n{_format_code(code)}\n\n"
         f"Produce the clarified spec: extraction, 2-4 ambiguity cards, and reuse proposals."
     )
     return await generate_clarification(prompt)
@@ -92,7 +106,7 @@ async def run_brief(
     brief_text: str, chosen_stack: TechStack | None = None, constraints: Constraints | None = None
 ) -> PlanJSON:
     async with MongoMCP() as m:
-        past = await m.vector_search(PP_COLL, PP_INDEX, "brief_embedding", embed_query(brief_text), k=3, projection=_PP_PROJECTION)
+        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
         plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints))
         plan.grounded_on = plan.grounded_on or [p["name"] for p in past]
         await _match_and_assign(plan, m)
@@ -120,8 +134,8 @@ async def delta_brief(feature_text: str, record: dict, constraints: Constraints 
     existing_titles = [i.get("title", "") for e in existing.get("epics", []) for i in e.get("issues", [])]
     manifest = record.get("module_manifest", [])
     async with MongoMCP() as m:
-        past = await m.vector_search(
-            PP_COLL, PP_INDEX, "brief_embedding", embed_query(feature_text), k=3, projection=_PP_PROJECTION
+        past = await m.hybrid_search(
+            PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(feature_text), feature_text, k=3, projection=_PP_PROJECTION
         )
         plan = await generate_plan(_build_delta_prompt(feature_text, record, existing_titles, manifest, past, stack, constraints))
         plan.grounded_on = plan.grounded_on or [record.get("name", "this project"), *(p["name"] for p in past)]

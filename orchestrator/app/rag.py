@@ -29,6 +29,9 @@ DEV_COLL = os.getenv("DEVELOPER_PROFILES_COLLECTION", "DeveloperProfiles")
 PP_INDEX = os.getenv("PAST_PROJECTS_VECTOR_INDEX", "pp_vector_index")
 DEV_INDEX = os.getenv("DEVELOPER_VECTOR_INDEX", "dev_vector_index")
 PROJ_COLL = os.getenv("PROJECT_RECORDS_COLLECTION", "ProjectRecords")
+CODE_COLL = os.getenv("CODE_CHUNKS_COLLECTION", "CodeChunks")
+CODE_INDEX = os.getenv("CODE_CHUNKS_VECTOR_INDEX", "code_vector_index")
+PP_TEXT_INDEX = os.getenv("PAST_PROJECTS_TEXT_INDEX", "pp_text_index")
 
 _vo = voyageai.Client(api_key=os.environ["VOYAGE_API_KEY"])
 
@@ -159,6 +162,20 @@ def _parse_docs(text: str) -> list[dict]:
         return []
 
 
+def _rrf_fuse(ranked_lists: list[list[dict]], key: str, k: int = 3, c: int = 60) -> list[dict]:
+    """Reciprocal Rank Fusion — merge ranked result lists; a doc's score += 1/(c + rank)."""
+    scores: dict = {}
+    docs: dict = {}
+    for lst in ranked_lists:
+        for rank, d in enumerate(lst):
+            kk = d.get(key)
+            if kk is None:
+                continue
+            scores[kk] = scores.get(kk, 0.0) + 1.0 / (c + rank + 1)
+            docs[kk] = d
+    return [docs[x] for x in sorted(scores, key=scores.get, reverse=True)[:k]]
+
+
 class MongoMCP:
     """One stdio session to the official MongoDB MCP, reused for many searches."""
 
@@ -194,6 +211,44 @@ class MongoMCP:
         if getattr(res, "isError", False):
             raise RuntimeError(f"MongoDB MCP aggregate failed (is Atlas reachable on :27017?): {text[:200]}")
         return _parse_docs(text)
+
+    async def _aggregate(self, collection: str, pipeline: list[dict]) -> list[dict]:
+        res = await self.session.call_tool("aggregate", {"database": _DB, "collection": collection, "pipeline": pipeline})
+        text = "".join(getattr(b, "text", "") or "" for b in res.content)
+        if getattr(res, "isError", False):
+            raise RuntimeError(f"MongoDB MCP aggregate failed: {text[:200]}")
+        return _parse_docs(text)
+
+    async def hybrid_search(
+        self, collection: str, vector_index: str, text_index: str, vpath: str,
+        query_vec: list[float], query_text: str, k: int = 3, key: str = "name", projection: dict | None = None,
+    ) -> list[dict]:
+        """Hybrid retrieval: fuse $vectorSearch + $search (full-text) by Reciprocal Rank Fusion.
+        Falls back to vector-only if the full-text index is absent (e.g. not seeded yet)."""
+        proj: dict = {"_id": 0}
+        proj.update(projection or {})
+        vec = await self._aggregate(collection, [
+            {"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k * 2}},
+            {"$project": proj},
+        ])
+        try:
+            txt = await self._aggregate(collection, [
+                {"$search": {"index": text_index, "text": {"query": query_text, "path": {"wildcard": "*"}}}},
+                {"$limit": k * 2},
+                {"$project": proj},
+            ])
+        except Exception:
+            return vec[:k]  # no full-text index yet → degrade to vector-only
+        return _rrf_fuse([vec, txt], key=key, k=k)
+
+    async def code_search(self, query_vec: list[float], k: int = 5, projection: dict | None = None) -> list[dict]:
+        """Code-RAG: vector search over CodeChunks — reusable code across the agency's past repos."""
+        proj: dict = {"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1}
+        proj.update(projection or {})
+        return await self._aggregate(CODE_COLL, [
+            {"$vectorSearch": {"index": CODE_INDEX, "path": "embedding", "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k}},
+            {"$project": proj},
+        ])
 
     async def find(self, collection: str, projection: dict | None = None, query: dict | None = None, limit: int = 20) -> list[dict]:
         res = await self.session.call_tool(
