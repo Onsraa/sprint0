@@ -21,9 +21,19 @@ from app.contracts import ArchitectureOptions, ClarifiedSpec, ParsedCV, PlanJSON
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
-    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
-os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "0")
+# Backend select: Vertex (uses GCP credit, NO 20/day Developer-API cap, allows additionalProperties)
+# vs Gemini Developer API (an API key). Flip with GOOGLE_GENAI_USE_VERTEXAI=true in .env
+# (+ GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION + ADC or a service-account key).
+_USE_VERTEX = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in ("1", "true", "yes")
+if _USE_VERTEX:
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
+    os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "us-central1")
+    for _k in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
+        os.environ.pop(_k, None)  # a stray key would force Developer-API mode — drop it
+else:
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "0"
+    if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+        os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
 MODEL = os.getenv("VERTEX_GEMINI_MODEL", "gemini-2.5-flash-lite")
 _APP = "orchestrator"
