@@ -176,30 +176,37 @@ def main() -> int:
                 "tags": proj.get("tags", []),
             })
 
-    # PastProjects (grounded summaries)
+    # Insert ALL data first — an Atlas index cap (M0) must never abort the data seed.
     print(f"{YEL}-- embedding + inserting memory --{RST}")
     for p, v in zip(projects, embed([p["brief_text"] for p in projects])):
         p["brief_embedding"] = v
     db[PP_COLL].insert_many(projects)
     print(f"{GREEN}✅ {PP_COLL}: {len(projects)} docs{RST}")
-    ensure_vector_index(db[PP_COLL], PP_INDEX, "brief_embedding")
-    ensure_search_index(db[PP_COLL], PP_TEXT_INDEX)
 
-    # CodeChunks (chunk-level code-RAG)
     chunk_texts = [f"{c['project']} · {c['file_path']}\n{c['excerpt']}" for c in chunk_docs]
     for c, v in zip(chunk_docs, embed(chunk_texts)):
         c["embedding"] = v
     db[CODE_COLL].insert_many(chunk_docs)
     print(f"{GREEN}✅ {CODE_COLL}: {len(chunk_docs)} code chunks{RST}")
-    ensure_vector_index(db[CODE_COLL], CODE_INDEX, "embedding")
 
-    # DeveloperProfiles (roster)
     devs = json.loads((REPO / "seed" / "developer_profiles.json").read_text())
     for d, v in zip(devs, embed([d["skills_text"] for d in devs])):
         d["skill_embedding"] = v
     db[DEV_COLL].insert_many(devs)
     print(f"{GREEN}✅ {DEV_COLL}: {len(devs)} docs{RST}")
-    ensure_vector_index(db[DEV_COLL], DEV_INDEX, "skill_embedding")
+
+    # Indexes — best-effort. Vector indexes (needed for the run) get priority; the full-text
+    # index (for hybrid retrieval, item H) is skipped if the M0 search-index cap is hit.
+    print(f"{YEL}-- ensuring search indexes (best-effort on M0) --{RST}")
+    for coll, name, path in [(PP_COLL, PP_INDEX, "brief_embedding"), (DEV_COLL, DEV_INDEX, "skill_embedding"), (CODE_COLL, CODE_INDEX, "embedding")]:
+        try:
+            ensure_vector_index(db[coll], name, path)
+        except Exception as e:
+            print(f"{YEL}   ⚠ vector index '{name}' skipped: {str(e)[:90]}{RST}")
+    try:
+        ensure_search_index(db[PP_COLL], PP_TEXT_INDEX)
+    except Exception as e:
+        print(f"{YEL}   ⚠ full-text index '{PP_TEXT_INDEX}' skipped (M0 cap; hybrid → vector-only for now): {str(e)[:90]}{RST}")
 
     print(f"\n{GREEN}Agency seeded. 3 repos live + memory (summaries + {len(chunk_docs)} code chunks) in Atlas.{RST}")
     for p in projects:
