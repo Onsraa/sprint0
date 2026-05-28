@@ -11,6 +11,7 @@ import asyncio
 import difflib
 import io
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -25,11 +26,14 @@ from app import auth, handoff, relay, staffing, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
-    DeveloperProfile, DispatchRequest, FeatureRequest, PlanJSON, PlanRequest, ProjectRecord,
+    Decision, DeveloperProfile, DispatchRequest, FeatureRequest, PlanJSON, PlanRequest, ProjectRecord,
     QAReport, RatifyRequest, RelayState,
 )
 from app.execute import execute_plan, extend_project
-from app.rag import all_project_records, get_project_record, record_merge, save_project_record, update_project_record
+from app.rag import (
+    all_project_records, decisions_by_owner, get_project_record, record_merge, save_decision,
+    save_project_record, update_project_record,
+)
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
     qa_review, reconcile_links, run_brief,
@@ -116,6 +120,66 @@ async def my_issues(member: DeveloperProfile = Depends(auth.current_member)) -> 
                 if i.assignee in (member.username, member.gitlab_username):
                     out.append({"project_id": pid, "project": plan.project_name, "epic": epic.title, "issue": i.model_dump()})
     return {"username": member.username, "count": len(out), "issues": out}
+
+
+@app.get("/api/me/decisions")
+async def my_decisions(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The caller's Decision Portfolio — every gate they've ratified, across all projects."""
+    try:
+        rows = await decisions_by_owner(member.username)
+    except Exception:
+        rows = []
+    return {"username": member.username, "count": len(rows), "decisions": rows}
+
+
+@app.get("/api/me/queue")
+async def my_queue(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Relay gates awaiting the caller across ALL active relays: a gate that is on the baton,
+    still open, and theirs (their discipline's lead — or the manager, for an orphan gate)."""
+    await team.ensure_loaded()
+    members = team.all_members()
+    items = []
+    for plan_id, state in RELAYS.items():
+        plan = PLANS.get(plan_id)
+        if plan is None:
+            continue
+        for g in state.gates:
+            if g.discipline not in state.baton:  # only active (baton-holding) gates
+                continue
+            if g.status not in ("pending", "changes_requested"):
+                continue
+            mine = (member.discipline == g.discipline) or (
+                member.role == "manager" and staffing.is_orphan(g.discipline, members)
+            )
+            if not mine:
+                continue
+            issue_count = sum(
+                1 for e in plan.epics for i in e.issues
+                if g.discipline == "qa" or i.discipline == g.discipline
+            )
+            items.append({
+                "plan_id": plan_id, "project": plan.project_name, "discipline": g.discipline,
+                "status": g.status, "issue_count": issue_count,
+                "is_delta": plan_id in DELTA_TARGET, "target_project_id": DELTA_TARGET.get(plan_id),
+            })
+    return {"username": member.username, "count": len(items), "items": items}
+
+
+@app.get("/api/relays")
+async def list_relays(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Manager overview of every active relay — the cross-project ratification board."""
+    out = []
+    for plan_id, state in RELAYS.items():
+        plan = PLANS.get(plan_id)
+        if plan is None:
+            continue
+        out.append({
+            "plan_id": plan_id, "project": plan.project_name, "baton": list(state.baton),
+            "gates": [{"discipline": g.discipline, "status": g.status, "note": g.note} for g in state.gates],
+            "is_delta": plan_id in DELTA_TARGET, "target_project_id": DELTA_TARGET.get(plan_id),
+            "all_ratified": relay.all_ratified(state),
+        })
+    return {"count": len(out), "relays": out}
 
 
 @app.post("/api/briefs")
@@ -222,6 +286,20 @@ async def ratify_gate(
     if member.role != "manager" and member.discipline != discipline:
         raise HTTPException(403, f"only the {discipline} lead or the manager can ratify this gate")
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
+    if req.approve:  # capture a durable Decision record (reasoning memory) — only on approval
+        sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
+        now = datetime.now(timezone.utc).isoformat()
+        dec = Decision(
+            id=f"dec_{uuid.uuid4().hex[:8]}", owner_id=member.username, domain=discipline,  # type: ignore[arg-type]
+            context_tags=sorted({i.required_skill for i in sl if i.required_skill}),
+            recommendation=("; ".join(i.title for i in sl))[:100],
+            reasoning=req.reasoning, project_id=plan_id, project_name=plan.project_name,
+            issue_ids=[i.id for i in sl], created_at=now, updated_at=now,
+        )
+        try:
+            await save_decision(dec.model_dump())
+        except Exception:
+            pass  # best-effort persistence, mirrors save_project_record at dispatch
     return state
 
 

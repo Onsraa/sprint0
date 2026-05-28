@@ -21,6 +21,10 @@ interface AppContextValue {
   role: Role;
   /** The member's real relay discipline (devs only; null for manager). */
   discipline: Discipline | null;
+  /** Gate discipline focused from the ratify queue — lets RatifyPanel show a
+   *  gate even when the caller's own `discipline` is null (e.g. a manager). */
+  activeGate: Discipline | null;
+  setActiveGate: Dispatch<SetStateAction<Discipline | null>>;
   mode: Mode;
   view: View;
   setView: Dispatch<SetStateAction<View>>;
@@ -59,15 +63,16 @@ export function useApp(): AppContextValue {
   return ctx;
 }
 
-const MANAGER_VIEWS: View[] = ["dashboard", "team", "relay"];
-const DEV_VIEWS: View[] = ["today", "issue", "passport", "ratify", "qa"];
+const MANAGER_VIEWS: View[] = ["dashboard", "team", "relay", "relays", "queue", "ratify", "portfolio"];
+const DEV_VIEWS: View[] = ["today", "issue", "passport", "ratify", "qa", "queue", "portfolio"];
 
-/** Where each persona lands. */
+/** Where each persona lands. Leads land on the cross-project ratify queue (not
+ *  the bare RatifyPanel, which is empty until a gate is opened from the queue). */
 const ROLE_HOME: Record<Role, View> = {
   manager: "dashboard",
-  uiux: "ratify",
-  backend: "ratify",
-  frontend: "ratify",
+  uiux: "queue",
+  backend: "queue",
+  frontend: "queue",
   qa: "qa",
 };
 
@@ -105,6 +110,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [featureProjectId, setFeatureProjectId] = useState<number | null>(null);
   const [activeIssue, setActiveIssue] = useState<string | null>(null);
   const [activeDev, setActiveDev] = useState<string | null>(null);
+  const [activeGate, setActiveGate] = useState<Discipline | null>(null);
 
   const [plan, setPlan] = useState<PlanJSON | null>(null);
   const [planId, setPlanId] = useState<string | null>(null);
@@ -153,6 +159,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setRelay(null);
     setLiveProjectId(null);
     setLiveCloneUrl(null);
+    setActiveGate(null);
     setWizardOpen(false);
     setView("dashboard");
   }, []);
@@ -219,6 +226,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     logout,
     role,
     discipline,
+    activeGate,
+    setActiveGate,
     mode,
     view,
     setView,

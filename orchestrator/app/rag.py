@@ -151,6 +151,21 @@ async def record_postmortem(doc: dict) -> None:
         await m.insert_many(PP_COLL, [doc])
 
 
+DECISIONS_COLLECTION = "Decisions"  # PascalCase, matches PastProjects/ProjectRecords convention
+
+
+async def save_decision(doc: dict) -> None:
+    """Persist a lead's ratification Decision (the agency's reasoning memory). Best-effort write."""
+    async with MongoMCP() as m:
+        await m.insert_many(DECISIONS_COLLECTION, [doc])
+
+
+async def decisions_by_owner(owner_id: str) -> list[dict]:
+    """Every Decision a member has made, across all projects (their portfolio)."""
+    async with MongoMCP() as m:
+        return await m.find(DECISIONS_COLLECTION, query={"owner_id": owner_id}, projection={"_id": 0}, limit=200)
+
+
 def _parse_docs(text: str) -> list[dict]:
     """The MCP returns a prose line + an EJSON array (wrapped in safety tags)."""
     a, b = text.find("["), text.rfind("]")

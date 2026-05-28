@@ -163,6 +163,43 @@ export interface PlanResponse {
   relay: RelayState;
 }
 
+export interface Decision {
+  id: string;
+  owner_id: string;
+  domain: Discipline;
+  context_tags: string[];
+  recommendation: string;
+  reasoning: string;
+  project_id: string;
+  project_name: string;
+  issue_ids: string[];
+  outcome_validated: boolean;
+  visibility: "personal" | "team";
+  deprecated: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QueueItem {
+  plan_id: string;
+  project: string;
+  discipline: Discipline;
+  status: GateStatus;
+  issue_count: number;
+  is_delta: boolean;
+  target_project_id: number | null;
+}
+
+export interface RelaySummary {
+  plan_id: string;
+  project: string;
+  baton: Discipline[];
+  gates: { discipline: Discipline; status: GateStatus; note: string }[];
+  is_delta: boolean;
+  target_project_id: number | null;
+  all_ratified: boolean;
+}
+
 export interface FeaturePlanResponse extends PlanResponse {
   project_id: number;
 }
@@ -326,6 +363,15 @@ export const api = {
   myIssues(): Promise<MyIssuesResponse> {
     return jget("/api/me/issues");
   },
+  myDecisions(): Promise<{ username: string; count: number; decisions: Decision[] }> {
+    return jget("/api/me/decisions");
+  },
+  myQueue(): Promise<{ username: string; count: number; items: QueueItem[] }> {
+    return jget("/api/me/queue");
+  },
+  allRelays(): Promise<{ count: number; relays: RelaySummary[] }> {
+    return jget("/api/relays");
+  },
 
   /* Briefs / intake */
   createBrief(input: { text?: string; file?: File }): Promise<{ brief_id: string }> {
@@ -350,7 +396,13 @@ export const api = {
     return jpost(`/api/briefs/${briefId}/plan`, body ?? {});
   },
 
-  /* Relay */
+  /* Plans / Relay */
+  getPlan(planId: string): Promise<PlanJSON> {
+    return jget(`/api/plans/${planId}`);
+  },
+  getRelay(planId: string): Promise<RelayState> {
+    return jget(`/api/plans/${planId}/relay`);
+  },
   relay(planId: string): Promise<RelayState> {
     return jget(`/api/plans/${planId}/relay`);
   },
@@ -360,7 +412,7 @@ export const api = {
   ratify(
     planId: string,
     discipline: Discipline,
-    body: { edits?: Issue[]; note?: string; approve?: boolean },
+    body: { edits?: Issue[]; note?: string; approve?: boolean; reasoning?: string },
   ): Promise<RelayState> {
     return jpost(`/api/plans/${planId}/ratify/${discipline}`, body);
   },

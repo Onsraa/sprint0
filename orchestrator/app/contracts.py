@@ -222,6 +222,32 @@ class ProjectRecord(BaseModel):
     module_manifest: list[str] = Field(default_factory=list)  # key files/modules for mid-prod grounding
 
 
+# ── Decision Portfolio: a durable record captured when a lead ratifies a gate ──
+class Decision(BaseModel):
+    """What a discipline lead decided at a relay gate + why — the agency's reasoning memory.
+    AI-related fields are all optional so a record can be built with NO AI involved (a pure
+    human ratification still produces a Decision)."""
+    id: str
+    owner_id: str                                       # the ratifying member's username
+    domain: Discipline
+    context_tags: list[str] = Field(default_factory=list)  # required_skills the slice touched
+    recommendation: str                                 # what was decided (the ratified slice, condensed)
+    reasoning: str = ""                                 # why (the lead's explanation at ratify time)
+    project_id: str                                     # the plan_id this decision belongs to
+    project_name: str
+    issue_ids: list[str] = Field(default_factory=list)  # the slice's issue ids
+    outcome_validated: bool = False                     # set later when the shipped project validates it
+    visibility: Literal["personal", "team"] = "personal"
+    deprecated: bool = False
+    deprecation_reason: Optional[str] = None
+    ai_proposal_at_time: Optional[str] = None           # the AI's draft recommendation, if any
+    confidence_at_time: Optional[int] = None            # the AI's confidence (0-100), if any
+    deviation_from_ai: bool = False                     # did the lead override the AI draft?
+    deviation_reason: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
 # ── QA: agent-prefilled acceptance checklist ──
 class QAItemResult(BaseModel):
     issue_id: str
@@ -243,6 +269,7 @@ class ClarifyResolution(BaseModel):
 class RatifyRequest(BaseModel):
     edits: Optional[list[Issue]] = None  # the lead's adjusted slice; None = accept the draft as-is
     note: str = ""
+    reasoning: str = ""  # why the lead ratified this way → captured into the durable Decision record
     approve: bool = True
 
 

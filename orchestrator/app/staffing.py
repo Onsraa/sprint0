@@ -69,5 +69,7 @@ def coverage(plan: PlanJSON, members: list[DeveloperProfile]) -> list[dict]:
 
 
 def is_orphan(discipline: str, members: list[DeveloperProfile]) -> bool:
-    """A discipline no available team member is qualified for → its relay gate falls to the manager."""
-    return not any(_qualified(m, discipline) and m.load < 100 for m in members if m.role == "developer")
+    """No developer leads this discipline at all → its relay gate has no one to ratify it and
+    falls to the manager. Ratify ownership is about who *leads* the discipline, not trust or
+    capacity (those gate work assignment + the Trust Dial auto-pass, not who signs the gate off)."""
+    return not any(m.discipline == discipline for m in members if m.role == "developer")

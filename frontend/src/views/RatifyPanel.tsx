@@ -12,20 +12,26 @@ import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle
 const RISKS: Risk[] = ["low", "medium", "high"];
 
 export function RatifyPanel() {
-  const { discipline, plan, planId, relay, setRelay } = useApp();
+  const { discipline, activeGate, plan, planId, relay, setRelay, setView } = useApp();
+
+  // The gate being ratified. A lead ratifies their own discipline; a manager
+  // opens an orphan gate from the queue, which sets `activeGate`. Fall back to
+  // the caller's own discipline when no gate was explicitly focused.
+  const target = activeGate ?? discipline;
 
   const slice = useMemo(
-    () => (discipline ? planIssues(plan?.epics).filter((i) => i.discipline === discipline) : []),
-    [plan, discipline],
+    () => (target ? planIssues(plan?.epics).filter((i) => i.discipline === target) : []),
+    [plan, target],
   );
 
   // Local editable copy keyed by issue id.
   const [edits, setEdits] = useState<Record<string, Issue>>({});
   const [note, setNote] = useState("");
+  const [reasoning, setReasoning] = useState("");
   const [busy, setBusy] = useState<"approve" | "changes" | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  if (!discipline || !plan || !planId) {
+  if (!target || !plan || !planId) {
     return (
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
         <div className="card-soft" style={{ padding: 40, textAlign: "center", border: "2px dashed var(--line-strong)" }}>
@@ -40,8 +46,8 @@ export function RatifyPanel() {
     );
   }
 
-  const gate = relay?.gates.find((g) => g.discipline === discipline);
-  const accent = DISCIPLINE_COLOR[discipline];
+  const gate = relay?.gates.find((g) => g.discipline === target);
+  const accent = DISCIPLINE_COLOR[target];
   const cleared = gate?.status === "ratified" || gate?.status === "auto_passed";
 
   const editOf = (i: Issue): Issue => edits[i.id] ?? i;
@@ -53,7 +59,7 @@ export function RatifyPanel() {
     setErr(null);
     try {
       const payload = slice.map(editOf);
-      const next = await api.ratify(planId, discipline, { edits: payload, note, approve });
+      const next = await api.ratify(planId, target, { edits: payload, note, approve, reasoning });
       setRelay(next);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -64,9 +70,16 @@ export function RatifyPanel() {
 
   return (
     <div style={{ maxWidth: 980, margin: "0 auto" }}>
+      <button
+        onClick={() => setView("queue")}
+        className="btn btn-ghost btn-sm"
+        style={{ marginBottom: 12 }}
+      >
+        ← Back to queue
+      </button>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
         <div>
-          <div className="kicker">Ratify · {DISCIPLINE_LABEL[discipline]}</div>
+          <div className="kicker">Ratify · {DISCIPLINE_LABEL[target]}</div>
           <div className="display" style={{ fontSize: 28, marginTop: 4 }}>
             Your {slice.length} {slice.length === 1 ? "issue" : "issues"}. Tune, then pass the baton.
           </div>
@@ -87,7 +100,7 @@ export function RatifyPanel() {
 
       {slice.length === 0 ? (
         <div className="card-soft" style={{ padding: 28, textAlign: "center", color: "var(--ink-soft)" }}>
-          No {DISCIPLINE_LABEL[discipline]} issues in this plan. Nothing to ratify — your gate auto-clears.
+          No {DISCIPLINE_LABEL[target]} issues in this plan. Nothing to ratify — your gate auto-clears.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -105,6 +118,15 @@ export function RatifyPanel() {
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="e.g. locked the auth contract, FE can mock against it"
+            style={inputStyle}
+          />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+          <span className="kicker">Why this call? (optional · saved to your Decision portfolio)</span>
+          <input
+            value={reasoning}
+            onChange={(e) => setReasoning(e.target.value)}
+            placeholder="e.g. chose JWT over sessions — stateless, fits the mobile client"
             style={inputStyle}
           />
         </label>
@@ -131,7 +153,7 @@ export function RatifyPanel() {
             {busy === "changes" ? "Sending…" : "Request changes"}
           </button>
           <div style={{ marginLeft: "auto", fontSize: 12, color: "var(--ink-mute)" }}>
-            edits go to <span className="mono">/ratify/{discipline}</span>
+            edits go to <span className="mono">/ratify/{target}</span>
           </div>
         </div>
       </div>

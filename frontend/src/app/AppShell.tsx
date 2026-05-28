@@ -8,6 +8,9 @@ import { TeamView } from "../views/Team";
 import { DevToday, DevIssue, DevPassport } from "../views/dev/DevViews";
 import { RelayBoard } from "../views/RelayBoard";
 import { RatifyPanel } from "../views/RatifyPanel";
+import { RatifyQueue } from "../views/RatifyQueue";
+import { RelayPortfolio } from "../views/RelayPortfolio";
+import { Portfolio } from "../views/Portfolio";
 import { QAGate } from "../views/QAGate";
 import { Wizard } from "../wizard/Wizard";
 
@@ -56,7 +59,9 @@ function navFor(role: Role): NavItem[] {
     return [
       { id: "dashboard", label: "Projects", icon: "▦" },
       { id: "team", label: "Team", icon: "◉" },
-      { id: "relay", label: "Relay", icon: "🎽" },
+      { id: "relays", label: "Relay", icon: "🎽" },
+      { id: "queue", label: "Ratify", icon: "✓" },
+      { id: "portfolio", label: "Portfolio", icon: "🗂" },
     ];
   }
   if (role === "qa") {
@@ -64,11 +69,13 @@ function navFor(role: Role): NavItem[] {
       { id: "qa", label: "QA gate", icon: "✓" },
       { id: "today", label: "Today", icon: "◎" },
       { id: "passport", label: "My Passport", icon: "★" },
+      { id: "portfolio", label: "Portfolio", icon: "🗂" },
     ];
   }
   // discipline leads (uiux / backend / frontend)
   return [
-    { id: "ratify", label: "Ratify", icon: "🎽" },
+    { id: "queue", label: "Ratify", icon: "🎽" },
+    { id: "portfolio", label: "Portfolio", icon: "🗂" },
     { id: "issue", label: "Active issue", icon: "▶" },
     { id: "today", label: "Today", icon: "◎" },
     { id: "passport", label: "My Passport", icon: "★" },
@@ -211,10 +218,13 @@ function TopBar() {
     dashboard: "Projects",
     team: "Team",
     relay: "Ratification relay",
+    relays: "Active relays",
     today: "Today",
     issue: "Active issue",
     passport: "My Passport",
     ratify: "Ratify",
+    queue: "Ratify queue",
+    portfolio: "Decision Portfolio",
     qa: "QA gate",
   };
   const isManager = role === "manager";
@@ -297,7 +307,11 @@ function MainView() {
       <div style={{ padding: "24px 32px 40px" }}>
         {view === "dashboard" && <Dashboard />}
         {view === "team" && <TeamView />}
+        {view === "relays" && <RelayPortfolio />}
         {view === "relay" && <RelayBoard />}
+        {view === "queue" && <RatifyQueue />}
+        {view === "ratify" && <RatifyPanel />}
+        {view === "portfolio" && <Portfolio />}
       </div>
     );
   }
@@ -306,8 +320,10 @@ function MainView() {
       {view === "today" && <DevToday />}
       {view === "issue" && <DevIssue />}
       {view === "passport" && <DevPassport />}
+      {view === "queue" && <RatifyQueue />}
       {view === "ratify" && <RatifyPanel />}
       {view === "qa" && <QAGate />}
+      {view === "portfolio" && <Portfolio />}
     </div>
   );
 }
