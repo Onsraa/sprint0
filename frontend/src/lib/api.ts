@@ -200,6 +200,30 @@ export interface RelaySummary {
   all_ratified: boolean;
 }
 
+/** A dispatched project (real GitLab scaffold) — mirrors the persisted ProjectRecord. */
+export interface ProjectSummary {
+  project_id: number;
+  name: string;
+  web_url: string;
+  tech_stack: TechStack;
+  grounded_on: string[];
+  plan: PlanJSON;
+  module_manifest?: string[];
+  status?: string; // "closed" once the post-mortem runs; absent → active
+  created_at?: string;
+}
+
+/** A merge sprint0 couldn't map to a roster member — awaits the manager's call. */
+export interface Attribution {
+  id: string;
+  gitlab_username: string;
+  task_type: string;
+  score: number;
+  project_id: number | null;
+  issue_iid: number | null;
+  suggested: string | null;
+}
+
 export interface FeaturePlanResponse extends PlanResponse {
   project_id: number;
 }
@@ -372,6 +396,9 @@ export const api = {
   allRelays(): Promise<{ count: number; relays: RelaySummary[] }> {
     return jget("/api/relays");
   },
+  projects(): Promise<{ count: number; projects: ProjectSummary[] }> {
+    return jget("/api/projects");
+  },
 
   /* Briefs / intake */
   createBrief(input: { text?: string; file?: File }): Promise<{ brief_id: string }> {
@@ -399,6 +426,10 @@ export const api = {
   /* Plans / Relay */
   getPlan(planId: string): Promise<PlanJSON> {
     return jget(`/api/plans/${planId}`);
+  },
+  /** WebSocket URL for the scaffold-progress stream (unauthenticated, canned step sequence). */
+  planEventsUrl(planId: string): string {
+    return `${BASE.replace(/^http/, "ws")}/api/plans/${planId}/events`;
   },
   getRelay(planId: string): Promise<RelayState> {
     return jget(`/api/plans/${planId}/relay`);
@@ -452,6 +483,21 @@ export const api = {
     issue_iid?: number;
   }): Promise<DeveloperProfile> {
     return jpost("/api/merge", body);
+  },
+  attributions(): Promise<Attribution[]> {
+    return jget("/api/attributions");
+  },
+  resolveAttribution(
+    aid: string,
+    body: { username: string; task_type?: string },
+  ): Promise<{ resolved: string; attributed_to: string; profile: DeveloperProfile }> {
+    return jpost(`/api/attributions/${aid}/resolve`, body);
+  },
+  linkMember(username: string): Promise<Record<string, unknown>> {
+    return jpost(`/api/members/${username}/link`);
+  },
+  reconcileTeam(): Promise<Record<string, unknown>> {
+    return jpost("/api/team/reconcile");
   },
   closeProject(projectId: number, outcome_notes?: string): Promise<CloseResult> {
     return jpost(`/api/projects/${projectId}/close`, { outcome_notes: outcome_notes ?? "" });

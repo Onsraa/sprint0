@@ -3,12 +3,11 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useMemo,
   useState,
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import type { Mode, Project, Role, View, WizardKind } from "./types";
-import type { Discipline, Member, PlanJSON, RelayState } from "../lib/api";
+import type { Mode, Role, View, WizardKind } from "./types";
+import type { Discipline, Member, PlanJSON, ProjectSummary, RelayState } from "../lib/api";
 import { api, token } from "../lib/api";
 
 interface AppContextValue {
@@ -39,7 +38,9 @@ interface AppContextValue {
   setActiveIssue: Dispatch<SetStateAction<string | null>>;
   activeDev: string | null;
   setActiveDev: Dispatch<SetStateAction<string | null>>;
-  projects: Project[];
+  /** Real dispatched projects (from GET /api/projects). Refetched on login + after dispatch/close. */
+  projects: ProjectSummary[];
+  refreshProjects: () => void;
   /** Live plan produced by the wizard — drives the relay/ratify/qa surfaces. */
   plan: PlanJSON | null;
   setPlan: Dispatch<SetStateAction<PlanJSON | null>>;
@@ -63,7 +64,7 @@ export function useApp(): AppContextValue {
   return ctx;
 }
 
-const MANAGER_VIEWS: View[] = ["dashboard", "team", "relay", "relays", "queue", "ratify", "portfolio"];
+const MANAGER_VIEWS: View[] = ["dashboard", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions"];
 const DEV_VIEWS: View[] = ["today", "issue", "passport", "ratify", "qa", "queue", "portfolio"];
 
 /** Where each persona lands. Leads land on the cross-project ratify queue (not
@@ -171,53 +172,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role]);
 
-  const projects = useMemo<Project[]>(
-    () => [
-      {
-        id: "p_001",
-        name: "luxe-real-estate",
-        client: "Luxe Properties LLC",
-        status: "shipping",
-        progress: 72,
-        sprint: 3,
-        devs: 4,
-        issues: 32,
-        stack: ["Next.js", "Postgres", "Stripe"],
-        created: "3w ago",
-        color: "#0F8E5C",
-        match: { name: "zillow-clone-2024", pct: 92 },
-      },
-      {
-        id: "p_002",
-        name: "courier-track",
-        client: "Bolt Delivery",
-        status: "review",
-        progress: 28,
-        sprint: 0,
-        devs: 3,
-        issues: 18,
-        stack: ["React Native", "Node", "PostGIS"],
-        created: "2d ago",
-        color: "#D97706",
-        match: { name: "delivery-track-2024", pct: 88 },
-      },
-      {
-        id: "p_003",
-        name: "fintech-jr-v2",
-        client: "BridgePay",
-        status: "shipped",
-        progress: 100,
-        sprint: 6,
-        devs: 5,
-        issues: 47,
-        stack: ["Next.js", "Stripe", "Plaid"],
-        created: "2mo ago",
-        color: "#2A6FDB",
-        match: { name: "fintech-jr-2024", pct: 95 },
-      },
-    ],
-    [],
-  );
+  // Real dispatched projects from GET /api/projects (replaces the old demo mock).
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const refreshProjects = useCallback(() => {
+    if (!member) {
+      setProjects([]);
+      return;
+    }
+    api
+      .projects()
+      .then((r) => setProjects(r.projects))
+      .catch(() => setProjects([]));
+  }, [member]);
+  useEffect(() => {
+    refreshProjects();
+  }, [refreshProjects]);
 
   const value: AppContextValue = {
     member,
@@ -242,6 +211,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     activeDev,
     setActiveDev,
     projects,
+    refreshProjects,
     plan,
     setPlan,
     planId,

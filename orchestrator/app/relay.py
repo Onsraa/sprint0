@@ -41,7 +41,7 @@ def build_relay(plan: PlanJSON) -> RelayState:
     starts = [d for d in _START if d in present]
     gates: list[Gate] = [Gate(discipline=d) for d in starts]
     if "frontend" in present:
-        deps = [d for d in ("uiux", "backend") if d in present]
+        deps = list(starts)  # whole present start-wave (uiux ∥ backend ∥ devops) converges into frontend
         gates.append(Gate(discipline="frontend", depends_on=deps, status="locked" if deps else "pending"))
     qa_deps: list[Discipline] = ["frontend"] if "frontend" in present else list(starts)
     gates.append(Gate(discipline="qa", depends_on=qa_deps, status="locked" if qa_deps else "pending"))

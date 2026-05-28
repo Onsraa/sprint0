@@ -1,31 +1,76 @@
+import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../app/AppContext";
+import { api, type Member, type TrustLevel } from "../lib/api";
+import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
 
-/* Team roster: dev cards w/ trust tier, skills, click → passport */
+/* Team roster — real members from GET /api/developers. Trust grows with every merge;
+   tiers bucket by per-account trust_level. Manager can Link a member's GitLab account
+   or Reconcile the whole roster (R3 GitLab linking). */
 
-interface Dev {
-  i: string;
-  n: string;
-  role: string;
-  trust: number;
-  color: string;
-  projects: string[];
-  load: number;
-  top: string[];
-  onboarded: string;
-  isNew?: boolean;
-}
-
-const TEAM: Dev[] = [
-  { i: "MR", n: "Maria R.", role: "FE lead", trust: 86, color: "#F4511E", projects: ["luxe-real-estate", "courier-track"], load: 60, top: ["Frontend", "Velocity", "Product"], onboarded: "2y ago" },
-  { i: "TS", n: "Tomás S.", role: "FS", trust: 78, color: "#2A6FDB", projects: ["luxe-real-estate", "fintech-jr-v2"], load: 35, top: ["Backend", "Data"], onboarded: "1y ago" },
-  { i: "KB", n: "Kira B.", role: "BE", trust: 91, color: "#0F8E5C", projects: ["fintech-jr-v2", "luxe-real-estate"], load: 80, top: ["Data", "DevOps", "Backend"], onboarded: "3y ago" },
-  { i: "AS", n: "Alex S.", role: "FS", trust: 64, color: "#7C3AED", projects: ["courier-track"], load: 25, top: ["Frontend", "Backend"], onboarded: "6mo ago" },
-  { i: "JL", n: "Juno L.", role: "Mobile", trust: 72, color: "#D97706", projects: ["courier-track", "luxe-real-estate"], load: 90, top: ["Mobile", "Frontend"], onboarded: "1y ago" },
-  { i: "NP", n: "Nia P.", role: "FE", trust: 22, color: "var(--ink-mute)", projects: [], load: 10, top: ["Frontend"], onboarded: "3d ago", isNew: true },
+const TIERS: { name: string; level: TrustLevel; range: string; color: string }[] = [
+  { name: "Senior", level: "high", range: "high trust", color: "var(--positive)" },
+  { name: "Trusted", level: "medium", range: "medium trust", color: "var(--info)" },
+  { name: "Apprentice", level: "low", range: "low trust", color: "var(--ink-mute)" },
 ];
 
+const initials = (name: string) =>
+  name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
+
+const roleLabel = (m: Member) => `${m.discipline ? DISCIPLINE_LABEL[m.discipline] : "Generalist"} · ${m.seniority}`;
+const accentOf = (m: Member) => (m.discipline ? DISCIPLINE_COLOR[m.discipline] : "var(--ink-mute)");
+
 export function TeamView() {
-  const { setActiveDev } = useApp();
+  const { role, setWizardOpen, setWizardKind } = useApp();
+  const isManager = role === "manager";
+  const [members, setMembers] = useState<Member[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null); // username being linked, or "reconcile"
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api
+      .developers()
+      .then((ms) => {
+        setMembers(ms);
+        setErr(null);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const link = async (username: string) => {
+    setBusy(username);
+    try {
+      await api.linkMember(username);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const reconcile = async () => {
+    setBusy("reconcile");
+    try {
+      await api.reconcileTeam();
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onboard = () => {
+    setWizardKind("hire");
+    setWizardOpen(true);
+  };
+
+  const unlinked = members.filter((m) => m.gitlab_user_id == null).length;
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -36,27 +81,57 @@ export function TeamView() {
             Live passports. Trust grows with every successful merge. New hires start at <b>Apprentice</b> and earn their way up.
           </p>
         </div>
-        <button onClick={() => setActiveDev("new")} className="btn btn-primary btn-sm">+ Onboard a dev</button>
+        {isManager && (
+          <div style={{ display: "flex", gap: 8 }}>
+            {unlinked > 0 && (
+              <button onClick={reconcile} disabled={busy != null} className="btn btn-ghost btn-sm" style={{ opacity: busy != null ? 0.5 : 1 }}>
+                {busy === "reconcile" ? "Reconciling…" : `Reconcile all (${unlinked})`}
+              </button>
+            )}
+            <button onClick={onboard} className="btn btn-primary btn-sm">+ Onboard a dev</button>
+          </div>
+        )}
       </div>
 
-      {/* Tier strips */}
-      <TierStrip name="Senior" range="75+" devs={TEAM.filter((d) => d.trust >= 75)} color="var(--positive)" />
-      <TierStrip name="Trusted" range="35–74" devs={TEAM.filter((d) => d.trust >= 35 && d.trust < 75)} color="var(--info)" />
-      <TierStrip name="Apprentice" range="<35" devs={TEAM.filter((d) => d.trust < 35)} color="var(--ink-mute)" />
+      {loading ? (
+        <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--ink-soft)" }}>Loading roster…</div>
+      ) : err ? (
+        <div className="card-soft mono" style={{ padding: 16, color: "var(--orange-deep)", fontSize: 13 }}>{err}</div>
+      ) : (
+        TIERS.map((t) => (
+          <TierStrip
+            key={t.level}
+            name={t.name}
+            range={t.range}
+            color={t.color}
+            devs={members.filter((m) => m.trust_level === t.level)}
+            isManager={isManager}
+            busy={busy}
+            onLink={link}
+          />
+        ))
+      )}
     </div>
   );
 }
 
-function TierStrip({ name, range, devs, color }: { name: string; range: string; devs: Dev[]; color: string }) {
+function TierStrip({
+  name, range, devs, color, isManager, busy, onLink,
+}: {
+  name: string; range: string; devs: Member[]; color: string;
+  isManager: boolean; busy: string | null; onLink: (u: string) => void;
+}) {
   return (
     <div style={{ marginBottom: 28 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
         <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />
         <div className="display" style={{ fontSize: 20 }}>{name}</div>
-        <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 700 }}>trust {range} · {devs.length} {devs.length === 1 ? "dev" : "devs"}</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 700 }}>
+          {range} · {devs.length} {devs.length === 1 ? "dev" : "devs"}
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-        {devs.map((d) => <DevCard key={d.i} d={d} />)}
+        {devs.map((d) => <DevCard key={d.username} d={d} isManager={isManager} busy={busy} onLink={onLink} />)}
         {devs.length === 0 && (
           <div className="card-soft" style={{ padding: 20, textAlign: "center", color: "var(--ink-mute)", fontSize: 13, fontStyle: "italic", border: "1.5px dashed var(--line-strong)" }}>
             no devs at this tier
@@ -67,23 +142,24 @@ function TierStrip({ name, range, devs, color }: { name: string; range: string; 
   );
 }
 
-function DevCard({ d }: { d: Dev }) {
+function DevCard({ d, isManager, busy, onLink }: { d: Member; isManager: boolean; busy: string | null; onLink: (u: string) => void }) {
+  const linked = d.gitlab_user_id != null;
   return (
     <div className="card-soft" style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <div style={{
           width: 44, height: 44, borderRadius: "50%",
-          background: d.color, color: "var(--paper)", border: "2px solid var(--ink)",
+          background: accentOf(d), color: "var(--paper)", border: "2px solid var(--ink)",
           display: "grid", placeItems: "center", fontWeight: 800, flexShrink: 0,
-        }}>{d.i}</div>
+        }}>{initials(d.name)}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.n}</div>
-            {d.isNew && <span className="chip" style={{ fontSize: 9, padding: "1px 6px", background: "var(--orange-soft)", borderColor: "var(--orange)", color: "var(--orange-deep)" }}>NEW</span>}
+            <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</div>
+            {d.promoted && <span className="chip" style={{ fontSize: 9, padding: "1px 6px", background: "var(--positive-tint)", color: "var(--positive)" }}>↑</span>}
           </div>
-          <div style={{ fontSize: 11, color: "var(--ink-mute)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{d.role} · {d.onboarded}</div>
+          <div style={{ fontSize: 11, color: "var(--ink-mute)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{roleLabel(d)}</div>
         </div>
-        <div className="mono" style={{ fontSize: 18, fontWeight: 800, color: "var(--orange)" }}>{d.trust}</div>
+        <div className="mono" style={{ fontSize: 12, fontWeight: 800, color: "var(--orange)", textTransform: "capitalize" }}>{d.trust_level}</div>
       </div>
 
       <div style={{ marginBottom: 10 }}>
@@ -96,14 +172,30 @@ function DevCard({ d }: { d: Dev }) {
         </div>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-        {d.top.map((t) => (
-          <span key={t} style={{
-            fontSize: 10, padding: "2px 7px", borderRadius: 999,
-            background: "var(--cream)", color: "var(--ink-soft)", fontWeight: 600,
-            border: "1px solid var(--line)",
-          }}>{t}</span>
-        ))}
+      {d.skills_text && (
+        <div style={{ fontSize: 11, color: "var(--ink-soft)", lineHeight: 1.4, marginBottom: 10, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          {d.skills_text}
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {linked ? (
+          <span className="mono" style={{ fontSize: 10, color: "var(--positive)", fontWeight: 700 }}>✓ @{d.gitlab_username}</span>
+        ) : (
+          <>
+            <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", fontWeight: 700 }}>unlinked</span>
+            {isManager && (
+              <button
+                onClick={() => onLink(d.username)}
+                disabled={busy != null}
+                className="btn btn-ghost btn-sm"
+                style={{ marginLeft: "auto", opacity: busy != null ? 0.5 : 1, padding: "4px 10px", fontSize: 11 }}
+              >
+                {busy === d.username ? "Linking…" : "Link GitLab"}
+              </button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

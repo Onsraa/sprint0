@@ -998,20 +998,38 @@ function StepDispatch({
   setLiveCloneUrl: Dispatch<SetStateAction<string | null>>;
   onClose: () => void;
 }) {
+  const { refreshProjects } = useApp();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<DispatchResult | null>(null);
+  const [steps, setSteps] = useState<{ step: number; of: number; message: string }[]>([]);
 
   const dispatch = async (mode: "copilot" | "autonomous") => {
     if (!planId) return;
     setBusy(true);
     setErr(null);
+    setSteps([]);
+    // Cosmetic scaffold-progress stream (unauthenticated WS; canned step sequence).
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(api.planEventsUrl(planId));
+      ws.onmessage = (ev) => {
+        try {
+          setSteps((s) => [...s, JSON.parse(ev.data)]);
+        } catch {
+          /* ignore malformed frame */
+        }
+      };
+    } catch {
+      /* progress stream is optional */
+    }
     try {
       // Autonomous force-passes any remaining gates server-side; refresh relay after.
       const res = await api.dispatch(planId, mode);
       setResult(res);
       setLiveProjectId(res.project_id);
       setLiveCloneUrl(res.clone_url || (res.web_url ? res.web_url + ".git" : null));
+      refreshProjects(); // the new project now appears on the manager Dashboard
       try {
         setRelay(await api.relay(planId));
       } catch {
@@ -1020,6 +1038,7 @@ function StepDispatch({
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
+      ws?.close();
       setBusy(false);
     }
   };
@@ -1087,6 +1106,16 @@ function StepDispatch({
           Copilot dispatches once every gate is cleared. Autonomous force-passes the relay, then scaffolds.
         </div>
       </div>
+      {busy && steps.length > 0 && (
+        <div className="card-soft" style={{ padding: 16, width: 420, maxWidth: "90%", display: "flex", flexDirection: "column", gap: 8 }}>
+          {steps.map((s, i) => (
+            <div key={i} className="mono" style={{ fontSize: 12, color: i === steps.length - 1 ? "var(--ink)" : "var(--ink-mute)", display: "flex", gap: 8 }}>
+              <span style={{ color: "var(--orange)", fontWeight: 700 }}>{s.step}/{s.of}</span>
+              {s.message}
+            </div>
+          ))}
+        </div>
+      )}
       {err && (
         <div className="card-soft" style={{ padding: 14, borderColor: "var(--orange)", color: "var(--orange-deep)", fontFamily: "var(--font-mono)", fontSize: 12, maxWidth: 560 }}>
           {err}

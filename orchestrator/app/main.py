@@ -182,6 +182,16 @@ async def list_relays(member: DeveloperProfile = Depends(auth.current_member)) -
     return {"count": len(out), "relays": out}
 
 
+@app.get("/api/projects")
+async def list_projects(_: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Every dispatched project (real GitLab scaffolds) — the manager Dashboard source."""
+    try:
+        recs = await all_project_records()
+    except Exception:
+        recs = []
+    return {"count": len(recs), "projects": recs}
+
+
 @app.post("/api/briefs")
 async def create_brief(text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None)) -> dict:
     content = (text or "").strip()
@@ -349,8 +359,10 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest) -> dict:
             project_id=result["project_id"], name=plan.project_name, web_url=result.get("web_url", ""),
             tech_stack=plan.tech_stack, grounded_on=plan.grounded_on, plan=plan, module_manifest=manifest,
         )
+        rec = record.model_dump()
+        rec["created_at"] = datetime.now(timezone.utc).isoformat()
         try:
-            await save_project_record(record.model_dump())
+            await save_project_record(rec)
         except Exception as e:  # persistence is best-effort; never fail the scaffold over it
             result["persist_warning"] = str(e)[:200]
     RESULTS[plan_id] = result

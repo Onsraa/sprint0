@@ -11,6 +11,7 @@ import { RatifyPanel } from "../views/RatifyPanel";
 import { RatifyQueue } from "../views/RatifyQueue";
 import { RelayPortfolio } from "../views/RelayPortfolio";
 import { Portfolio } from "../views/Portfolio";
+import { Attributions } from "../views/Attributions";
 import { QAGate } from "../views/QAGate";
 import { Wizard } from "../wizard/Wizard";
 
@@ -61,6 +62,7 @@ function navFor(role: Role): NavItem[] {
       { id: "team", label: "Team", icon: "◉" },
       { id: "relays", label: "Relay", icon: "🎽" },
       { id: "queue", label: "Ratify", icon: "✓" },
+      { id: "attributions", label: "Merges", icon: "⇄" },
       { id: "portfolio", label: "Portfolio", icon: "🗂" },
     ];
   }
@@ -224,6 +226,7 @@ function TopBar() {
     passport: "My Passport",
     ratify: "Ratify",
     queue: "Ratify queue",
+    attributions: "Merge attribution",
     portfolio: "Decision Portfolio",
     qa: "QA gate",
   };
@@ -311,6 +314,7 @@ function MainView() {
         {view === "relay" && <RelayBoard />}
         {view === "queue" && <RatifyQueue />}
         {view === "ratify" && <RatifyPanel />}
+        {view === "attributions" && <Attributions />}
         {view === "portfolio" && <Portfolio />}
       </div>
     );
