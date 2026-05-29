@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../app/AppContext";
-import { api, type Discipline, type Member, type TrustLevel } from "../lib/api";
+import { api, type AccessGrant, type Discipline, type Member, type TrustLevel } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
 
 /* Per-discipline trust as filled/empty dots — makes within-tier difference visible
@@ -23,13 +23,24 @@ const initials = (name: string) =>
 const roleLabel = (m: Member) => `${m.discipline ? DISCIPLINE_LABEL[m.discipline] : "Generalist"} · ${m.seniority}`;
 const accentOf = (m: Member) => (m.discipline ? DISCIPLINE_COLOR[m.discipline] : "var(--ink-mute)");
 
+type AccessState = { i_can_see: AccessGrant[]; can_see_me: AccessGrant[]; pending_in: AccessGrant[] };
+const EMPTY_ACCESS: AccessState = { i_can_see: [], can_see_me: [], pending_in: [] };
+
 export function TeamView() {
-  const { role, setWizardOpen, setWizardKind } = useApp();
+  const { role, member, setWizardOpen, setWizardKind } = useApp();
   const isManager = role === "manager";
+  const me = member?.username ?? null;
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // username being linked, or "reconcile"
+  const [access, setAccess] = useState<AccessState>(EMPTY_ACCESS);
+
+  const reloadAccess = useCallback(() => {
+    api.listAccess()
+      .then(setAccess)
+      .catch(() => { /* best-effort */ });
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -44,7 +55,8 @@ export function TeamView() {
   }, []);
   useEffect(() => {
     load();
-  }, [load]);
+    reloadAccess();
+  }, [load, reloadAccess]);
 
   const link = async (username: string) => {
     setBusy(username);
@@ -76,6 +88,14 @@ export function TeamView() {
 
   const unlinked = members.filter((m) => m.gitlab_user_id == null).length;
 
+  // Build a fast-lookup: subject_id → grant for "i_can_see" (status=granted)
+  const grantedMap = new Map<string, AccessGrant>(
+    access.i_can_see.filter((g) => g.status === "granted").map((g) => [g.subject_id, g])
+  );
+  const pendingSet = new Set<string>(
+    access.i_can_see.filter((g) => g.status === "pending").map((g) => g.subject_id)
+  );
+
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
@@ -97,6 +117,8 @@ export function TeamView() {
         )}
       </div>
 
+      <AccessPanel access={access} reloadAccess={reloadAccess} />
+
       {loading ? (
         <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--ink-soft)" }}>Loading roster…</div>
       ) : err ? (
@@ -112,6 +134,10 @@ export function TeamView() {
             isManager={isManager}
             busy={busy}
             onLink={link}
+            me={me}
+            grantedMap={grantedMap}
+            pendingSet={pendingSet}
+            reloadAccess={reloadAccess}
           />
         ))
       )}
@@ -120,10 +146,12 @@ export function TeamView() {
 }
 
 function TierStrip({
-  name, range, devs, color, isManager, busy, onLink,
+  name, range, devs, color, isManager, busy, onLink, me, grantedMap, pendingSet, reloadAccess,
 }: {
   name: string; range: string; devs: Member[]; color: string;
   isManager: boolean; busy: string | null; onLink: (u: string) => void;
+  me: string | null; grantedMap: Map<string, AccessGrant>; pendingSet: Set<string>;
+  reloadAccess: () => void;
 }) {
   return (
     <div style={{ marginBottom: 28 }}>
@@ -135,7 +163,19 @@ function TierStrip({
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-        {devs.map((d) => <DevCard key={d.username} d={d} isManager={isManager} busy={busy} onLink={onLink} />)}
+        {devs.map((d) => (
+          <DevCard
+            key={d.username}
+            d={d}
+            isManager={isManager}
+            busy={busy}
+            onLink={onLink}
+            isMe={me !== null && d.username === me}
+            grant={grantedMap.get(d.username) ?? null}
+            isPending={pendingSet.has(d.username)}
+            reloadAccess={reloadAccess}
+          />
+        ))}
         {devs.length === 0 && (
           <div className="card-soft" style={{ padding: 20, textAlign: "center", color: "var(--ink-mute)", fontSize: 13, fontStyle: "italic", border: "1.5px dashed var(--line-strong)" }}>
             no devs at this tier
@@ -146,8 +186,48 @@ function TierStrip({
   );
 }
 
-function DevCard({ d, isManager, busy, onLink }: { d: Member; isManager: boolean; busy: string | null; onLink: (u: string) => void }) {
+function DevCard({
+  d, isManager, busy, onLink, isMe, grant, isPending, reloadAccess,
+}: {
+  d: Member; isManager: boolean; busy: string | null; onLink: (u: string) => void;
+  isMe: boolean; grant: AccessGrant | null; isPending: boolean; reloadAccess: () => void;
+}) {
   const linked = d.gitlab_user_id != null;
+  const [accessBusy, setAccessBusy] = useState(false);
+  const [inlineNote, setInlineNote] = useState<string | null>(null);
+
+  const handleRequestAccess = async () => {
+    if (accessBusy) return;
+    setAccessBusy(true);
+    setInlineNote(null);
+    try {
+      await api.requestAccess(d.username);
+      reloadAccess();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 409 = already pending or granted
+      if (msg.includes("409") || msg.toLowerCase().includes("already")) {
+        setInlineNote("requested");
+      }
+    } finally {
+      setAccessBusy(false);
+    }
+  };
+
+  const handleRevoke = async (grantId: string) => {
+    if (accessBusy) return;
+    setAccessBusy(true);
+    setInlineNote(null);
+    try {
+      await api.revokeAccess(grantId);
+      reloadAccess();
+    } catch {
+      setInlineNote("error");
+    } finally {
+      setAccessBusy(false);
+    }
+  };
+
   return (
     <div className="card-soft" style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -193,7 +273,7 @@ function DevCard({ d, isManager, busy, onLink }: { d: Member; isManager: boolean
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {linked ? (
           <span className="mono" style={{ fontSize: 10, color: "var(--positive)", fontWeight: 700 }}>✓ @{d.gitlab_username}</span>
         ) : (
@@ -211,7 +291,146 @@ function DevCard({ d, isManager, busy, onLink }: { d: Member; isManager: boolean
             )}
           </>
         )}
+
+        {!isMe && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+            {grant ? (
+              <>
+                <span className="chip mono" style={{ fontSize: 9, padding: "2px 6px", background: "var(--positive-tint)", color: "var(--positive)", fontWeight: 700 }}>✓ access</span>
+                {inlineNote === "error" && (
+                  <span className="mono" style={{ fontSize: 9, color: "var(--orange-deep)", fontWeight: 700 }}>error</span>
+                )}
+                <button
+                  onClick={() => handleRevoke(grant.id)}
+                  disabled={accessBusy}
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 10, padding: "2px 8px", opacity: accessBusy ? 0.5 : 1 }}
+                >
+                  Revoke
+                </button>
+              </>
+            ) : isPending || inlineNote === "requested" ? (
+              <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", fontWeight: 700 }}>requested</span>
+            ) : (
+              <button
+                onClick={handleRequestAccess}
+                disabled={accessBusy}
+                className="btn btn-ghost btn-sm"
+                style={{ fontSize: 10, padding: "2px 8px", opacity: accessBusy ? 0.5 : 1 }}
+              >
+                {accessBusy ? "…" : "Request access"}
+              </button>
+            )}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/* ── Access panel ─────────────────────────────────────────────────────── */
+
+function AccessPanel({ access, reloadAccess }: { access: AccessState; reloadAccess: () => void }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleRevoke = async (grantId: string) => {
+    if (busyId) return;
+    setBusyId(grantId);
+    setErr(null);
+    try {
+      await api.revokeAccess(grantId);
+      reloadAccess();
+    } catch {
+      setErr("action failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleMute = async (grantId: string) => {
+    if (busyId) return;
+    setBusyId(grantId);
+    setErr(null);
+    try {
+      await api.muteAccess(grantId);
+      reloadAccess();
+    } catch {
+      setErr("action failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const hasAny = access.can_see_me.length > 0 || access.i_can_see.length > 0;
+
+  return (
+    <div className="card-soft" style={{ padding: "14px 18px", marginBottom: 24 }}>
+      <div className="mono" style={{ fontSize: 10, fontWeight: 700, color: "var(--ink-mute)", letterSpacing: 1, marginBottom: hasAny ? 12 : 0, textTransform: "uppercase" }}>
+        Access
+      </div>
+      {err && (
+        <div className="mono" style={{ fontSize: 10, color: "var(--orange-deep)", fontWeight: 700, marginBottom: 8 }}>{err}</div>
+      )}
+      {!hasAny ? (
+        <div style={{ fontSize: 12, color: "var(--ink-mute)", fontStyle: "italic" }}>No access grants yet.</div>
+      ) : (
+        <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+          {access.can_see_me.length > 0 && (
+            <div style={{ minWidth: 220 }}>
+              <div className="mono" style={{ fontSize: 10, color: "var(--ink-soft)", fontWeight: 700, marginBottom: 6 }}>Can see my tasks</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {access.can_see_me.map((g) => (
+                  <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>@{g.requester_id}</span>
+                    <button
+                      onClick={() => handleMute(g.id)}
+                      disabled={busyId != null}
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: 10, padding: "2px 8px", opacity: busyId ? 0.5 : 1 }}
+                    >
+                      {g.notifications_muted ? "Unmute" : "Mute"}
+                    </button>
+                    <button
+                      onClick={() => handleRevoke(g.id)}
+                      disabled={busyId != null}
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: 10, padding: "2px 8px", opacity: busyId ? 0.5 : 1 }}
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {access.i_can_see.length > 0 && (
+            <div style={{ minWidth: 180 }}>
+              <div className="mono" style={{ fontSize: 10, color: "var(--ink-soft)", fontWeight: 700, marginBottom: 6 }}>I can see</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {access.i_can_see.map((g) => (
+                  <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>@{g.subject_id}</span>
+                    <span className="chip mono" style={{ fontSize: 9, padding: "1px 5px", background: g.status === "granted" ? "var(--positive-tint)" : "var(--cream-deep)", color: g.status === "granted" ? "var(--positive)" : "var(--ink-mute)" }}>
+                      {g.status}
+                    </span>
+                    {g.status === "granted" && (
+                      <button
+                        onClick={() => handleRevoke(g.id)}
+                        disabled={busyId != null}
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: 10, padding: "2px 8px", opacity: busyId ? 0.5 : 1 }}
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
