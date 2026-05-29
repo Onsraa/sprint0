@@ -22,7 +22,7 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, gitlab, handoff, relay, staffing, tasks as tasklib, team
+from app import auth, gitlab, handoff, relay, scheduler, staffing, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
@@ -102,10 +102,11 @@ async def _startup() -> None:
             PROJECTS[pid] = PlanJSON(**rec["plan"])
             try:
                 if not await tasks_for_project(pid):  # never materialized (pre-Phase-A / seeded) → backfill
-                    docs = [t.model_dump() for t in tasklib.materialize_tasks(PROJECTS[pid], pid, now)]
-                    for d in docs:
-                        d["status"] = "in_progress"  # these projects are already live
-                    await save_tasks(docs)
+                    objs = tasklib.materialize_tasks(PROJECTS[pid], pid, now)
+                    for o in objs:
+                        o.status = "in_progress"  # these projects are already live
+                    scheduler.schedule_tasks(objs, team.all_members(), now)
+                    await save_tasks([o.model_dump() for o in objs])
             except Exception:
                 pass  # backfill is best-effort
     except Exception:
@@ -477,13 +478,13 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest) -> dict:
         now = datetime.now(timezone.utc).isoformat()
         await delete_tasks_for_project(_plan_pid(plan_id))  # drop this plan's placeholder draft tasks
         iid_by_title = {i.get("title"): i.get("iid") for i in result.get("issues", [])}
-        docs = []
-        for t in tasklib.materialize_tasks(plan, real_pid, now):
-            d = t.model_dump()
-            d["status"] = "in_progress"
-            d["gitlab_issue_iid"] = iid_by_title.get(t.title)
-            docs.append(d)
-        await save_tasks(docs)
+        objs = tasklib.materialize_tasks(plan, real_pid, now)
+        for o in objs:
+            o.status = "in_progress"
+            o.gitlab_issue_iid = iid_by_title.get(o.title)
+        await team.ensure_loaded()
+        scheduler.schedule_tasks(objs, team.all_members(), now)  # compute scheduled_start/end
+        await save_tasks([o.model_dump() for o in objs])
     except Exception:
         pass  # never block dispatch on task persistence
     RESULTS[plan_id] = result
@@ -614,6 +615,21 @@ async def task_status(task_id: str, status: str, member: DeveloperProfile = Depe
         raise HTTPException(400, str(e))
     await update_task(task_id, updated.model_dump())
     return updated.model_dump()
+
+
+@app.post("/api/schedule/recompute")
+async def recompute_schedule(project_id: int, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Re-run the deterministic scheduler for a project's Tasks and persist the dates."""
+    docs = await tasks_for_project(project_id)
+    if not docs:
+        return {"project_id": project_id, "scheduled": 0}
+    objs = [Task(**d) for d in docs]
+    await team.ensure_loaded()
+    now = datetime.now(timezone.utc).isoformat()
+    scheduler.schedule_tasks(objs, team.all_members(), now)
+    for o in objs:
+        await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
+    return {"project_id": project_id, "scheduled": len(objs)}
 
 
 @app.post("/api/projects/{project_id}/qa/run", response_model=QAReport)
