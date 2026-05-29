@@ -64,17 +64,17 @@ export function useApp(): AppContextValue {
   return ctx;
 }
 
-const MANAGER_VIEWS: View[] = ["dashboard", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions"];
-const DEV_VIEWS: View[] = ["today", "issue", "passport", "ratify", "qa", "queue", "portfolio"];
+const MANAGER_VIEWS: View[] = ["dashboard", "work", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions"];
+const DEV_VIEWS: View[] = ["work", "today", "issue", "passport", "ratify", "qa", "queue", "portfolio"];
 
 /** Where each persona lands. Leads land on the cross-project ratify queue (not
  *  the bare RatifyPanel, which is empty until a gate is opened from the queue). */
 const ROLE_HOME: Record<Role, View> = {
   manager: "dashboard",
-  uiux: "queue",
-  backend: "queue",
-  frontend: "queue",
-  qa: "qa",
+  uiux: "work",
+  backend: "work",
+  frontend: "work",
+  qa: "work",
 };
 
 /** Map a member to the legacy persona used for nav + view-gating.
