@@ -15,7 +15,7 @@ function stats(p: ProjectSummary): { issues: number; devs: number } {
   return { issues: issues.length, devs: new Set(issues.map((i) => i.assignee).filter(Boolean)).size };
 }
 
-const isClosed = (p: ProjectSummary) => p.status === "closed";
+const isClosed = (p: ProjectSummary) => p.status === "closed" || p.status === "shipped";
 const fmtDate = (s?: string) => {
   if (!s) return null;
   const d = new Date(s);
@@ -43,7 +43,9 @@ export function Dashboard() {
   const shipped = projects.filter(isClosed).length;
   const totalIssues = projects.reduce((n, p) => n + planIssues(p.plan?.epics).length, 0);
 
-  const shown = projects.filter((p) =>
+  const active = projects.filter((p) => p.kind !== "reference");
+  const reference = projects.filter((p) => p.kind === "reference");
+  const shownActive = active.filter((p) =>
     filter === "all" ? true : filter === "shipped" ? isClosed(p) : !isClosed(p),
   );
 
@@ -81,17 +83,17 @@ export function Dashboard() {
         >
           <span className="kicker" style={{ color: "var(--orange-deep)" }}>Live project {liveProjectId}</span>
           <span style={{ fontSize: 13, color: "var(--ink-soft)", flex: 1 }}>
-            Dispatched this session. Add a feature mid-production — sprint0 drafts a delta plan and runs it through the relay.
+            Dispatched this session — find it below to add a feature mid-production or close it out.
           </span>
-          <button onClick={() => addFeature(liveProjectId)} className="btn btn-primary btn-sm">
-            + Add feature
-          </button>
         </div>
       )}
 
       {/* Project list */}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
-        <div className="display" style={{ fontSize: 22 }}>Projects</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <div className="display" style={{ fontSize: 22 }}>Active</div>
+          <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 700 }}>sprint0-managed</div>
+        </div>
         <div style={{ display: "flex", gap: 6 }}>
           {(["all", "active", "shipped"] as const).map((f) => (
             <button
@@ -120,96 +122,167 @@ export function Dashboard() {
           <div style={{ fontSize: 12 }}>sprint0 plans it, the leads ratify, then it scaffolds to GitLab</div>
         </button>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
-          {shown.map((p) => {
-            const accent = accentFor(p.project_id);
-            const s = stats(p);
-            const st = isClosed(p);
-            const created = fmtDate(p.created_at);
-            return (
-              <div key={p.project_id} className="card-soft card-hover" style={{ padding: 20 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div
-                      style={{
-                        width: 38, height: 38, borderRadius: 10, background: accent, color: "var(--paper)",
-                        display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13, border: "2px solid var(--ink)",
-                      }}
-                    >
-                      {p.name.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 16 }}>{p.name}</div>
-                      <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>
-                        #{p.project_id}{created ? ` · ${created}` : ""}
-                      </div>
-                    </div>
-                  </div>
-                  <div
-                    className="chip"
-                    style={{
-                      background: st ? "var(--ink-mute)" : "var(--positive)",
-                      color: "var(--paper)", borderColor: st ? "var(--ink-mute)" : "var(--positive)",
-                    }}
-                  >
-                    {st ? "Shipped" : "Active"}
-                  </div>
+        <>
+          {shownActive.length === 0 ? (
+            <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--ink-mute)", fontSize: 13 }}>
+              No matching active projects.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+              {shownActive.map((p) => (
+                <ProjectCard key={p.project_id} p={p} isManager={isManager} onAddFeature={addFeature} onClose={setClosing} />
+              ))}
+            </div>
+          )}
+
+          {reference.length > 0 && (
+            <>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "28px 0 14px" }}>
+                <div className="display" style={{ fontSize: 22 }}>Reference</div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 700 }}>
+                  agency memory · {reference.length} shipped
                 </div>
-
-                <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink-soft)", fontWeight: 600, marginBottom: 12 }}>
-                  <span><b style={{ color: "var(--ink)" }}>{s.issues}</b> issues</span>
-                  <span><b style={{ color: "var(--ink)" }}>{s.devs}</b> {s.devs === 1 ? "dev" : "devs"}</span>
-                  {p.web_url && (
-                    <a href={p.web_url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", color: accent, fontWeight: 700 }}>
-                      Open in GitLab ↗
-                    </a>
-                  )}
-                </div>
-
-                {p.grounded_on.length > 0 && (
-                  <div
-                    style={{
-                      padding: 10, background: "var(--cream)", borderRadius: 10, fontSize: 12,
-                      display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10,
-                    }}
-                  >
-                    <span style={{ fontFamily: "var(--font-mono)", color: "var(--ink-mute)", fontWeight: 700 }}>reused:</span>
-                    {p.grounded_on.map((g) => (
-                      <span key={g} style={{ fontWeight: 700 }}>{g}</span>
-                    ))}
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: isManager ? 12 : 0 }}>
-                  {Object.values(p.tech_stack).filter(Boolean).map((t, i) => (
-                    <span
-                      key={`${t}-${i}`}
-                      style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "var(--cream-deep)", color: "var(--ink-soft)", fontWeight: 600 }}
-                    >
-                      {t}
-                    </span>
-                  ))}
-                </div>
-
-                {isManager && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {!st && (
-                      <button onClick={() => addFeature(p.project_id)} className="btn btn-ghost btn-sm">+ Add feature</button>
-                    )}
-                    {!st && (
-                      <button onClick={() => setClosing(p)} className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }}>
-                        Close project
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
-            );
-          })}
-        </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+                {reference.map((p) => (
+                  <ProjectCard key={p.project_id} p={p} isManager={isManager} onAddFeature={addFeature} onClose={setClosing} />
+                ))}
+              </div>
+            </>
+          )}
+        </>
       )}
 
       {closing && <CloseModal project={closing} onClose={() => setClosing(null)} onDone={refreshProjects} />}
+    </div>
+  );
+}
+
+/* One project tile. `reference` (agency-memory past projects) are read-only and lack a plan/
+   tech_stack/grounded_on — every optional field is guarded so a bare repo never crashes the grid. */
+function ProjectCard({
+  p,
+  isManager,
+  onAddFeature,
+  onClose,
+}: {
+  p: ProjectSummary;
+  isManager: boolean;
+  onAddFeature: (id: number) => void;
+  onClose: (p: ProjectSummary) => void;
+}) {
+  const accent = accentFor(p.project_id);
+  const isRef = p.kind === "reference";
+  const st = isClosed(p);
+  const s = stats(p);
+  const created = fmtDate(p.created_at) ?? fmtDate(p.last_activity_at);
+  const stack = p.tech_stack ? Object.values(p.tech_stack).filter(Boolean) : [];
+  const grounded = p.grounded_on ?? [];
+  const tags = p.tags ?? [];
+
+  return (
+    <div className="card-soft card-hover" style={{ padding: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            style={{
+              width: 38, height: 38, borderRadius: 10, background: accent, color: "var(--paper)",
+              display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13, border: "2px solid var(--ink)",
+            }}
+          >
+            {p.name.slice(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>{p.name}</div>
+            <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>
+              #{p.project_id}{created ? ` · ${created}` : ""}
+            </div>
+          </div>
+        </div>
+        <div
+          className="chip"
+          style={{
+            background: isRef ? "var(--cream-deep)" : st ? "var(--ink-mute)" : "var(--positive)",
+            color: isRef ? "var(--ink-soft)" : "var(--paper)",
+            borderColor: isRef ? "var(--line-strong)" : st ? "var(--ink-mute)" : "var(--positive)",
+          }}
+        >
+          {isRef ? "Reference" : st ? "Shipped" : "Active"}
+        </div>
+      </div>
+
+      {isRef ? (
+        <>
+          {p.summary && (
+            <div style={{ fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.45, marginBottom: 10 }}>{p.summary}</div>
+          )}
+          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink-soft)", fontWeight: 600, marginBottom: tags.length > 0 ? 10 : 0 }}>
+            <span className="mono" style={{ color: "var(--ink-mute)" }}>agency memory · shipped</span>
+            {p.web_url && (
+              <a href={p.web_url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", color: accent, fontWeight: 700 }}>
+                Open in GitLab ↗
+              </a>
+            )}
+          </div>
+          {tags.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {tags.map((t, i) => (
+                <span key={`${t}-${i}`} style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "var(--cream-deep)", color: "var(--ink-soft)", fontWeight: 600 }}>
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink-soft)", fontWeight: 600, marginBottom: 12 }}>
+            <span><b style={{ color: "var(--ink)" }}>{s.issues}</b> issues</span>
+            <span><b style={{ color: "var(--ink)" }}>{s.devs}</b> {s.devs === 1 ? "dev" : "devs"}</span>
+            {p.web_url && (
+              <a href={p.web_url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", color: accent, fontWeight: 700 }}>
+                Open in GitLab ↗
+              </a>
+            )}
+          </div>
+
+          {grounded.length > 0 && (
+            <div
+              style={{
+                padding: 10, background: "var(--cream)", borderRadius: 10, fontSize: 12,
+                display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10,
+              }}
+            >
+              <span style={{ fontFamily: "var(--font-mono)", color: "var(--ink-mute)", fontWeight: 700 }}>reused:</span>
+              {grounded.map((g) => (
+                <span key={g} style={{ fontWeight: 700 }}>{g}</span>
+              ))}
+            </div>
+          )}
+
+          {stack.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: isManager ? 12 : 0 }}>
+              {stack.map((t, i) => (
+                <span
+                  key={`${t}-${i}`}
+                  style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "var(--cream-deep)", color: "var(--ink-soft)", fontWeight: 600 }}
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {isManager && !st && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => onAddFeature(p.project_id)} className="btn btn-ghost btn-sm">+ Add feature</button>
+              <button onClick={() => onClose(p)} className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }}>
+                Close project
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

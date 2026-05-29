@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useApp } from "../app/AppContext";
+import { Disclosure } from "../components/Disclosure";
 import { Mascot } from "../components/Mascot";
-import { api } from "../lib/api";
+import { api, draft } from "../lib/api";
 import type {
   AmbiguityCard,
   ArchitectureCard,
@@ -11,6 +12,7 @@ import type {
   PlanJSON,
   RelayState,
   TechStack,
+  WizardDraft,
 } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
 import { StaffingGap } from "../views/StaffingGap";
@@ -70,18 +72,122 @@ export function WizardBrief() {
     chosenStack: null,
     dial: 70,
   });
+  // A draft saved from a previous (closed) session — offered as Resume on Step 0.
+  const [offer, setOffer] = useState<WizardDraft | null>(() => (featureProjectId == null ? draft.get() : null));
+  const [resuming, setResuming] = useState(false);
+  // Leaving the Clarify step resolves the answered ambiguities (footer Continue is the sole advance).
+  const [advancing, setAdvancing] = useState(false);
+  const [advanceErr, setAdvanceErr] = useState<string | null>(null);
+  const [done, setDone] = useState(false); // dispatched → stop persisting a draft
+
+  // Persist progress so closing never loses work. Skips an untouched wizard and a finished one.
+  // Gate on briefId/isFeature only — a stale context planId from a prior dispatch must not count.
+  const persistDraft = () => {
+    if (done || (!state.briefId && !isFeature)) return;
+    draft.set({
+      briefId: state.briefId,
+      planId,
+      step,
+      isFeature,
+      featureProjectId,
+      chosenStack: state.chosenStack,
+      dial: state.dial,
+      projectName: plan?.project_name ?? state.spec?.goal ?? (isFeature ? `Feature · #${featureProjectId}` : "Untitled brief"),
+      savedAt: Date.now(),
+    });
+  };
+  // Save on every step / key-state change (and on close, below).
+  useEffect(() => {
+    persistDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, state.briefId, state.chosenStack, state.dial, planId, isFeature, featureProjectId]);
 
   const close = () => {
+    persistDraft();
     setFeatureProjectId(null);
     setWizardOpen(false);
   };
   const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
   const prev = () => setStep((s) => Math.max(s - 1, 0));
 
-  // Feature mode skips Drop/Clarify/Architecture: the delta plan comes back directly.
+  // Footer Continue advances; leaving Clarify it first resolves the answered ambiguities.
+  const advanceFrom = async (s: number) => {
+    if (s === 1 && state.briefId && Object.keys(state.answers).length > 0) {
+      setAdvancing(true);
+      setAdvanceErr(null);
+      try {
+        const spec = await api.resolveClarify(state.briefId, state.answers);
+        setState((p) => ({ ...p, spec }));
+      } catch (e) {
+        setAdvanceErr(e instanceof Error ? e.message : String(e));
+        setAdvancing(false);
+        return;
+      }
+      setAdvancing(false);
+    }
+    next();
+  };
+
+  // Resume a saved draft: refetch the cached spec/architectures (no Gemini re-run) and the
+  // plan/relay if a reload wiped context, then jump to the saved step.
+  const doResume = async (d: WizardDraft) => {
+    setOffer(null);
+    setResuming(true);
+    if (d.isFeature) setFeatureProjectId(d.featureProjectId);
+    let spec: ClarifiedSpec | null = null;
+    let arch: ArchitectureCard[] = [];
+    if (d.briefId) {
+      try {
+        spec = await api.getSpec(d.briefId);
+      } catch {
+        /* not clarified yet */
+      }
+      try {
+        arch = (await api.getArchitectures(d.briefId)).cards;
+      } catch {
+        /* not proposed yet */
+      }
+    }
+    setState({ briefId: d.briefId, spec, answers: {}, arch, chosenStack: d.chosenStack, dial: d.dial });
+    if (d.planId) {
+      // Reload the plan/relay if a reload wiped context; otherwise keep what's already live.
+      if (!plan) {
+        try {
+          const [p, r] = await Promise.all([api.getPlan(d.planId), api.getRelay(d.planId)]);
+          setPlan(p);
+          setPlanId(d.planId);
+          setRelay(r);
+        } catch {
+          /* plan expired server-side */
+        }
+      } else if (planId == null) {
+        setPlanId(d.planId);
+      }
+    } else {
+      // Draft predates planning → drop any stale plan left in context from a prior project.
+      setPlan(null);
+      setPlanId(null);
+      setRelay(null);
+    }
+    setStep(d.step);
+    setResuming(false);
+  };
+
+  // Discard the draft and start clean (also clears any stale plan left in context).
+  const startFresh = () => {
+    draft.clear();
+    setOffer(null);
+    setPlan(null);
+    setPlanId(null);
+    setRelay(null);
+    setState({ briefId: null, spec: null, answers: {}, arch: [], chosenStack: null, dial: 70 });
+    setStep(0);
+  };
+
+  // Feature mode enters at the plan step; don't stomp a resume that landed deeper.
   const firstStep = isFeature ? 3 : 0;
   useEffect(() => {
-    if (isFeature) setStep(3);
+    if (isFeature) setStep((s) => (s < 3 ? 3 : s));
   }, [isFeature]);
 
   return (
@@ -173,19 +279,26 @@ export function WizardBrief() {
               </button>
             ))}
           </div>
-          <button
-            onClick={close}
-            style={{ width: 32, height: 32, borderRadius: 8, background: "var(--cream-deep)", display: "grid", placeItems: "center", fontSize: 18, fontWeight: 700 }}
-          >
-            ×
-          </button>
         </div>
 
         {/* Body */}
         <div style={{ flex: 1, overflow: "auto", padding: 32, display: "flex", flexDirection: "column" }}>
-          {step === 0 && <StepDrop setState={setState} next={next} />}
-          {step === 1 && <StepClarify state={state} setState={setState} next={next} />}
-          {step === 2 && <StepArchitecture state={state} setState={setState} next={next} />}
+          {step === 0 &&
+            (offer ? (
+              <ResumeOffer draft={offer} busy={resuming} onResume={() => doResume(offer)} onDiscard={startFresh} />
+            ) : (
+              <StepDrop
+                setState={setState}
+                next={next}
+                onReset={() => {
+                  setPlan(null);
+                  setPlanId(null);
+                  setRelay(null);
+                }}
+              />
+            ))}
+          {step === 1 && <StepClarify state={state} setState={setState} />}
+          {step === 2 && <StepArchitecture state={state} setState={setState} />}
           {step === 3 && (
             <StepPlan
               state={state}
@@ -204,7 +317,7 @@ export function WizardBrief() {
           )}
           {step === STEP_TRUST && <StepTrust state={state} setState={setState} planId={planId} relay={relay} setRelay={setRelay} />}
           {step === STEP_DISPATCH && (
-            <StepDispatch planId={planId} setRelay={setRelay} setLiveProjectId={setLiveProjectId} setLiveCloneUrl={setLiveCloneUrl} onClose={close} />
+            <StepDispatch planId={planId} setRelay={setRelay} setLiveProjectId={setLiveProjectId} setLiveCloneUrl={setLiveCloneUrl} onClose={close} onDone={() => setDone(true)} />
           )}
         </div>
 
@@ -228,10 +341,11 @@ export function WizardBrief() {
               ← Back
             </button>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              {advanceErr && <span className="mono" style={{ fontSize: 11, color: "var(--orange-deep)" }}>{advanceErr}</span>}
               <button onClick={close} className="btn btn-ghost btn-sm">
-                Save &amp; exit
+                Save &amp; close
               </button>
-              <StepNext step={step} state={state} planId={planId} next={next} />
+              <StepNext step={step} state={state} planId={planId} busy={advancing} onNext={() => advanceFrom(step)} />
             </div>
           </div>
         )}
@@ -240,23 +354,54 @@ export function WizardBrief() {
   );
 }
 
-/* The Continue button knows which steps gate on async work vs simple advance. */
-function StepNext({ step, state, planId, next }: { step: number; state: WizardState; planId: string | null; next: () => void }) {
+/* The sole advance control. Gates each step on its completion; for Clarify the click
+   also resolves the answers (via onNext → advanceFrom), showing "Saving…" while it runs. */
+function StepNext({ step, state, planId, busy, onNext }: { step: number; state: WizardState; planId: string | null; busy: boolean; onNext: () => void }) {
   // Steps with their own primary action inside the body (Drop, Plan, Staffing): hide footer Continue.
   if (step === 0 || step === 3 || step === STEP_STAFFING) return null;
-  const disabled =
-    (step === 1 && !state.spec) || (step === 2 && state.arch.length === 0) || (step === STEP_TRUST && !planId);
+  const clarifyIncomplete =
+    step === 1 &&
+    (!state.spec || state.spec.ambiguities.some((a) => !((state.answers[a.id] ?? "").trim() || (a.resolution ?? "").trim())));
+  const disabled = busy || clarifyIncomplete || (step === 2 && !state.chosenStack) || (step === STEP_TRUST && !planId);
   return (
-    <button onClick={next} className="btn btn-primary btn-sm" disabled={disabled} style={{ opacity: disabled ? 0.5 : 1 }}>
-      {step === STEP_TRUST ? "To dispatch →" : "Continue →"}
+    <button onClick={onNext} className="btn btn-primary btn-sm" disabled={disabled} style={{ opacity: disabled ? 0.5 : 1 }}>
+      {busy ? "Saving…" : step === STEP_TRUST ? "To dispatch →" : "Continue →"}
     </button>
+  );
+}
+
+/* ============================================================
+   RESUME — offered on Step 0 when a saved draft exists
+   ============================================================ */
+function ResumeOffer({ draft: d, busy, onResume, onDiscard }: { draft: WizardDraft; busy: boolean; onResume: () => void; onDiscard: () => void }) {
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22 }}>
+      <Mascot size={64} expression="happy" />
+      <div style={{ textAlign: "center" }}>
+        <div className="kicker">Welcome back</div>
+        <div className="display" style={{ fontSize: 32, margin: "6px 0 8px" }}>
+          Pick up where you left off?
+        </div>
+        <div style={{ fontSize: 15, color: "var(--ink-soft)" }}>
+          <b>{d.projectName}</b> · {STEPS[d.step]?.label ?? "in progress"} (step {d.step + 1}/{STEPS.length})
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 12 }}>
+        <button onClick={onResume} disabled={busy} className="btn btn-primary" style={{ opacity: busy ? 0.5 : 1 }}>
+          {busy ? "Restoring…" : "Resume →"}
+        </button>
+        <button onClick={onDiscard} disabled={busy} className="btn btn-ghost">
+          Start fresh
+        </button>
+      </div>
+    </div>
   );
 }
 
 /* ============================================================
    STEP 0 — DROP (upload text or file → /api/briefs)
    ============================================================ */
-function StepDrop({ setState, next }: { setState: SetState; next: () => void }) {
+function StepDrop({ setState, next, onReset }: { setState: SetState; next: () => void; onReset: () => void }) {
   const [drag, setDrag] = useState(false);
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -270,6 +415,7 @@ function StepDrop({ setState, next }: { setState: SetState; next: () => void }) 
     setErr(null);
     try {
       const { brief_id } = await api.createBrief(file ? { file } : { text });
+      onReset(); // a brand-new brief — drop any stale plan from a prior project
       setState((s) => ({ ...s, briefId: brief_id }));
       next();
     } catch (e) {
@@ -369,7 +515,7 @@ function StepDrop({ setState, next }: { setState: SetState; next: () => void }) 
 /* ============================================================
    STEP 1 — CLARIFY (ambiguity cards + reuse + extracted spec)
    ============================================================ */
-function StepClarify({ state, setState, next }: { state: WizardState; setState: SetState; next: () => void }) {
+function StepClarify({ state, setState }: { state: WizardState; setState: SetState }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const ranFor = useRef<string | null>(null);
@@ -386,23 +532,6 @@ function StepClarify({ state, setState, next }: { state: WizardState; setState: 
   }, [state.briefId, state.spec, setState]);
 
   const setAnswer = (id: string, val: string) => setState((s) => ({ ...s, answers: { ...s.answers, [id]: val } }));
-
-  const resolveAndNext = async () => {
-    if (!state.briefId) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      if (Object.keys(state.answers).length > 0) {
-        const spec = await api.resolveClarify(state.briefId, state.answers);
-        setState((s) => ({ ...s, spec }));
-      }
-      next();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   if (busy && !state.spec) return <Loading label="gemini · reading the brief…" />;
   if (!state.spec) return <ErrBox err={err} />;
@@ -470,10 +599,6 @@ function StepClarify({ state, setState, next }: { state: WizardState; setState: 
             ))}
           </div>
         )}
-        {err && <div style={{ color: "var(--orange-deep)", fontSize: 12, marginTop: 10, fontFamily: "var(--font-mono)" }}>{err}</div>}
-        <button onClick={resolveAndNext} className="btn btn-primary btn-sm" style={{ marginTop: 16, opacity: busy ? 0.6 : 1 }} disabled={busy}>
-          {busy ? "Saving…" : "Lock answers → architecture"}
-        </button>
       </div>
     </div>
   );
@@ -528,7 +653,7 @@ function ClarifyCard({ amb, answer, onAnswer }: { amb: AmbiguityCard; answer: st
 /* ============================================================
    STEP 2 — ARCHITECTURE CARDS (pick one → locks the stack)
    ============================================================ */
-function StepArchitecture({ state, setState, next }: { state: WizardState; setState: SetState; next: () => void }) {
+function StepArchitecture({ state, setState }: { state: WizardState; setState: SetState }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -563,8 +688,10 @@ function StepArchitecture({ state, setState, next }: { state: WizardState; setSt
         {state.arch.map((card) => {
           const active = picked === card.name;
           return (
-            <button
+            <div
               key={card.name}
+              role="button"
+              tabIndex={0}
               onClick={() => pick(card)}
               className="card-soft card-hover"
               style={{
@@ -583,31 +710,33 @@ function StepArchitecture({ state, setState, next }: { state: WizardState; setSt
                 {active && <span className="chip chip-orange" style={{ fontSize: 10, padding: "2px 8px" }}>chosen</span>}
               </div>
               <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12, lineHeight: 1.45 }}>{card.summary}</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 12 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
                 {Object.entries(card.tech_stack).map(([k, v]) => (
                   <span key={k} className="chip" style={{ fontSize: 10, padding: "2px 8px" }}>
                     <span style={{ color: "var(--ink-mute)" }}>{k}:</span> {v}
                   </span>
                 ))}
               </div>
-              <div style={{ fontSize: 12, color: "var(--ink-soft)", lineHeight: 1.45, marginBottom: 10 }}>
-                <b>Why:</b> {card.rationale}
-              </div>
-              <div style={{ fontSize: 12, color: "var(--positive)", fontWeight: 700 }}>{card.fit_to_constraints}</div>
               {card.grounded_on.length > 0 && (
-                <div className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", marginTop: 8 }}>
+                <div className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", marginBottom: 2 }}>
                   ↻ {card.grounded_on.join(" · ")}
                 </div>
               )}
-            </button>
+              {/* Defer the rationale — expanding must not pick the card. */}
+              <div onClick={(e) => e.stopPropagation()}>
+                <Disclosure summary="Why this?">
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)", lineHeight: 1.45, marginBottom: 8 }}>
+                    <b>Why:</b> {card.rationale}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--positive)", fontWeight: 700 }}>{card.fit_to_constraints}</div>
+                </Disclosure>
+              </div>
+            </div>
           );
         })}
       </div>
-      <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 12 }}>
-        <button onClick={next} className="btn btn-primary btn-sm" disabled={!picked} style={{ opacity: picked ? 1 : 0.5 }}>
-          Draft the plan →
-        </button>
-        <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>{picked ? `Locked: ${picked}` : "Choose one to continue"}</span>
+      <div style={{ marginTop: 14, fontSize: 12, color: "var(--ink-mute)" }}>
+        {picked ? `Locked: ${picked} — Continue below.` : "Choose a stack to continue."}
       </div>
     </div>
   );
@@ -991,12 +1120,14 @@ function StepDispatch({
   setLiveProjectId,
   setLiveCloneUrl,
   onClose,
+  onDone,
 }: {
   planId: string | null;
   setRelay: Dispatch<SetStateAction<RelayState | null>>;
   setLiveProjectId: Dispatch<SetStateAction<number | null>>;
   setLiveCloneUrl: Dispatch<SetStateAction<string | null>>;
   onClose: () => void;
+  onDone: () => void;
 }) {
   const { refreshProjects } = useApp();
   const [busy, setBusy] = useState(false);
@@ -1029,6 +1160,8 @@ function StepDispatch({
       setResult(res);
       setLiveProjectId(res.project_id);
       setLiveCloneUrl(res.clone_url || (res.web_url ? res.web_url + ".git" : null));
+      draft.clear(); // shipped → the saved draft is spent
+      onDone();
       refreshProjects(); // the new project now appears on the manager Dashboard
       try {
         setRelay(await api.relay(planId));

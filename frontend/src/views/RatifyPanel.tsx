@@ -11,8 +11,12 @@ import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle
 
 const RISKS: Risk[] = ["low", "medium", "high"];
 
+/** A scoped file is "existing" if it's already in the target repo's module manifest, else "new". */
+const fileStatus = (file: string, manifest: string[]): "existing" | "new" =>
+  manifest.includes(file) ? "existing" : "new";
+
 export function RatifyPanel() {
-  const { discipline, activeGate, plan, planId, relay, setRelay, setView } = useApp();
+  const { discipline, activeGate, plan, planId, relay, setRelay, setView, featureProjectId, projects } = useApp();
 
   // The gate being ratified. A lead ratifies their own discipline; a manager
   // opens an orphan gate from the queue, which sets `activeGate`. Fall back to
@@ -49,6 +53,10 @@ export function RatifyPanel() {
   const gate = relay?.gates.find((g) => g.discipline === target);
   const accent = DISCIPLINE_COLOR[target];
   const cleared = gate?.status === "ratified" || gate?.status === "auto_passed";
+
+  // Files already in the delta target's repo (feature mode); a fresh project has no repo → all new.
+  const manifest =
+    (featureProjectId != null ? projects.find((p) => p.project_id === featureProjectId)?.module_manifest : undefined) ?? [];
 
   const editOf = (i: Issue): Issue => edits[i.id] ?? i;
   const patch = (i: Issue, p: Partial<Issue>) =>
@@ -105,7 +113,7 @@ export function RatifyPanel() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {slice.map((issue) => (
-            <IssueEditor key={issue.id} value={editOf(issue)} accent={accent} onPatch={(p) => patch(issue, p)} />
+            <IssueEditor key={issue.id} value={editOf(issue)} accent={accent} manifest={manifest} onPatch={(p) => patch(issue, p)} />
           ))}
         </div>
       )}
@@ -164,13 +172,25 @@ export function RatifyPanel() {
 function IssueEditor({
   value,
   accent,
+  manifest,
   onPatch,
 }: {
   value: Issue;
   accent: string;
+  manifest: string[];
   onPatch: (p: Partial<Issue>) => void;
 }) {
   const isBackend = value.discipline === "backend";
+  const [newFile, setNewFile] = useState("");
+  const addFile = () => {
+    const f = newFile.trim();
+    if (f && !value.context_scope.files.includes(f)) {
+      onPatch({ context_scope: { ...value.context_scope, files: [...value.context_scope.files, f] } });
+    }
+    setNewFile("");
+  };
+  const removeFile = (f: string) =>
+    onPatch({ context_scope: { ...value.context_scope, files: value.context_scope.files.filter((x) => x !== f) } });
   return (
     <div className="card-soft" style={{ padding: 16, borderColor: accent }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -245,24 +265,55 @@ function IssueEditor({
         </div>
       </div>
 
-      <label style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: isBackend ? 10 : 0 }}>
-        <span className="kicker">File scope (comma-separated)</span>
-        <input
-          value={value.context_scope.files.join(", ")}
-          onChange={(e) =>
-            onPatch({
-              context_scope: {
-                ...value.context_scope,
-                files: e.target.value
-                  .split(",")
-                  .map((f) => f.trim())
-                  .filter(Boolean),
-              },
-            })
-          }
-          style={{ ...inputStyle, fontFamily: "var(--font-mono)", fontSize: 12 }}
-        />
-      </label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: isBackend ? 10 : 0 }}>
+        <span className="kicker">File scope</span>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {value.context_scope.files.map((f) => {
+            const existing = fileStatus(f, manifest) === "existing";
+            return (
+              <span
+                key={f}
+                className="chip"
+                style={{
+                  fontSize: 11,
+                  padding: "3px 8px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: existing ? "var(--cream-deep)" : "var(--orange-soft)",
+                  borderColor: existing ? "var(--line-strong)" : "var(--orange)",
+                  color: existing ? "var(--ink-soft)" : "var(--orange-deep)",
+                }}
+              >
+                <span style={{ fontWeight: 800 }}>{existing ? "✓" : "＋"}</span>
+                <span className="mono">{f}</span>
+                <button
+                  onClick={() => removeFile(f)}
+                  title="remove file"
+                  style={{ background: "none", border: "none", padding: 0, fontSize: 13, lineHeight: 1, color: "inherit", cursor: "pointer" }}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+          <input
+            value={newFile}
+            onChange={(e) => setNewFile(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addFile();
+              }
+            }}
+            placeholder="+ add file"
+            style={{ ...inputStyle, width: 150, fontFamily: "var(--font-mono)", fontSize: 12, padding: "5px 9px" }}
+          />
+        </div>
+        <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>
+          <b style={{ color: "var(--ink-soft)" }}>✓</b> existing · <b style={{ color: "var(--orange-deep)" }}>＋</b> new — Enter to add
+        </span>
+      </div>
 
       {isBackend && (
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../app/AppContext";
-import { api, type Member, type TrustLevel } from "../lib/api";
+import { api, type Discipline, type Member, type TrustLevel } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
+
+/* Per-discipline trust as filled/empty dots — makes within-tier difference visible
+   so a roster of high+medium devs doesn't read as uniformly "maxed". */
+const DOTS: Record<TrustLevel, string> = { low: "●○○", medium: "●●○", high: "●●●" };
 
 /* Team roster — real members from GET /api/developers. Trust grows with every merge;
    tiers bucket by per-account trust_level. Manager can Link a member's GitLab account
@@ -161,6 +165,17 @@ function DevCard({ d, isManager, busy, onLink }: { d: Member; isManager: boolean
         </div>
         <div className="mono" style={{ fontSize: 12, fontWeight: 800, color: "var(--orange)", textTransform: "capitalize" }}>{d.trust_level}</div>
       </div>
+
+      {Object.keys(d.trust).length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+          {(Object.entries(d.trust) as [Discipline, TrustLevel][]).map(([disc, lvl]) => (
+            <span key={disc} className="mono" style={{ fontSize: 10, display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ color: DISCIPLINE_COLOR[disc], fontWeight: 700 }}>{DISCIPLINE_LABEL[disc]}</span>
+              <span style={{ letterSpacing: 1, color: "var(--ink-soft)" }}>{DOTS[lvl]}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       <div style={{ marginBottom: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, marginBottom: 4, color: "var(--ink-mute)", fontWeight: 700 }}>
