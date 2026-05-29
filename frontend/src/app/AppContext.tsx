@@ -7,7 +7,7 @@ import {
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { Mode, Role, View, WizardKind } from "./types";
-import type { Discipline, Member, PlanJSON, ProjectSummary, RelayState, WorkTask } from "../lib/api";
+import type { Discipline, InboxResponse, Member, PlanJSON, ProjectSummary, RelayState, WorkTask } from "../lib/api";
 import { api, token } from "../lib/api";
 
 interface AppContextValue {
@@ -67,6 +67,9 @@ interface AppContextValue {
   patchTask: (taskId: string, patch: Partial<WorkTask>) => void;
   /** Cached roster — the @person picker list. */
   roster: Member[];
+  /** Cached inbox — bell badge reads `inbox?.unread`; InboxPage calls `loadInbox()` to refresh. */
+  inbox: InboxResponse | null;
+  loadInbox: () => void;
 }
 
 const AppCtx = createContext<AppContextValue | null>(null);
@@ -77,8 +80,8 @@ export function useApp(): AppContextValue {
   return ctx;
 }
 
-const MANAGER_VIEWS: View[] = ["dashboard", "work", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions"];
-const DEV_VIEWS: View[] = ["work", "today", "issue", "passport", "ratify", "qa", "queue", "portfolio"];
+const MANAGER_VIEWS: View[] = ["dashboard", "work", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions", "inbox"];
+const DEV_VIEWS: View[] = ["work", "today", "issue", "passport", "ratify", "qa", "queue", "portfolio", "inbox"];
 
 /** Where each persona lands. Leads land on the cross-project ratify queue (not
  *  the bare RatifyPanel, which is empty until a gate is opened from the queue). */
@@ -201,6 +204,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshProjects();
   }, [refreshProjects]);
 
+  // Inbox cache — unread count drives the bell badge; the InboxPage calls loadInbox() to refresh.
+  const [inbox, setInbox] = useState<InboxResponse | null>(null);
+  const loadInbox = useCallback(() => {
+    if (!member) { setInbox(null); return; }
+    api.inbox().then(setInbox).catch(() => setInbox(null));
+  }, [member]);
+  useEffect(() => { loadInbox(); }, [loadInbox]);
+
   // Work-hub Tasks: cached by scope, stale-while-revalidate — stops the refetch-on-every-nav.
   const [tasksByScope, setTasksByScope] = useState<Record<string, WorkTask[]>>({});
   const [taskFetching, setTaskFetching] = useState<string | null>(null);
@@ -290,6 +301,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     invalidateTasks,
     patchTask,
     roster,
+    inbox,
+    loadInbox,
   };
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

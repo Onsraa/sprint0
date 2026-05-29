@@ -423,6 +423,17 @@ export interface CloseResult {
   added_to_memory: boolean;
 }
 
+export interface NotificationItem {
+  id: string; user_id: string; type: string; title: string;
+  body?: string; ref?: Record<string, unknown>; actionable?: boolean; read?: boolean; created_at: string;
+}
+export interface AccessGrant {
+  id: string; requester_id: string; subject_id: string;
+  status: "pending" | "granted" | "revoked"; notifications_muted?: boolean; created_at: string; updated_at: string;
+}
+export interface InboxNeed { kind: "ratify" | "access_request"; title: string; ref: Record<string, unknown>; item?: QueueItem; }
+export interface InboxResponse { needs_action: InboxNeed[]; notifications: NotificationItem[]; unread: number; }
+
 /* ── Transport helpers ───────────────────────────────────────────────── */
 
 async function unwrap<T>(res: Response): Promise<T> {
@@ -444,6 +455,10 @@ async function jpost<T>(path: string, body?: unknown): Promise<T> {
 
 async function jget<T>(path: string): Promise<T> {
   return unwrap<T>(await fetch(BASE + path, { headers: authHeaders() }));
+}
+
+async function jdelete<T>(path: string): Promise<T> {
+  return unwrap<T>(await fetch(BASE + path, { method: "DELETE", headers: authHeaders() }));
 }
 
 async function fpost<T>(path: string, form: FormData): Promise<T> {
@@ -622,4 +637,14 @@ export const api = {
     else fd.append("text", input.text ?? "");
     return fpost("/api/developers", fd);
   },
+
+  /* Inbox / notifications */
+  inbox(): Promise<InboxResponse> { return jget("/api/inbox"); },
+  inboxReadAll(): Promise<{ ok: boolean }> { return jpost("/api/inbox/read-all"); },
+  requestAccess(subjectId: string): Promise<AccessGrant> { return jpost("/api/access/requests", { subject_id: subjectId }); },
+  acceptAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/requests/${grantId}/accept`); },
+  rejectAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/requests/${grantId}/reject`); },
+  listAccess(): Promise<{ i_can_see: AccessGrant[]; can_see_me: AccessGrant[]; pending_in: AccessGrant[] }> { return jget("/api/access"); },
+  revokeAccess(grantId: string): Promise<AccessGrant> { return jdelete(`/api/access/${grantId}`); },
+  muteAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/${grantId}/mute`); },
 };
