@@ -218,6 +218,40 @@ export interface ProjectSummary {
   tags?: string[];
 }
 
+export type TaskStatus = "planned" | "in_progress" | "in_review" | "done" | "blocked";
+export type TaskPriority = "low" | "normal" | "high" | "urgent";
+
+/** A Task from /api/work (Phase A store). Non-owned/non-granted tasks come back REDACTED:
+ *  only id/project_id/title/status/discipline/assignee + redacted:true are present. */
+export interface WorkTask {
+  id: string;
+  project_id: number;
+  title: string;
+  status: TaskStatus;
+  discipline: Discipline;
+  assignee: string | null;
+  redacted?: boolean;
+  // full-detail fields (absent when redacted):
+  description?: string;
+  assigned_by?: string;        // "ai" | "self" | "<username>"
+  estimate_days?: number;
+  risk?: Risk;
+  depends_on?: string[];
+  priority?: TaskPriority;
+  scheduled_start?: string | null;
+  scheduled_end?: string | null;
+  gitlab_issue_iid?: number | null;
+  context_scope?: ContextScope;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WorkResponse {
+  scope: string;
+  count: number;
+  tasks: WorkTask[];
+}
+
 /** Saved wizard progress so closing never loses work; offered as "Resume" on reopen. */
 export interface WizardDraft {
   briefId: string | null;
@@ -442,6 +476,23 @@ export const api = {
   },
   projects(): Promise<{ count: number; projects: ProjectSummary[] }> {
     return jget("/api/projects");
+  },
+
+  /* Work hub (Phase A Task store) */
+  work(scope: string): Promise<WorkResponse> {
+    return jget(`/api/work?scope=${encodeURIComponent(scope)}`);
+  },
+  task(taskId: string): Promise<WorkTask> {
+    return jget(`/api/tasks/${taskId}`);
+  },
+  claimTask(taskId: string): Promise<WorkTask> {
+    return jpost(`/api/tasks/${taskId}/claim`);
+  },
+  releaseTask(taskId: string): Promise<WorkTask> {
+    return jpost(`/api/tasks/${taskId}/release`);
+  },
+  setTaskStatus(taskId: string, status: TaskStatus): Promise<WorkTask> {
+    return jpost(`/api/tasks/${taskId}/status?status=${status}`);
   },
 
   /* Briefs / intake */
