@@ -144,6 +144,13 @@ async def all_project_records() -> list[dict]:
         return await m.find(PROJ_COLL, projection={"_id": 0}, limit=50)
 
 
+async def past_projects() -> list[dict]:
+    """Agency reference projects (PastProjects memory) — summary/stack/outcome, sans embeddings.
+    Enriches the manager Dashboard's Reference repos."""
+    async with MongoMCP() as m:
+        return await m.find(PP_COLL, projection={"_id": 0, "brief_embedding": 0}, limit=50)
+
+
 async def record_postmortem(doc: dict) -> None:
     """On project close, write an outcome doc into agency memory (PastProjects) so future
     grounding improves. Embedding is added by the caller (reason.py) when a brief summary exists."""

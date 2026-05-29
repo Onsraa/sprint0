@@ -147,12 +147,12 @@ class Constraints(BaseModel):
 
 
 class ArchitectureCard(BaseModel):
-    name: str
+    name: str = Field(description="≤4 words")
     tech_stack: TechStack
-    summary: str
-    rationale: str  # cites past projects + notes which roster devs fit
+    summary: str = Field(description="one line, ≤140 chars — what this stack is")
+    rationale: str = Field(description="≤200 chars — why; cite past projects + which roster devs fit")
     grounded_on: list[str] = Field(default_factory=list)
-    fit_to_constraints: str
+    fit_to_constraints: str = Field(description="≤80 chars — how it meets the constraints")
 
 
 class ArchitectureOptions(BaseModel):

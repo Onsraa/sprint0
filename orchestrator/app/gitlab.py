@@ -59,6 +59,25 @@ def get_project(project_id: int) -> dict:
         return r.json()
 
 
+def list_group_projects(group: str | None = None) -> list[dict]:
+    """Every repo in the demo group — the real source of truth for the manager Dashboard.
+    `seed=True` marks the topic-tagged agency reference repos (vs sprint0-dispatched projects)."""
+    group = group or DEMO_GROUP
+    with _client() as c:
+        gid = _group_id(c, group)
+        r = c.get(f"/groups/{gid}/projects", params={"per_page": 100, "order_by": "last_activity_at"})
+        r.raise_for_status()
+        return [
+            {
+                "project_id": p["id"], "name": p["name"], "path": p.get("path", ""),
+                "web_url": p["web_url"], "description": p.get("description") or "",
+                "topics": p.get("topics") or [], "last_activity_at": p.get("last_activity_at", ""),
+                "seed": SEED_TOPIC in (p.get("topics") or []),
+            }
+            for p in r.json()
+        ]
+
+
 def search_user(username: str) -> dict | None:
     """Find a real GitLab user by username (for native-assignee linking)."""
     with _client() as c:

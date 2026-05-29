@@ -22,7 +22,7 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, handoff, relay, staffing, team
+from app import auth, gitlab, handoff, relay, staffing, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
@@ -31,8 +31,8 @@ from app.contracts import (
 )
 from app.execute import execute_plan, extend_project
 from app.rag import (
-    all_project_records, decisions_by_owner, get_project_record, record_merge, save_decision,
-    save_project_record, update_project_record,
+    all_project_records, decisions_by_owner, get_project_record, past_projects, record_merge,
+    save_decision, save_project_record, update_project_record,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -60,6 +60,7 @@ async def _genai_error(_request, exc: ClientError) -> JSONResponse:
 # Demo-grade in-memory stores.
 BRIEFS: dict[str, str] = {}
 SPECS: dict[str, ClarifiedSpec] = {}
+ARCHS: dict[str, ArchitectureOptions] = {}  # brief_id → cached architecture options (wizard resume, no Gemini re-run)
 PLANS: dict[str, PlanJSON] = {}
 RELAYS: dict[str, RelayState] = {}
 RESULTS: dict[str, dict] = {}
@@ -184,12 +185,46 @@ async def list_relays(member: DeveloperProfile = Depends(auth.current_member)) -
 
 @app.get("/api/projects")
 async def list_projects(_: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    """Every dispatched project (real GitLab scaffolds) — the manager Dashboard source."""
+    """All repos in the demo group (real source of truth). A repo with a ProjectRecord is
+    sprint0-managed → kind=active (full plan/status/counts); the rest (agency seed repos) are
+    kind=reference, enriched from PastProjects memory. Falls back to ProjectRecords if GitLab is down."""
     try:
-        recs = await all_project_records()
+        repos = await run_in_threadpool(gitlab.list_group_projects)
     except Exception:
-        recs = []
-    return {"count": len(recs), "projects": recs}
+        repos = None
+    try:
+        records = {r["project_id"]: r for r in await all_project_records()}
+    except Exception:
+        records = {}
+
+    if repos is None:  # GitLab unreachable → persisted records only
+        out = [{**r, "kind": "active"} for r in records.values()]
+        return {"count": len(out), "projects": out}
+
+    try:
+        past = {p.get("name"): p for p in await past_projects()}
+    except Exception:
+        past = {}
+
+    out = []
+    for repo in repos:
+        pid, name = repo["project_id"], repo["name"]
+        rec = records.get(pid)
+        if rec:  # sprint0-managed / in-progress
+            out.append({**rec, "kind": "active", "web_url": rec.get("web_url") or repo["web_url"],
+                        "last_activity_at": repo["last_activity_at"]})
+        elif repo["seed"] or name in past:  # agency reference repo
+            pp = past.get(name) or {}
+            out.append({
+                "project_id": pid, "name": name, "web_url": repo["web_url"], "kind": "reference",
+                "status": "shipped", "tech_stack": pp.get("tech_stack") or {}, "tags": pp.get("tags") or [],
+                "summary": pp.get("outcome_notes") or repo["description"] or "",
+                "last_activity_at": repo["last_activity_at"],
+            })
+        else:  # any other live repo
+            out.append({"project_id": pid, "name": name, "web_url": repo["web_url"], "kind": "active",
+                        "status": None, "last_activity_at": repo["last_activity_at"]})
+    return {"count": len(out), "projects": out}
 
 
 @app.post("/api/briefs")
@@ -208,6 +243,32 @@ async def create_brief(text: Optional[str] = Form(None), file: Optional[UploadFi
     bid = f"brief_{uuid.uuid4().hex[:8]}"
     BRIEFS[bid] = content
     return {"brief_id": bid}
+
+
+@app.get("/api/briefs/{brief_id}")
+async def get_brief(brief_id: str) -> dict:
+    """Rehydrate a brief's text (wizard resume — no Gemini re-run)."""
+    if brief_id not in BRIEFS:
+        raise HTTPException(404, "brief not found")
+    return {"brief_id": brief_id, "text": BRIEFS[brief_id]}
+
+
+@app.get("/api/briefs/{brief_id}/spec", response_model=ClarifiedSpec)
+async def get_spec(brief_id: str) -> ClarifiedSpec:
+    """Cached clarified spec (wizard resume). 404 until /clarify has run."""
+    spec = SPECS.get(brief_id)
+    if spec is None:
+        raise HTTPException(404, "not clarified yet")
+    return spec
+
+
+@app.get("/api/briefs/{brief_id}/architectures", response_model=ArchitectureOptions)
+async def get_architectures(brief_id: str) -> ArchitectureOptions:
+    """Cached architecture options (wizard resume). 404 until /architectures has run."""
+    opts = ARCHS.get(brief_id)
+    if opts is None:
+        raise HTTPException(404, "no architectures yet")
+    return opts
 
 
 @app.post("/api/briefs/{brief_id}/clarify", response_model=ClarifiedSpec)
@@ -237,7 +298,9 @@ async def architectures(brief_id: str, constraints: Optional[Constraints] = None
     """Idea 1: 2-3 grounded Architecture Cards for the manager to pick from."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
-    return await propose_architectures(BRIEFS[brief_id], constraints or Constraints())
+    opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints())
+    ARCHS[brief_id] = opts  # cache for wizard resume
+    return opts
 
 
 @app.post("/api/briefs/{brief_id}/plan")
