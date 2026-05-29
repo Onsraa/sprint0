@@ -248,6 +248,33 @@ class Decision(BaseModel):
     updated_at: str
 
 
+class Notification(BaseModel):
+    """A row in a member's Inbox feed. `type` covers ratify, access, QA, ship, and (Phase E)
+    reschedule events; `ref` carries deep-link ids (plan_id/grant_id/task_id)."""
+    id: str
+    user_id: str                  # recipient username
+    type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed",
+                  "project_shipped", "reschedule_proposed", "reschedule_resolved"]
+    title: str
+    body: str = ""
+    ref: dict = Field(default_factory=dict)
+    actionable: bool = False
+    read: bool = False
+    created_at: str
+
+
+class AccessGrant(BaseModel):
+    """Consent-based visibility: requester asks to see subject's full task detail; subject
+    accepts/revokes. Replaces the vision-spec UserSubscription."""
+    id: str
+    requester_id: str
+    subject_id: str
+    status: Literal["pending", "granted", "revoked"] = "pending"
+    notifications_muted: bool = False
+    created_at: str
+    updated_at: str
+
+
 class Task(BaseModel):
     """Persistent unit of work — source of truth for the Work hub. Materialized from a plan,
     linked to a GitLab issue on dispatch."""

@@ -174,6 +174,51 @@ async def decisions_by_owner(owner_id: str) -> list[dict]:
         return await m.find(DECISIONS_COLLECTION, query={"owner_id": owner_id}, projection={"_id": 0}, limit=200)
 
 
+NOTIFICATIONS_COLL = "Notifications"
+ACCESS_GRANTS_COLL = "AccessGrants"
+
+
+async def save_notification(doc: dict) -> None:
+    async with MongoMCP() as m:
+        await m.insert_many(NOTIFICATIONS_COLL, [doc])
+
+
+async def notifications_for_user(user_id: str, limit: int = 30) -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(NOTIFICATIONS_COLL, query={"user_id": user_id}, projection={"_id": 0}, limit=limit)
+
+
+async def mark_all_read(user_id: str) -> None:
+    async with MongoMCP() as m:
+        await m.update_many(NOTIFICATIONS_COLL, {"user_id": user_id}, {"$set": {"read": True}})
+
+
+async def save_access_grant(doc: dict) -> None:
+    async with MongoMCP() as m:
+        await m.insert_many(ACCESS_GRANTS_COLL, [doc])
+
+
+async def update_access_grant(grant_id: str, patch: dict) -> None:
+    async with MongoMCP() as m:
+        await m.update_many(ACCESS_GRANTS_COLL, {"id": grant_id}, {"$set": patch})
+
+
+async def get_access_grant(grant_id: str) -> dict:
+    async with MongoMCP() as m:
+        rows = await m.find(ACCESS_GRANTS_COLL, query={"id": grant_id}, projection={"_id": 0}, limit=1)
+    return rows[0] if rows else {}
+
+
+async def access_grants_for_subject(subject_id: str) -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(ACCESS_GRANTS_COLL, query={"subject_id": subject_id}, projection={"_id": 0}, limit=100)
+
+
+async def access_grants_for_requester(requester_id: str) -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(ACCESS_GRANTS_COLL, query={"requester_id": requester_id}, projection={"_id": 0}, limit=100)
+
+
 TASKS_COLL = "Tasks"  # PascalCase, the Work hub's source of truth (Phase A)
 
 
