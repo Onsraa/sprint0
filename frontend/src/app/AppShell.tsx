@@ -1,5 +1,6 @@
 import { useApp } from "./AppContext";
 import type { Mode, Role, View } from "./types";
+import { InboxPage } from "../views/InboxPage";
 import { WorkHub } from "../views/work/WorkHub";
 import type { Member } from "../lib/api";
 import { Mascot, Sprint0Logo } from "../components/Mascot";
@@ -57,6 +58,7 @@ function navFor(role: Role): NavSection[] {
   if (role === "manager") {
     return [
       { items: [
+        { id: "inbox", label: "Inbox", icon: "⊙" },
         { id: "work", label: "My Work", icon: "▦" },
         { id: "dashboard", label: "Projects", icon: "◳" },
       ]},
@@ -74,6 +76,7 @@ function navFor(role: Role): NavSection[] {
   if (role === "qa") {
     return [
       { items: [
+        { id: "inbox", label: "Inbox", icon: "⊙" },
         { id: "work", label: "My Work", icon: "▦" },
         { id: "qa", label: "QA gate", icon: "✓" },
       ]},
@@ -86,6 +89,7 @@ function navFor(role: Role): NavSection[] {
   // discipline leads (uiux / backend / frontend)
   return [
     { items: [
+      { id: "inbox", label: "Inbox", icon: "⊙" },
       { id: "work", label: "My Work", icon: "▦" },
       { id: "queue", label: "Ratify", icon: "🎽" },
     ]},
@@ -240,7 +244,7 @@ function initialsOf(name: string): string {
 }
 
 function TopBar() {
-  const { member, role, view } = useApp();
+  const { member, role, view, inbox, setView } = useApp();
   const titles: Partial<Record<View, string>> = {
     work: "My Work",
     dashboard: "Projects",
@@ -255,6 +259,7 @@ function TopBar() {
     attributions: "Merge attribution",
     portfolio: "Decision Portfolio",
     qa: "QA gate",
+    inbox: "Inbox",
   };
   const isManager = role === "manager";
   const m = member as Member;
@@ -307,6 +312,47 @@ function TopBar() {
             <span style={{ color: "var(--ink-mute)", fontFamily: "var(--font-mono)" }}>load {m.load}%</span>
           </div>
         )}
+        <button
+          onClick={() => setView("inbox")}
+          style={{
+            position: "relative",
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            background: "var(--cream-deep)",
+            border: "1.5px solid var(--line)",
+            display: "grid",
+            placeItems: "center",
+            fontSize: 16,
+            cursor: "pointer",
+          }}
+          title="Inbox"
+        >
+          🔔
+          {(inbox?.unread ?? 0) > 0 && (
+            <span
+              style={{
+                position: "absolute",
+                top: 1,
+                right: 1,
+                minWidth: 16,
+                height: 16,
+                borderRadius: 999,
+                background: "var(--orange)",
+                color: "var(--paper)",
+                fontSize: 9,
+                fontWeight: 800,
+                fontFamily: "var(--font-mono)",
+                display: "grid",
+                placeItems: "center",
+                padding: "0 3px",
+                border: "1.5px solid var(--paper)",
+              }}
+            >
+              {(inbox?.unread ?? 0) > 9 ? "9+" : inbox?.unread}
+            </span>
+          )}
+        </button>
         <div
           style={{
             width: 36,
@@ -343,6 +389,7 @@ function MainView() {
         {view === "ratify" && <RatifyPanel />}
         {view === "attributions" && <Attributions />}
         {view === "portfolio" && <Portfolio />}
+        {view === "inbox" && <InboxPage />}
       </div>
     );
   }
@@ -356,6 +403,7 @@ function MainView() {
       {view === "ratify" && <RatifyPanel />}
       {view === "qa" && <QAGate />}
       {view === "portfolio" && <Portfolio />}
+      {view === "inbox" && <InboxPage />}
     </div>
   );
 }
