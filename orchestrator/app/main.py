@@ -25,14 +25,16 @@ from pydantic import BaseModel
 from app import auth, gitlab, handoff, relay, scheduler, staffing, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
-    ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
+    AccessGrant, ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, Notification, PlanJSON, PlanRequest, ProjectRecord,
     QAReport, RatifyRequest, RelayState, Task,
 )
 from app.execute import execute_plan, extend_project
 from app.rag import (
-    access_grants_for_subject, all_project_records, decisions_by_owner, get_project_record, past_projects, record_merge,
-    save_decision, save_notification, notifications_for_user, mark_all_read, save_project_record, update_project_record,
+    access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
+    get_access_grant, get_project_record, past_projects, record_merge,
+    save_access_grant, save_decision, save_notification, notifications_for_user, mark_all_read,
+    save_project_record, update_access_grant, update_project_record,
     all_tasks, delete_tasks_for_project, get_task, mongo_close, save_tasks, tasks_for_project, update_task,
 )
 from app.reason import (
@@ -235,6 +237,84 @@ async def inbox(member: DeveloperProfile = Depends(auth.current_member)) -> dict
 async def inbox_read_all(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     await mark_all_read(member.username)
     return {"ok": True}
+
+
+class AccessRequestBody(BaseModel):
+    subject_id: str
+
+
+@app.post("/api/access/requests")
+async def request_access(body: AccessRequestBody, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    if body.subject_id == member.username:
+        raise HTTPException(400, "can't request access to your own tasks")
+    existing = await access_grants_for_requester(member.username)
+    if any(g.get("subject_id") == body.subject_id and g.get("status") in ("pending", "granted") for g in existing):
+        raise HTTPException(409, "you already have a pending or granted request for this person")
+    now = datetime.now(timezone.utc).isoformat()
+    grant = AccessGrant(id=f"agr_{uuid.uuid4().hex[:8]}", requester_id=member.username,
+                        subject_id=body.subject_id, status="pending", created_at=now, updated_at=now)
+    await save_access_grant(grant.model_dump())
+    await notify(body.subject_id, "access_requested", f"@{member.username} requests access to your tasks",
+                 actionable=True, ref={"grant_id": grant.id})
+    return grant.model_dump()
+
+
+@app.post("/api/access/requests/{grant_id}/accept")
+async def accept_access(grant_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    g = await get_access_grant(grant_id)
+    if not g:
+        raise HTTPException(404, "no such request")
+    if g["subject_id"] != member.username:
+        raise HTTPException(403, "only the subject can accept")
+    await update_access_grant(grant_id, {"status": "granted", "updated_at": datetime.now(timezone.utc).isoformat()})
+    await notify(g["requester_id"], "access_granted", f"@{member.username} granted you access to their tasks",
+                 ref={"grant_id": grant_id})
+    return {**g, "status": "granted"}
+
+
+@app.post("/api/access/requests/{grant_id}/reject")
+async def reject_access(grant_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    g = await get_access_grant(grant_id)
+    if not g:
+        raise HTTPException(404, "no such request")
+    if g["subject_id"] != member.username:
+        raise HTTPException(403, "only the subject can reject")
+    await update_access_grant(grant_id, {"status": "revoked", "updated_at": datetime.now(timezone.utc).isoformat()})
+    return {**g, "status": "revoked"}
+
+
+@app.get("/api/access")
+async def list_access(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    mine = await access_grants_for_requester(member.username)
+    watching = await access_grants_for_subject(member.username)
+    return {
+        "i_can_see": [g for g in mine if g.get("status") == "granted"],
+        "can_see_me": [g for g in watching if g.get("status") == "granted"],
+        "pending_in": [g for g in watching if g.get("status") == "pending"],
+    }
+
+
+@app.delete("/api/access/{grant_id}")
+async def revoke_access(grant_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    g = await get_access_grant(grant_id)
+    if not g:
+        raise HTTPException(404, "no such grant")
+    if member.username not in (g["subject_id"], g["requester_id"]):
+        raise HTTPException(403, "not your grant")
+    await update_access_grant(grant_id, {"status": "revoked", "updated_at": datetime.now(timezone.utc).isoformat()})
+    return {**g, "status": "revoked"}
+
+
+@app.post("/api/access/{grant_id}/mute")
+async def mute_access(grant_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    g = await get_access_grant(grant_id)
+    if not g:
+        raise HTTPException(404, "no such grant")
+    if g["subject_id"] != member.username:
+        raise HTTPException(403, "only the subject can mute")
+    new_muted = not g.get("notifications_muted", False)
+    await update_access_grant(grant_id, {"notifications_muted": new_muted, "updated_at": datetime.now(timezone.utc).isoformat()})
+    return {**g, "notifications_muted": new_muted}
 
 
 @app.get("/api/relays")
@@ -582,9 +662,10 @@ class TaskPatch(BaseModel):
     patch: dict
 
 
-def _redact(task: dict, viewer: DeveloperProfile) -> dict:
-    """Full detail if manager or own task; else title+status+discipline only."""
-    if viewer.role == "manager" or task.get("assignee") == viewer.username:
+def _redact(task: dict, viewer: DeveloperProfile, granted_subjects: set[str] | None = None) -> dict:
+    """Full detail if manager, own task, or a granted viewer of the assignee; else title+status+discipline only."""
+    if (viewer.role == "manager" or task.get("assignee") == viewer.username
+            or (granted_subjects and task.get("assignee") in granted_subjects)):
         return task
     return {"id": task["id"], "project_id": task["project_id"], "title": task["title"],
             "status": task["status"], "discipline": task["discipline"], "assignee": task.get("assignee"),
@@ -598,13 +679,14 @@ async def work(scope: str = "me", member: DeveloperProfile = Depends(auth.curren
         rows = await all_tasks()
     except Exception:
         rows = []
+    granted = {g["subject_id"] for g in await access_grants_for_requester(member.username) if g.get("status") == "granted"}
     if scope == "me":
         rows = [t for t in rows if t.get("assignee") == member.username]
     elif scope.startswith("user:"):
         who = scope.split(":", 1)[1]
-        rows = [_redact(t, member) for t in rows if t.get("assignee") == who]
+        rows = [_redact(t, member, granted) for t in rows if t.get("assignee") == who]
     else:  # team
-        rows = [_redact(t, member) for t in rows]
+        rows = [_redact(t, member, granted) for t in rows]
     return {"scope": scope, "count": len(rows), "tasks": rows}
 
 
@@ -620,7 +702,8 @@ async def task_detail(task_id: str, member: DeveloperProfile = Depends(auth.curr
     doc = await get_task(task_id)
     if not doc:
         raise HTTPException(404, "no such task")
-    return _redact(doc, member)
+    granted = {g["subject_id"] for g in await access_grants_for_requester(member.username) if g.get("status") == "granted"}
+    return _redact(doc, member, granted)
 
 
 @app.patch("/api/tasks/{task_id}")
