@@ -497,6 +497,9 @@ export const api = {
   recomputeSchedule(projectId: number): Promise<{ project_id: number; scheduled: number }> {
     return jpost(`/api/schedule/recompute?project_id=${projectId}`);
   },
+  reassignTask(taskId: string, assignee: string): Promise<WorkTask> {
+    return jpost(`/api/tasks/${taskId}/reassign?assignee=${encodeURIComponent(assignee)}`);
+  },
 
   /* Briefs / intake */
   createBrief(input: { text?: string; file?: File }): Promise<{ brief_id: string }> {

@@ -4,9 +4,10 @@ import { api, type WorkTask, type TaskStatus } from "../../lib/api";
 import { STATUS_COLUMNS, provenanceTag } from "./workUtils";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, RISK_COLOR } from "../../lib/relayUtils";
 
-export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
-  const { member, patchTask } = useApp();
+export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClose: () => void; reload: () => void }) {
+  const { member, patchTask, roster } = useApp();
   const me = member?.username;
+  const isManager = member?.role === "manager";
 
   const [detail, setDetail] = useState<WorkTask | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +31,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
     refetch();
   }, [taskId, refetch]);
 
-  const runAction = async (fn: () => Promise<WorkTask>) => {
+  const runAction = async (fn: () => Promise<WorkTask>, reschedules = false) => {
     setBusy(true);
     setActionErr(null);
     try {
@@ -38,6 +39,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
       setDetail(updated);
       // Update the board behind in place — no cache clear, no blank.
       patchTask(updated.id, { status: updated.status, assignee: updated.assignee, assigned_by: updated.assigned_by });
+      if (reschedules) reload(); // assignment changed → re-pack the calendar (silent SWR refetch)
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : String(e));
       refetch();
@@ -297,11 +299,11 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
                   </div>
                 </div>
 
-                {/* Claim / Release */}
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-                  {me && detail.assignee !== me && (
+                {/* Assignment — dev claims unassigned in-discipline; owner releases; mgr/lead reassign */}
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+                  {detail.assignee == null && !isManager && member?.discipline === detail.discipline && (
                     <button
-                      onClick={() => runAction(() => api.claimTask(taskId))}
+                      onClick={() => runAction(() => api.claimTask(taskId), true)}
                       disabled={busy}
                       className="btn btn-primary btn-sm"
                       style={{ opacity: busy ? 0.5 : 1 }}
@@ -311,13 +313,49 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
                   )}
                   {detail.assignee === me && (
                     <button
-                      onClick={() => runAction(() => api.releaseTask(taskId))}
+                      onClick={() => runAction(() => api.releaseTask(taskId), true)}
                       disabled={busy}
                       className="btn btn-ghost btn-sm"
                       style={{ opacity: busy ? 0.5 : 1 }}
                     >
                       {busy ? "…" : "Release"}
                     </button>
+                  )}
+                  {(isManager || member?.discipline === detail.discipline) && (
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", fontWeight: 800, textTransform: "uppercase" }}>
+                        reassign
+                      </span>
+                      <select
+                        value={detail.assignee ?? ""}
+                        disabled={busy}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === (detail.assignee ?? "")) return;
+                          if (
+                            (detail.status === "in_progress" || detail.status === "in_review") &&
+                            !window.confirm(`${detail.assignee ?? "Someone"} is mid-work on this — reassign anyway?`)
+                          ) {
+                            return; // controlled select reverts on the next render
+                          }
+                          runAction(() => api.reassignTask(taskId, v), true);
+                        }}
+                        style={{
+                          padding: "5px 9px",
+                          border: "1.5px solid var(--line-strong)",
+                          borderRadius: 8,
+                          fontSize: 12,
+                          background: "var(--paper)",
+                          fontFamily: "inherit",
+                          cursor: busy ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        <option value="">— Unassign —</option>
+                        {roster.filter((m) => m.role === "developer").map((m) => (
+                          <option key={m.username} value={m.username}>{m.name}</option>
+                        ))}
+                      </select>
+                    </label>
                   )}
                 </div>
 

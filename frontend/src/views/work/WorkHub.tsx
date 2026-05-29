@@ -151,7 +151,7 @@ export function WorkHub() {
       )}
 
       {selected != null && (
-        <TaskDrawer taskId={selected} onClose={() => setSelected(null)} />
+        <TaskDrawer taskId={selected} onClose={() => setSelected(null)} reload={() => loadTasks(scope)} />
       )}
     </div>
   );

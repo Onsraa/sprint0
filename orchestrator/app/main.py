@@ -590,18 +590,50 @@ async def edit_task(task_id: str, body: TaskPatch, member: DeveloperProfile = De
 
 @app.post("/api/tasks/{task_id}/claim")
 async def claim_task(task_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """A developer self-assigns an UNASSIGNED task in their own discipline."""
     t = await _load_task_or_404(task_id)
+    if t.assignee:
+        raise HTTPException(409, "task already assigned — ask a lead or the manager to reassign")
+    if member.discipline != t.discipline:
+        raise HTTPException(403, "you can only claim tasks in your own discipline")
     updated = tasklib.claim(t, user=member.username, now=datetime.now(timezone.utc).isoformat())
     await update_task(task_id, updated.model_dump())
+    await _reschedule_project(updated.project_id)  # owner changed → re-pack the calendar
     return updated.model_dump()
 
 
 @app.post("/api/tasks/{task_id}/release")
 async def release_task(task_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The owner — or a lead / the manager — drops the assignment back to the pool."""
     t = await _load_task_or_404(task_id)
+    if t.assignee != member.username and "assignee" not in tasklib.can_edit(
+        t, editor_role=member.role, editor_user=member.username, editor_discipline=member.discipline
+    ):
+        raise HTTPException(403, "only the owner, a lead, or the manager can release this task")
     updated = tasklib.release(t, now=datetime.now(timezone.utc).isoformat())
     await update_task(task_id, updated.model_dump())
-    return updated.model_dump()
+    await _reschedule_project(updated.project_id)
+    return await get_task(task_id) or updated.model_dump()  # return the freshly re-scheduled task
+
+
+@app.post("/api/tasks/{task_id}/reassign")
+async def reassign_task(task_id: str, assignee: str = "", member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Manager / discipline lead reassigns a task to another member (assignee="" → unassign)."""
+    t = await _load_task_or_404(task_id)
+    if "assignee" not in tasklib.can_edit(
+        t, editor_role=member.role, editor_user=member.username, editor_discipline=member.discipline
+    ):
+        raise HTTPException(403, "only the manager or the discipline lead can reassign this task")
+    new = assignee or None
+    try:
+        updated = tasklib.apply_edit(t, {"assignee": new}, editor_role=member.role, editor_user=member.username,
+                                     editor_discipline=member.discipline, now=datetime.now(timezone.utc).isoformat())
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    updated.assigned_by = member.username if new else "ai"  # provenance: placed by the reassigner
+    await update_task(task_id, updated.model_dump())
+    await _reschedule_project(updated.project_id)
+    return await get_task(task_id) or updated.model_dump()  # return the freshly re-scheduled task
 
 
 @app.post("/api/tasks/{task_id}/status")
@@ -617,19 +649,27 @@ async def task_status(task_id: str, status: str, member: DeveloperProfile = Depe
     return updated.model_dump()
 
 
+async def _reschedule_project(project_id: int) -> int:
+    """Re-run the deterministic scheduler for a project's Tasks + persist the dates (best-effort).
+    Called after any assignment change so the old + new owner's calendars re-pack. Returns the count."""
+    try:
+        docs = await tasks_for_project(project_id)
+        if not docs:
+            return 0
+        objs = [Task(**d) for d in docs]
+        await team.ensure_loaded()
+        scheduler.schedule_tasks(objs, team.all_members(), datetime.now(timezone.utc).isoformat())
+        for o in objs:
+            await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
+        return len(objs)
+    except Exception:
+        return 0  # never fail an assignment over the recompute
+
+
 @app.post("/api/schedule/recompute")
 async def recompute_schedule(project_id: int, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Re-run the deterministic scheduler for a project's Tasks and persist the dates."""
-    docs = await tasks_for_project(project_id)
-    if not docs:
-        return {"project_id": project_id, "scheduled": 0}
-    objs = [Task(**d) for d in docs]
-    await team.ensure_loaded()
-    now = datetime.now(timezone.utc).isoformat()
-    scheduler.schedule_tasks(objs, team.all_members(), now)
-    for o in objs:
-        await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
-    return {"project_id": project_id, "scheduled": len(objs)}
+    return {"project_id": project_id, "scheduled": await _reschedule_project(project_id)}
 
 
 @app.post("/api/projects/{project_id}/qa/run", response_model=QAReport)
