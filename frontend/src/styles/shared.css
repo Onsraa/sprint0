@@ -25,6 +25,15 @@
   --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
+  /* density type scale (compact, Linear-like — views adopt these) */
+  --fs-display: 20px;
+  --fs-title: 15px;
+  --fs-body: 13px;
+  --fs-sm: 12px;
+  --fs-xs: 11px;
+  --pad-card: 12px;
+  --gap: 8px;
+
   /* shape */
   --radius-xs: 8px;
   --radius-sm: 12px;
@@ -44,6 +53,8 @@
 html, body {
   margin: 0; padding: 0;
   font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
   background: var(--cream);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -60,20 +71,20 @@ img { display: block; max-width: 100%; }
 .mono { font-family: var(--font-mono); }
 .kicker {
   font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.14em;
+  font-size: 10px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-mute);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 /* Buttons */
 .btn {
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 14px 22px;
+  padding: 9px 16px;
   border-radius: var(--radius-pill);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 13px;
   transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
   border: 2px solid var(--ink);
   white-space: nowrap;
@@ -86,7 +97,7 @@ img { display: block; max-width: 100%; }
 .btn-dark:active { transform: translate(0, 2px); box-shadow: 0 0 0 var(--orange); }
 .btn-ghost { background: transparent; border: 2px solid var(--ink); }
 .btn-ghost:hover { background: var(--ink); color: var(--paper); }
-.btn-sm { padding: 9px 16px; font-size: 13px; }
+.btn-sm { padding: 6px 12px; font-size: 12px; }
 
 /* Cards (the prized component) */
 .card {
@@ -114,10 +125,10 @@ img { display: block; max-width: 100%; }
 
 /* Chips */
 .chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 12px;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px;
   border-radius: var(--radius-pill);
-  font-size: 12px; font-weight: 600;
+  font-size: 11px; font-weight: 600;
   border: 1.5px solid var(--ink);
   background: var(--paper);
 }
@@ -177,9 +188,12 @@ img { display: block; max-width: 100%; }
 .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-6 { gap: 24px; } .gap-8 { gap: 32px; }
 .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 
-/* Scrollbar tame */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; }
+/* Scrollbar — near-invisible (content fits by design; this stays out of the way) */
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--line) transparent; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 6px; }
+*:hover::-webkit-scrollbar-thumb { background: var(--line); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* Accessibility: respect OS reduced-motion preference */

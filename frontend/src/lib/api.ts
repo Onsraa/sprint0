@@ -200,18 +200,62 @@ export interface RelaySummary {
   all_ratified: boolean;
 }
 
-/** A dispatched project (real GitLab scaffold) — mirrors the persisted ProjectRecord. */
+/** A project on the manager Dashboard. `active` = sprint0-managed (has a ProjectRecord, full plan);
+ *  `reference` = an agency past project (memory only — no plan/counts). */
 export interface ProjectSummary {
   project_id: number;
   name: string;
   web_url: string;
-  tech_stack: TechStack;
-  grounded_on: string[];
-  plan: PlanJSON;
+  kind: "active" | "reference";
+  tech_stack?: TechStack;
+  grounded_on?: string[];
+  plan?: PlanJSON;
   module_manifest?: string[];
-  status?: string; // "closed" once the post-mortem runs; absent → active
+  status?: string; // "in_progress"/"closed"/"shipped"; absent → active
   created_at?: string;
+  last_activity_at?: string;
+  summary?: string;
+  tags?: string[];
 }
+
+/** Saved wizard progress so closing never loses work; offered as "Resume" on reopen. */
+export interface WizardDraft {
+  briefId: string | null;
+  planId: string | null;
+  step: number;
+  isFeature: boolean;
+  featureProjectId: number | null;
+  chosenStack: TechStack | null;
+  dial: number;
+  projectName: string;
+  savedAt: number;
+}
+
+const DRAFT_KEY = "sprint0_draft";
+export const draft = {
+  get(): WizardDraft | null {
+    try {
+      const s = localStorage.getItem(DRAFT_KEY);
+      return s ? (JSON.parse(s) as WizardDraft) : null;
+    } catch {
+      return null;
+    }
+  },
+  set(d: WizardDraft): void {
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    } catch {
+      /* ignore disabled storage */
+    }
+  },
+  clear(): void {
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      /* ignore */
+    }
+  },
+};
 
 /** A merge sprint0 couldn't map to a roster member — awaits the manager's call. */
 export interface Attribution {
@@ -409,6 +453,16 @@ export const api = {
   },
   clarify(briefId: string, constraints?: Constraints | null): Promise<ClarifiedSpec> {
     return jpost(`/api/briefs/${briefId}/clarify`, constraints ?? null);
+  },
+  /* Wizard-resume rehydrate (cached server-side; no Gemini re-run) */
+  getBrief(briefId: string): Promise<{ brief_id: string; text: string }> {
+    return jget(`/api/briefs/${briefId}`);
+  },
+  getSpec(briefId: string): Promise<ClarifiedSpec> {
+    return jget(`/api/briefs/${briefId}/spec`);
+  },
+  getArchitectures(briefId: string): Promise<ArchitectureOptions> {
+    return jget(`/api/briefs/${briefId}/architectures`);
   },
   resolveClarify(briefId: string, answers: Record<string, string>): Promise<ClarifiedSpec> {
     return jpost(`/api/briefs/${briefId}/clarify/resolve`, { answers });
