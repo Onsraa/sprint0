@@ -7,7 +7,7 @@ import {
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { Mode, Role, View, WizardKind } from "./types";
-import type { Discipline, Member, PlanJSON, ProjectSummary, RelayState } from "../lib/api";
+import type { Discipline, Member, PlanJSON, ProjectSummary, RelayState, WorkTask } from "../lib/api";
 import { api, token } from "../lib/api";
 
 interface AppContextValue {
@@ -54,6 +54,17 @@ interface AppContextValue {
   /** GitLab clone URL of the dispatched project (for the dev fetch block). */
   liveCloneUrl: string | null;
   setLiveCloneUrl: Dispatch<SetStateAction<string | null>>;
+  /** Work-hub Task cache keyed by scope (me|team|user:<id>) — stale-while-revalidate, so
+   *  navigating back to My Work is instant. */
+  tasksByScope: Record<string, WorkTask[]>;
+  taskFetching: string | null;
+  taskErr: string | null;
+  /** Fetch (or background-refresh) the Tasks for a scope into the cache. */
+  loadTasks: (scope: string) => void;
+  /** Drop the cache + refresh the active scope (after a task mutation or a dispatch). */
+  invalidateTasks: (currentScope?: string) => void;
+  /** Cached roster — the @person picker list. */
+  roster: Member[];
 }
 
 const AppCtx = createContext<AppContextValue | null>(null);
@@ -188,6 +199,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshProjects();
   }, [refreshProjects]);
 
+  // Work-hub Tasks: cached by scope, stale-while-revalidate — stops the refetch-on-every-nav.
+  const [tasksByScope, setTasksByScope] = useState<Record<string, WorkTask[]>>({});
+  const [taskFetching, setTaskFetching] = useState<string | null>(null);
+  const [taskErr, setTaskErr] = useState<string | null>(null);
+  const [roster, setRoster] = useState<Member[]>([]);
+  const loadTasks = useCallback(
+    (scope: string) => {
+      if (!member) return;
+      setTaskFetching(scope);
+      api
+        .work(scope)
+        .then((r) => {
+          setTasksByScope((p) => ({ ...p, [scope]: r.tasks }));
+          setTaskErr(null);
+        })
+        .catch((e) => setTaskErr(e instanceof Error ? e.message : String(e)))
+        .finally(() => setTaskFetching((s) => (s === scope ? null : s)));
+    },
+    [member],
+  );
+  const invalidateTasks = useCallback(
+    (currentScope?: string) => {
+      setTasksByScope({}); // other scopes refetch lazily on next visit
+      if (currentScope) loadTasks(currentScope);
+    },
+    [loadTasks],
+  );
+  // Preload My Work + the roster on login so the first Work-hub visit is instant.
+  useEffect(() => {
+    if (!member) {
+      setTasksByScope({});
+      setRoster([]);
+      return;
+    }
+    loadTasks("me");
+    api.developers().then(setRoster).catch(() => setRoster([]));
+  }, [member, loadTasks]);
+
   const value: AppContextValue = {
     member,
     authLoading,
@@ -222,6 +271,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLiveProjectId,
     liveCloneUrl,
     setLiveCloneUrl,
+    tasksByScope,
+    taskFetching,
+    taskErr,
+    loadTasks,
+    invalidateTasks,
+    roster,
   };
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

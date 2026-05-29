@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "../../app/AppContext";
-import { api, type Member, type WorkTask } from "../../lib/api";
 import { WorkBoard } from "./WorkBoard";
 import { WorkList } from "./WorkList";
 import { TaskDrawer } from "./TaskDrawer";
@@ -8,29 +7,25 @@ import { TaskDrawer } from "./TaskDrawer";
 type Mode = "board" | "list";
 
 export function WorkHub() {
-  const { role } = useApp();
+  const { role, tasksByScope, taskFetching, taskErr, loadTasks, invalidateTasks, roster } = useApp();
   const [scope, setScope] = useState("me");
   const [mode, setMode] = useState<Mode>("board");
-  const [tasks, setTasks] = useState<WorkTask[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [people, setPeople] = useState<Member[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const reload = useCallback(() => {
-    setLoading(true);
-    api.work(scope)
-      .then((r) => { setTasks(r.tasks); setErr(null); })
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false));
-  }, [scope]);
-  useEffect(() => { reload(); }, [reload]);
-  useEffect(() => { api.developers().then(setPeople).catch(() => setPeople([])); }, []);
+  // Stale-while-revalidate: render the cached board instantly, refresh in the background each visit.
+  useEffect(() => { loadTasks(scope); }, [scope, loadTasks]);
+
+  const cached = tasksByScope[scope];
+  const tasks = cached ?? [];
+  const loading = cached === undefined && taskFetching === scope; // big spinner only on the first, uncached load
+  const refreshing = cached !== undefined && taskFetching === scope; // subtle indicator on background refresh
+  const err = taskErr;
+  const reload = () => invalidateTasks(scope);
 
   const isPersonScope = scope.startsWith("user:");
   const personValue = isPersonScope ? scope.slice(5) : "";
   const title = isPersonScope
-    ? (people.find((p) => p.username === personValue)?.name ?? personValue)
+    ? (roster.find((p) => p.username === personValue)?.name ?? personValue)
     : scope === "team"
       ? "Team"
       : "My Work";
@@ -49,7 +44,7 @@ export function WorkHub() {
         }}
       >
         <div>
-          <div className="kicker">Work hub</div>
+          <div className="kicker">Work hub{refreshing ? " · refreshing…" : ""}</div>
           <div className="display" style={{ fontSize: 36, marginTop: 6 }}>{title}</div>
         </div>
 
@@ -121,7 +116,7 @@ export function WorkHub() {
             }}
           >
             <option value="" disabled>@person</option>
-            {people.map((m) => (
+            {roster.map((m) => (
               <option key={m.username} value={m.username}>{m.name}</option>
             ))}
           </select>

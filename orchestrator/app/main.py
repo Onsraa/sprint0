@@ -33,7 +33,7 @@ from app.execute import execute_plan, extend_project
 from app.rag import (
     all_project_records, decisions_by_owner, get_project_record, past_projects, record_merge,
     save_decision, save_project_record, update_project_record,
-    all_tasks, delete_tasks_for_project, get_task, save_tasks, update_task,
+    all_tasks, delete_tasks_for_project, get_task, save_tasks, tasks_for_project, update_task,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -90,12 +90,24 @@ def health() -> dict:
 
 @app.on_event("startup")
 async def _startup() -> None:
-    """Load the team roster + persisted projects so per-account views are instant + complete."""
+    """Load the team roster + persisted projects so per-account views are instant + complete.
+    Also backfill Tasks for projects dispatched before the Task store existed (idempotent)."""
     try:
         await team.refresh()
+        now = datetime.now(timezone.utc).isoformat()
         for rec in await all_project_records():
-            if rec.get("plan"):
-                PROJECTS[rec["project_id"]] = PlanJSON(**rec["plan"])
+            if not rec.get("plan"):
+                continue
+            pid = rec["project_id"]
+            PROJECTS[pid] = PlanJSON(**rec["plan"])
+            try:
+                if not await tasks_for_project(pid):  # never materialized (pre-Phase-A / seeded) → backfill
+                    docs = [t.model_dump() for t in tasklib.materialize_tasks(PROJECTS[pid], pid, now)]
+                    for d in docs:
+                        d["status"] = "in_progress"  # these projects are already live
+                    await save_tasks(docs)
+            except Exception:
+                pass  # backfill is best-effort
     except Exception:
         pass  # Atlas may be momentarily unreachable; lazy-load on first authed request
 

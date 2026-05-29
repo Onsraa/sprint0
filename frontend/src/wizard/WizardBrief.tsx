@@ -1129,7 +1129,7 @@ function StepDispatch({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { refreshProjects } = useApp();
+  const { refreshProjects, invalidateTasks } = useApp();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<DispatchResult | null>(null);
@@ -1163,6 +1163,7 @@ function StepDispatch({
       draft.clear(); // shipped → the saved draft is spent
       onDone();
       refreshProjects(); // the new project now appears on the manager Dashboard
+      invalidateTasks(); // the dispatched project's Tasks now appear in the Work hub
       try {
         setRelay(await api.relay(planId));
       } catch {
