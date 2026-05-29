@@ -22,17 +22,18 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, gitlab, handoff, relay, staffing, team
+from app import auth, gitlab, handoff, relay, staffing, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, PlanJSON, PlanRequest, ProjectRecord,
-    QAReport, RatifyRequest, RelayState,
+    QAReport, RatifyRequest, RelayState, Task,
 )
 from app.execute import execute_plan, extend_project
 from app.rag import (
     all_project_records, decisions_by_owner, get_project_record, past_projects, record_merge,
     save_decision, save_project_record, update_project_record,
+    all_tasks, delete_tasks_for_project, get_task, save_tasks, update_task,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -42,7 +43,10 @@ from app.reason import (
 app = FastAPI(title="sprint0", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -303,6 +307,24 @@ async def architectures(brief_id: str, constraints: Optional[Constraints] = None
     return opts
 
 
+def _plan_pid(plan_id: str) -> int:
+    """Negative placeholder project_id for a plan's Tasks before dispatch assigns the real GitLab
+    project_id; re-keyed on dispatch. Process-stable (fine for the draft→dispatch flow). (Phase A)"""
+    return -(abs(hash(plan_id)) % 2_000_000_000)
+
+
+async def _persist_draft_tasks(plan: PlanJSON, plan_id: str) -> None:
+    """Best-effort: store a plan's Tasks (status 'planned') under the placeholder id so the Work
+    hub sees drafted work. Idempotent — clears any prior draft for this plan first. (Phase A)"""
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        pid = _plan_pid(plan_id)
+        await delete_tasks_for_project(pid)
+        await save_tasks([t.model_dump() for t in tasklib.materialize_tasks(plan, pid, now)])
+    except Exception:
+        pass  # mirrors save_project_record — never fail planning over persistence
+
+
 @app.post("/api/briefs/{brief_id}/plan")
 async def make_plan(brief_id: str, req: Optional[PlanRequest] = None) -> dict:
     if brief_id not in BRIEFS:
@@ -313,6 +335,7 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None) -> dict:
     plan_id = f"plan_{brief_id}"
     PLANS[plan_id] = plan
     RELAYS[plan_id] = relay.build_relay(plan)  # the one-shot output is now a DRAFT entering the relay
+    await _persist_draft_tasks(plan, plan_id)
     return {"plan_id": plan_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
 
@@ -428,6 +451,23 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest) -> dict:
             await save_project_record(rec)
         except Exception as e:  # persistence is best-effort; never fail the scaffold over it
             result["persist_warning"] = str(e)[:200]
+    # Re-key the plan's Tasks from the pre-dispatch placeholder to the real GitLab project_id and
+    # flip to in_progress. Delta plans APPEND to the existing project's tasks (don't wipe them).
+    # iid linking is best-effort: execute_plan returns counts, not an issue list → Phase D reconciles.
+    try:
+        real_pid = result["project_id"]
+        now = datetime.now(timezone.utc).isoformat()
+        await delete_tasks_for_project(_plan_pid(plan_id))  # drop this plan's placeholder draft tasks
+        iid_by_title = {i.get("title"): i.get("iid") for i in result.get("issues", [])}
+        docs = []
+        for t in tasklib.materialize_tasks(plan, real_pid, now):
+            d = t.model_dump()
+            d["status"] = "in_progress"
+            d["gitlab_issue_iid"] = iid_by_title.get(t.title)
+            docs.append(d)
+        await save_tasks(docs)
+    except Exception:
+        pass  # never block dispatch on task persistence
     RESULTS[plan_id] = result
     return {"plan_id": plan_id, "mode": req.mode, **result}
 
@@ -466,7 +506,96 @@ async def add_feature(project_id: int, req: FeatureRequest) -> dict:
     PLANS[plan_id] = plan
     RELAYS[plan_id] = relay.build_relay(plan)
     DELTA_TARGET[plan_id] = project_id
+    await _persist_draft_tasks(plan, plan_id)
     return {"plan_id": plan_id, "project_id": project_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
+
+
+# ── Work hub (Phase A): Tasks aggregate + per-task edit/claim/status ──
+class TaskPatch(BaseModel):
+    patch: dict
+
+
+def _redact(task: dict, viewer: DeveloperProfile) -> dict:
+    """Full detail if manager or own task; else title+status+discipline only."""
+    if viewer.role == "manager" or task.get("assignee") == viewer.username:
+        return task
+    return {"id": task["id"], "project_id": task["project_id"], "title": task["title"],
+            "status": task["status"], "discipline": task["discipline"], "assignee": task.get("assignee"),
+            "redacted": True}
+
+
+@app.get("/api/work")
+async def work(scope: str = "me", member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Aggregate of Tasks for the Work hub. scope = me | team | user:<username>."""
+    try:
+        rows = await all_tasks()
+    except Exception:
+        rows = []
+    if scope == "me":
+        rows = [t for t in rows if t.get("assignee") == member.username]
+    elif scope.startswith("user:"):
+        who = scope.split(":", 1)[1]
+        rows = [_redact(t, member) for t in rows if t.get("assignee") == who]
+    else:  # team
+        rows = [_redact(t, member) for t in rows]
+    return {"scope": scope, "count": len(rows), "tasks": rows}
+
+
+async def _load_task_or_404(task_id: str) -> Task:
+    doc = await get_task(task_id)
+    if not doc:
+        raise HTTPException(404, "no such task")
+    return Task(**doc)
+
+
+@app.get("/api/tasks/{task_id}")
+async def task_detail(task_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    doc = await get_task(task_id)
+    if not doc:
+        raise HTTPException(404, "no such task")
+    return _redact(doc, member)
+
+
+@app.patch("/api/tasks/{task_id}")
+async def edit_task(task_id: str, body: TaskPatch, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    t = await _load_task_or_404(task_id)
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        updated = tasklib.apply_edit(t, body.patch, editor_role=member.role, editor_user=member.username,
+                                     editor_discipline=member.discipline, now=now)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    await update_task(task_id, updated.model_dump())
+    return updated.model_dump()
+
+
+@app.post("/api/tasks/{task_id}/claim")
+async def claim_task(task_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    t = await _load_task_or_404(task_id)
+    updated = tasklib.claim(t, user=member.username, now=datetime.now(timezone.utc).isoformat())
+    await update_task(task_id, updated.model_dump())
+    return updated.model_dump()
+
+
+@app.post("/api/tasks/{task_id}/release")
+async def release_task(task_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    t = await _load_task_or_404(task_id)
+    updated = tasklib.release(t, now=datetime.now(timezone.utc).isoformat())
+    await update_task(task_id, updated.model_dump())
+    return updated.model_dump()
+
+
+@app.post("/api/tasks/{task_id}/status")
+async def task_status(task_id: str, status: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    t = await _load_task_or_404(task_id)
+    if not tasklib.can_edit(t, editor_role=member.role, editor_user=member.username, editor_discipline=member.discipline):
+        raise HTTPException(403, "not allowed")
+    try:
+        updated = tasklib.set_status(t, status, now=datetime.now(timezone.utc).isoformat())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    await update_task(task_id, updated.model_dump())
+    return updated.model_dump()
 
 
 @app.post("/api/projects/{project_id}/qa/run", response_model=QAReport)

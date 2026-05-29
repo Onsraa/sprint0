@@ -248,6 +248,29 @@ class Decision(BaseModel):
     updated_at: str
 
 
+class Task(BaseModel):
+    """Persistent unit of work — source of truth for the Work hub. Materialized from a plan,
+    linked to a GitLab issue on dispatch."""
+    id: str
+    project_id: int
+    gitlab_issue_iid: Optional[int] = None
+    title: str
+    description: str
+    discipline: Discipline
+    assignee: Optional[str] = None
+    assigned_by: str = "ai"   # "ai" | "self" | "<username>"
+    estimate_days: float = 1.0
+    risk: Risk = "medium"
+    depends_on: list[str] = Field(default_factory=list)
+    status: Literal["planned", "in_progress", "in_review", "done", "blocked"] = "planned"
+    priority: Literal["low", "normal", "high", "urgent"] = "normal"
+    scheduled_start: Optional[str] = None   # ISO date, engine-computed (Phase C)
+    scheduled_end: Optional[str] = None
+    context_scope: ContextScope
+    created_at: str
+    updated_at: str
+
+
 # ── QA: agent-prefilled acceptance checklist ──
 class QAItemResult(BaseModel):
     issue_id: str

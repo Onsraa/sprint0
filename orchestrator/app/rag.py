@@ -173,6 +173,44 @@ async def decisions_by_owner(owner_id: str) -> list[dict]:
         return await m.find(DECISIONS_COLLECTION, query={"owner_id": owner_id}, projection={"_id": 0}, limit=200)
 
 
+TASKS_COLL = "Tasks"  # PascalCase, the Work hub's source of truth (Phase A)
+
+
+async def save_tasks(docs: list[dict]) -> None:
+    if not docs:
+        return
+    async with MongoMCP() as m:
+        await m.insert_many(TASKS_COLL, docs)
+
+
+async def tasks_for_project(project_id: int) -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(TASKS_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=500)
+
+
+async def all_tasks() -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(TASKS_COLL, projection={"_id": 0}, limit=1000)
+
+
+async def get_task(task_id: str) -> dict:
+    async with MongoMCP() as m:
+        rows = await m.find(TASKS_COLL, query={"id": task_id}, projection={"_id": 0}, limit=1)
+    return rows[0] if rows else {}
+
+
+async def update_task(task_id: str, doc: dict) -> None:
+    async with MongoMCP() as m:
+        await m.update_many(TASKS_COLL, {"id": task_id}, {"$set": doc})
+
+
+async def delete_tasks_for_project(project_id: int) -> None:
+    """Drop a project's Tasks — used on dispatch to re-key the plan-time placeholder project_id
+    to the real GitLab project_id without leaving ghost docs (Phase A: deviation from the plan)."""
+    async with MongoMCP() as m:
+        await m.delete_many(TASKS_COLL, {"project_id": project_id})
+
+
 def _parse_docs(text: str) -> list[dict]:
     """The MCP returns a prose line + an EJSON array (wrapped in safety tags)."""
     a, b = text.find("["), text.rfind("]")
