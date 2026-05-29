@@ -5,6 +5,9 @@ secrets/
 *.key
 *-sa.json
 
+# Brainstorm visual-companion mockups (local-only)
+.superpowers/
+
 # Python
 __pycache__/
 *.py[cod]
