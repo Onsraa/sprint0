@@ -1,5 +1,6 @@
 import { useApp } from "./AppContext";
 import type { Mode, Role, View } from "./types";
+import { WorkHub } from "../views/work/WorkHub";
 import type { Member } from "../lib/api";
 import { Mascot, Sprint0Logo } from "../components/Mascot";
 import { Login } from "../views/Login";
@@ -48,45 +49,56 @@ function SessionLoading() {
   );
 }
 
-interface NavItem {
-  id: View;
-  label: string;
-  icon: string;
-}
+interface NavItem { id: View; label: string; icon: string; }
+interface NavSection { title?: string; items: NavItem[]; }
 
 /** Nav per persona. Manager runs intake/relay; leads ratify + work; QA runs the gate. */
-function navFor(role: Role): NavItem[] {
+function navFor(role: Role): NavSection[] {
   if (role === "manager") {
     return [
-      { id: "dashboard", label: "Projects", icon: "▦" },
-      { id: "team", label: "Team", icon: "◉" },
-      { id: "relays", label: "Relay", icon: "🎽" },
-      { id: "queue", label: "Ratify", icon: "✓" },
-      { id: "attributions", label: "Merges", icon: "⇄" },
-      { id: "portfolio", label: "Portfolio", icon: "🗂" },
+      { items: [
+        { id: "work", label: "My Work", icon: "▦" },
+        { id: "dashboard", label: "Projects", icon: "◳" },
+      ]},
+      { title: "Team", items: [
+        { id: "relays", label: "Relay", icon: "🎽" },
+        { id: "queue", label: "Ratify", icon: "✓" },
+        { id: "team", label: "Team", icon: "◉" },
+        { id: "attributions", label: "Merges", icon: "⇄" },
+      ]},
+      { title: "You", items: [
+        { id: "portfolio", label: "Portfolio", icon: "🗂" },
+      ]},
     ];
   }
   if (role === "qa") {
     return [
-      { id: "qa", label: "QA gate", icon: "✓" },
-      { id: "today", label: "Today", icon: "◎" },
-      { id: "passport", label: "My Passport", icon: "★" },
-      { id: "portfolio", label: "Portfolio", icon: "🗂" },
+      { items: [
+        { id: "work", label: "My Work", icon: "▦" },
+        { id: "qa", label: "QA gate", icon: "✓" },
+      ]},
+      { title: "You", items: [
+        { id: "portfolio", label: "Portfolio", icon: "🗂" },
+        { id: "passport", label: "My Passport", icon: "★" },
+      ]},
     ];
   }
   // discipline leads (uiux / backend / frontend)
   return [
-    { id: "queue", label: "Ratify", icon: "🎽" },
-    { id: "portfolio", label: "Portfolio", icon: "🗂" },
-    { id: "issue", label: "Active issue", icon: "▶" },
-    { id: "today", label: "Today", icon: "◎" },
-    { id: "passport", label: "My Passport", icon: "★" },
+    { items: [
+      { id: "work", label: "My Work", icon: "▦" },
+      { id: "queue", label: "Ratify", icon: "🎽" },
+    ]},
+    { title: "You", items: [
+      { id: "portfolio", label: "Portfolio", icon: "🗂" },
+      { id: "passport", label: "My Passport", icon: "★" },
+    ]},
   ];
 }
 
 function Sidebar() {
   const { member, role, view, setView, setWizardOpen, setWizardKind, setFeatureProjectId, logout } = useApp();
-  const items = navFor(role);
+  const sections = navFor(role);
   const isManager = role === "manager";
 
   return (
@@ -147,27 +159,40 @@ function Sidebar() {
       )}
 
       <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {items.map((it) => (
-          <button
-            key={it.id}
-            onClick={() => setView(it.id)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "10px 12px",
-              borderRadius: 10,
-              background: view === it.id ? "var(--orange-soft)" : "transparent",
-              color: view === it.id ? "var(--orange-deep)" : "var(--ink-soft)",
-              fontWeight: view === it.id ? 700 : 600,
-              fontSize: 14,
-              textAlign: "left",
-              transition: "all 120ms",
-            }}
-          >
-            <span style={{ fontSize: 16, opacity: 0.8 }}>{it.icon}</span>
-            {it.label}
-          </button>
+        {sections.map((section, si) => (
+          <div key={si}>
+            {section.title && (
+              <div
+                className="kicker"
+                style={{ marginTop: si === 0 ? 0 : 10, marginBottom: 2, paddingLeft: 12 }}
+              >
+                {section.title}
+              </div>
+            )}
+            {section.items.map((it) => (
+              <button
+                key={it.id}
+                onClick={() => setView(it.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: view === it.id ? "var(--orange-soft)" : "transparent",
+                  color: view === it.id ? "var(--orange-deep)" : "var(--ink-soft)",
+                  fontWeight: view === it.id ? 700 : 600,
+                  fontSize: 14,
+                  textAlign: "left",
+                  transition: "all 120ms",
+                  width: "100%",
+                }}
+              >
+                <span style={{ fontSize: 16, opacity: 0.8 }}>{it.icon}</span>
+                {it.label}
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
 
@@ -217,6 +242,7 @@ function initialsOf(name: string): string {
 function TopBar() {
   const { member, role, view } = useApp();
   const titles: Partial<Record<View, string>> = {
+    work: "My Work",
     dashboard: "Projects",
     team: "Team",
     relay: "Ratification relay",
@@ -308,6 +334,7 @@ function MainView() {
   if (m === "manager") {
     return (
       <div style={{ padding: "24px 32px 40px" }}>
+        {view === "work" && <WorkHub />}
         {view === "dashboard" && <Dashboard />}
         {view === "team" && <TeamView />}
         {view === "relays" && <RelayPortfolio />}
@@ -321,6 +348,7 @@ function MainView() {
   }
   return (
     <div style={{ padding: "24px 32px 40px" }}>
+      {view === "work" && <WorkHub />}
       {view === "today" && <DevToday />}
       {view === "issue" && <DevIssue />}
       {view === "passport" && <DevPassport />}
