@@ -1,42 +1,23 @@
-import { useState } from "react";
-import { api, type WorkTask, type TaskStatus } from "../../lib/api";
+import type { WorkTask, TaskStatus } from "../../lib/api";
 import type { Role } from "../../app/types";
 import { STATUS_COLUMNS, columnOf, provenanceTag, tasksInColumn, byProject } from "./workUtils";
 import { DISCIPLINE_COLOR, RISK_COLOR } from "../../lib/relayUtils";
 
-export function WorkBoard({ tasks, scope, role, onOpen, reload }: {
-  tasks: WorkTask[]; scope: string; role: Role; onOpen: (id: string) => void; reload: () => void;
+export function WorkBoard({ tasks, scope, role, onOpen, onMove }: {
+  tasks: WorkTask[]; scope: string; role: Role; onOpen: (id: string) => void; onMove: (id: string, status: TaskStatus) => void;
 }) {
-  const [dropErr, setDropErr] = useState<string | null>(null);
-
-  const onDropTo = async (status: TaskStatus, e: React.DragEvent) => {
+  const onDropTo = (status: TaskStatus, e: React.DragEvent) => {
     e.preventDefault();
     const id = e.dataTransfer.getData("text/plain");
     const task = tasks.find((t) => t.id === id);
     if (!task || columnOf(task.status) === status) return;
-    try {
-      await api.setTaskStatus(id, status);
-      reload();
-    } catch (err) {
-      setDropErr(err instanceof Error ? err.message : String(err));
-      reload(); // server unchanged on 403 → card snaps back
-    }
+    onMove(id, status); // optimistic move + background sync + revert handled by WorkHub
   };
 
   const isManagerTeam = role === "manager" && scope === "team";
 
   return (
     <div>
-      {dropErr && (
-        <div
-          className="mono"
-          style={{ fontSize: 11, color: "var(--orange-deep)", marginBottom: 8, padding: "4px 0" }}
-          onClick={() => setDropErr(null)}
-        >
-          {dropErr}
-        </div>
-      )}
-
       {isManagerTeam ? (
         <ManagerGrid tasks={tasks} onOpen={onOpen} onDropTo={onDropTo} />
       ) : (

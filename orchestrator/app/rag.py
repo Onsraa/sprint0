@@ -6,6 +6,7 @@ vectors, so vector retrieval lives here, not in the agent's tool-calls.)
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -236,26 +237,65 @@ def _rrf_fuse(ranked_lists: list[list[dict]], key: str, k: int = 3, c: int = 60)
     return [docs[x] for x in sorted(scores, key=scores.get, reverse=True)[:k]]
 
 
-class MongoMCP:
-    """One stdio session to the official MongoDB MCP, reused for many searches."""
+# ── Persistent MCP session ──────────────────────────────────────────────────
+# The official MongoDB MCP runs as a stdio subprocess (npx). Spawning one per call costs
+# ~2-3s, so we keep ONE long-lived session, reused by every `async with MongoMCP()` block
+# and serialized by a lock (stdio is a single pipe; demo concurrency is low). Respawns if it dies.
+_MCP_PARAMS = StdioServerParameters(
+    command="npx", args=["-y", "mongodb-mcp-server", "--connectionString", _URI]
+)
+_SHARED_SESSION: ClientSession | None = None
+_SHARED_STACK: AsyncExitStack | None = None
+_MCP_LOCK = asyncio.Lock()
 
-    def __init__(self) -> None:
-        self._params = StdioServerParameters(
-            command="npx", args=["-y", "mongodb-mcp-server", "--connectionString", _URI]
-        )
+
+async def _ensure_mcp() -> ClientSession:
+    """Lazily start (or reuse) the shared MCP session. Caller must hold _MCP_LOCK."""
+    global _SHARED_SESSION, _SHARED_STACK
+    if _SHARED_SESSION is None:
+        _SHARED_STACK = AsyncExitStack()
+        read, write = await _SHARED_STACK.enter_async_context(stdio_client(_MCP_PARAMS))
+        _SHARED_SESSION = await _SHARED_STACK.enter_async_context(ClientSession(read, write))
+        await _SHARED_SESSION.initialize()
+    return _SHARED_SESSION
+
+
+async def _reset_mcp() -> None:
+    """Drop the shared session so the next _ensure_mcp() respawns it (after a transport death)."""
+    global _SHARED_SESSION, _SHARED_STACK
+    stack, _SHARED_STACK, _SHARED_SESSION = _SHARED_STACK, None, None
+    if stack is not None:
+        try:
+            await stack.aclose()
+        except BaseException:
+            pass  # ignore stdio teardown races
+
+
+async def mongo_close() -> None:
+    """Close the shared MCP session on app shutdown."""
+    await _reset_mcp()
+
+
+class MongoMCP:
+    """Handle to the shared stdio session to the official MongoDB MCP (reused, lock-serialized)."""
 
     async def __aenter__(self) -> "MongoMCP":
-        self._stack = AsyncExitStack()
-        read, write = await self._stack.enter_async_context(stdio_client(self._params))
-        self.session = await self._stack.enter_async_context(ClientSession(read, write))
-        await self.session.initialize()
+        await _MCP_LOCK.acquire()
+        try:
+            self.session = await _ensure_mcp()
+        except BaseException:
+            _MCP_LOCK.release()
+            raise
         return self
 
     async def __aexit__(self, *exc) -> None:
         try:
-            await self._stack.aclose()
-        except BaseException:
-            pass  # ignore stdio teardown races
+            # A transport/stream death (not our own RuntimeError/ValueError) → drop the session
+            # so the next op respawns it.
+            if exc and exc[0] is not None and not issubclass(exc[0], (RuntimeError, ValueError)):
+                await _reset_mcp()
+        finally:
+            _MCP_LOCK.release()
 
     async def vector_search(
         self, collection: str, index: str, path: str, query_vec: list[float], k: int = 3, projection: dict | None = None

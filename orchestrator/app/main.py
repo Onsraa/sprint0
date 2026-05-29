@@ -33,7 +33,7 @@ from app.execute import execute_plan, extend_project
 from app.rag import (
     all_project_records, decisions_by_owner, get_project_record, past_projects, record_merge,
     save_decision, save_project_record, update_project_record,
-    all_tasks, delete_tasks_for_project, get_task, save_tasks, tasks_for_project, update_task,
+    all_tasks, delete_tasks_for_project, get_task, mongo_close, save_tasks, tasks_for_project, update_task,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -110,6 +110,12 @@ async def _startup() -> None:
                 pass  # backfill is best-effort
     except Exception:
         pass  # Atlas may be momentarily unreachable; lazy-load on first authed request
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    """Close the shared MongoDB MCP session cleanly."""
+    await mongo_close()
 
 
 class LoginRequest(BaseModel):

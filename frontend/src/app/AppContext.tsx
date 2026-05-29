@@ -63,6 +63,8 @@ interface AppContextValue {
   loadTasks: (scope: string) => void;
   /** Drop the cache + refresh the active scope (after a task mutation or a dispatch). */
   invalidateTasks: (currentScope?: string) => void;
+  /** Optimistically patch one task in place across all cached scopes (no refetch, no blank). */
+  patchTask: (taskId: string, patch: Partial<WorkTask>) => void;
   /** Cached roster — the @person picker list. */
   roster: Member[];
 }
@@ -226,6 +228,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [loadTasks],
   );
+  // Optimistic in-place update — moves a card instantly without clearing the cache (no blank).
+  const patchTask = useCallback((taskId: string, patch: Partial<WorkTask>) => {
+    setTasksByScope((prev) => {
+      const next: Record<string, WorkTask[]> = {};
+      for (const s of Object.keys(prev)) {
+        next[s] = prev[s].map((t) => (t.id === taskId ? { ...t, ...patch } : t));
+      }
+      return next;
+    });
+  }, []);
   // Preload My Work + the roster on login so the first Work-hub visit is instant.
   useEffect(() => {
     if (!member) {
@@ -276,6 +288,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     taskErr,
     loadTasks,
     invalidateTasks,
+    patchTask,
     roster,
   };
 

@@ -4,8 +4,8 @@ import { api, type WorkTask, type TaskStatus } from "../../lib/api";
 import { STATUS_COLUMNS, provenanceTag } from "./workUtils";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, RISK_COLOR } from "../../lib/relayUtils";
 
-export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClose: () => void; reload: () => void }) {
-  const { member } = useApp();
+export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
+  const { member, patchTask } = useApp();
   const me = member?.username;
 
   const [detail, setDetail] = useState<WorkTask | null>(null);
@@ -36,7 +36,8 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
     try {
       const updated = await fn();
       setDetail(updated);
-      reload();
+      // Update the board behind in place — no cache clear, no blank.
+      patchTask(updated.id, { status: updated.status, assignee: updated.assignee, assigned_by: updated.assigned_by });
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : String(e));
       refetch();

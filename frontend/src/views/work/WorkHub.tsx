@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../app/AppContext";
+import { api, type TaskStatus } from "../../lib/api";
 import { WorkBoard } from "./WorkBoard";
 import { WorkList } from "./WorkList";
 import { TaskDrawer } from "./TaskDrawer";
@@ -7,7 +8,7 @@ import { TaskDrawer } from "./TaskDrawer";
 type Mode = "board" | "list";
 
 export function WorkHub() {
-  const { role, tasksByScope, taskFetching, taskErr, loadTasks, invalidateTasks, roster } = useApp();
+  const { role, tasksByScope, taskFetching, taskErr, loadTasks, invalidateTasks, patchTask, roster } = useApp();
   const [scope, setScope] = useState("me");
   const [mode, setMode] = useState<Mode>("board");
   const [selected, setSelected] = useState<string | null>(null);
@@ -20,7 +21,16 @@ export function WorkHub() {
   const loading = cached === undefined && taskFetching === scope; // big spinner only on the first, uncached load
   const refreshing = cached !== undefined && taskFetching === scope; // subtle indicator on background refresh
   const err = taskErr;
-  const reload = () => invalidateTasks(scope);
+
+  // Optimistic drag: move the card instantly, sync in the background, revert on failure.
+  const onMove = async (id: string, status: TaskStatus) => {
+    patchTask(id, { status });
+    try {
+      await api.setTaskStatus(id, status);
+    } catch {
+      invalidateTasks(scope); // server unchanged (e.g. 403) → snap back to truth
+    }
+  };
 
   const isPersonScope = scope.startsWith("user:");
   const personValue = isPersonScope ? scope.slice(5) : "";
@@ -132,13 +142,13 @@ export function WorkHub() {
       ) : err ? (
         <div className="mono" style={{ fontSize: 12, color: "var(--orange-deep)", padding: 8 }}>{err}</div>
       ) : mode === "board" ? (
-        <WorkBoard tasks={tasks} scope={scope} role={role} onOpen={setSelected} reload={reload} />
+        <WorkBoard tasks={tasks} scope={scope} role={role} onOpen={setSelected} onMove={onMove} />
       ) : (
         <WorkList tasks={tasks} onOpen={setSelected} />
       )}
 
       {selected != null && (
-        <TaskDrawer taskId={selected} onClose={() => setSelected(null)} reload={reload} />
+        <TaskDrawer taskId={selected} onClose={() => setSelected(null)} />
       )}
     </div>
   );
