@@ -12,7 +12,7 @@ import difflib
 import io
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
@@ -26,13 +26,13 @@ from app import auth, gitlab, handoff, relay, scheduler, staffing, tasks as task
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
-    Decision, DeveloperProfile, DispatchRequest, FeatureRequest, PlanJSON, PlanRequest, ProjectRecord,
+    Decision, DeveloperProfile, DispatchRequest, FeatureRequest, Notification, PlanJSON, PlanRequest, ProjectRecord,
     QAReport, RatifyRequest, RelayState, Task,
 )
 from app.execute import execute_plan, extend_project
 from app.rag import (
-    all_project_records, decisions_by_owner, get_project_record, past_projects, record_merge,
-    save_decision, save_project_record, update_project_record,
+    access_grants_for_subject, all_project_records, decisions_by_owner, get_project_record, past_projects, record_merge,
+    save_decision, save_notification, notifications_for_user, mark_all_read, save_project_record, update_project_record,
     all_tasks, delete_tasks_for_project, get_task, mongo_close, save_tasks, tasks_for_project, update_task,
 )
 from app.reason import (
@@ -156,12 +156,8 @@ async def my_decisions(member: DeveloperProfile = Depends(auth.current_member)) 
     return {"username": member.username, "count": len(rows), "decisions": rows}
 
 
-@app.get("/api/me/queue")
-async def my_queue(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    """Relay gates awaiting the caller across ALL active relays: a gate that is on the baton,
-    still open, and theirs (their discipline's lead — or the manager, for an orphan gate)."""
-    await team.ensure_loaded()
-    members = team.all_members()
+def _my_gates(member: DeveloperProfile, members: list[DeveloperProfile]) -> list[dict]:
+    """Return relay gate items awaiting this member across all active relays."""
     items = []
     for plan_id, state in RELAYS.items():
         plan = PLANS.get(plan_id)
@@ -186,7 +182,59 @@ async def my_queue(member: DeveloperProfile = Depends(auth.current_member)) -> d
                 "status": g.status, "issue_count": issue_count,
                 "is_delta": plan_id in DELTA_TARGET, "target_project_id": DELTA_TARGET.get(plan_id),
             })
+    return items
+
+
+@app.get("/api/me/queue")
+async def my_queue(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Relay gates awaiting the caller across ALL active relays: a gate that is on the baton,
+    still open, and theirs (their discipline's lead — or the manager, for an orphan gate)."""
+    await team.ensure_loaded()
+    items = _my_gates(member, team.all_members())
     return {"username": member.username, "count": len(items), "items": items}
+
+
+async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
+    """Best-effort: append a Notification to a member's Inbox feed."""
+    try:
+        n = Notification(id=f"ntf_{uuid.uuid4().hex[:8]}", user_id=user_id, type=type, title=title,
+                         body=body, ref=ref or {}, actionable=actionable,
+                         created_at=datetime.now(timezone.utc).isoformat())
+        await save_notification(n.model_dump())
+    except Exception:
+        pass
+
+
+@app.get("/api/inbox")
+async def inbox(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Aggregate Inbox: ratify gates awaiting me + pending access requests (needs_action),
+    plus the notification feed. `unread` drives the bell badge."""
+    await team.ensure_loaded()
+    needs_action = [
+        {"kind": "ratify", "title": f"{it['project']} · {it['discipline']}", "ref": {"plan_id": it["plan_id"]}, "item": it}
+        for it in _my_gates(member, team.all_members())
+    ]
+    try:
+        for g in await access_grants_for_subject(member.username):
+            if g.get("status") == "pending":
+                needs_action.append({"kind": "access_request",
+                                     "title": f"@{g['requester_id']} requests access to your tasks",
+                                     "ref": {"grant_id": g["id"]}})
+    except Exception:
+        pass
+    try:
+        notes = await notifications_for_user(member.username)
+    except Exception:
+        notes = []
+    notes.sort(key=lambda n: n.get("created_at", ""), reverse=True)
+    unread = len(needs_action) + sum(1 for n in notes if not n.get("read"))
+    return {"needs_action": needs_action, "notifications": notes, "unread": unread}
+
+
+@app.post("/api/inbox/read-all")
+async def inbox_read_all(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    await mark_all_read(member.username)
+    return {"ok": True}
 
 
 @app.get("/api/relays")
