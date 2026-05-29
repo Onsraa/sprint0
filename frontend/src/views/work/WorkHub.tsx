@@ -3,9 +3,10 @@ import { useApp } from "../../app/AppContext";
 import { api, type TaskStatus } from "../../lib/api";
 import { WorkBoard } from "./WorkBoard";
 import { WorkList } from "./WorkList";
+import { WorkTimeline } from "./WorkTimeline";
 import { TaskDrawer } from "./TaskDrawer";
 
-type Mode = "board" | "list";
+type Mode = "board" | "list" | "timeline";
 
 export function WorkHub() {
   const { role, tasksByScope, taskFetching, taskErr, loadTasks, invalidateTasks, patchTask, roster } = useApp();
@@ -60,7 +61,7 @@ export function WorkHub() {
 
         {/* Mode tabs */}
         <div style={{ display: "flex", gap: 6 }}>
-          {(["board", "list"] as const).map((m) => (
+          {(["board", "list", "timeline"] as const).map((m) => (
             <button
               key={m}
               onClick={() => setMode(m)}
@@ -72,7 +73,7 @@ export function WorkHub() {
                   : { cursor: "pointer" }),
               }}
             >
-              {m === "board" ? "Board" : "List"}
+              {m === "board" ? "Board" : m === "list" ? "List" : "Timeline"}
             </button>
           ))}
         </div>
@@ -143,8 +144,10 @@ export function WorkHub() {
         <div className="mono" style={{ fontSize: 12, color: "var(--orange-deep)", padding: 8 }}>{err}</div>
       ) : mode === "board" ? (
         <WorkBoard tasks={tasks} scope={scope} role={role} onOpen={setSelected} onMove={onMove} />
-      ) : (
+      ) : mode === "list" ? (
         <WorkList tasks={tasks} onOpen={setSelected} />
+      ) : (
+        <WorkTimeline tasks={tasks} onOpen={setSelected} />
       )}
 
       {selected != null && (
