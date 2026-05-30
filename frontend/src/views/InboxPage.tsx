@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { api } from "../lib/api";
-import type { InboxNeed, QueueItem } from "../lib/api";
+import type { InboxNeed, QueueItem, RescheduleProposal } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
 
 export function InboxPage() {
@@ -46,6 +46,18 @@ export function InboxPage() {
     }
   };
 
+  const handleApplyResched = async (id: string) => {
+    setActionErr(null);
+    try { await api.applyReschedule(id); loadInbox(); }
+    catch (e) { setActionErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const handleRejectResched = async (id: string) => {
+    setActionErr(null);
+    try { await api.rejectReschedule(id); loadInbox(); }
+    catch (e) { setActionErr(e instanceof Error ? e.message : String(e)); }
+  };
+
   const needs = inbox?.needs_action ?? [];
   const notifications = inbox?.notifications ?? [];
 
@@ -85,11 +97,13 @@ export function InboxPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {needs.map((need) => (
               <NeedCard
-                key={need.kind === "ratify" ? `r-${need.item?.plan_id}-${need.item?.discipline}` : `a-${String(need.ref?.grant_id)}`}
+                key={need.kind === "ratify" ? `r-${need.item?.plan_id}-${need.item?.discipline}` : need.kind === "reschedule" ? `s-${String(need.ref?.proposal_id)}` : `a-${String(need.ref?.grant_id)}`}
                 need={need}
                 opening={opening}
                 onOpenRatify={openRatify}
                 onAccess={handleAccess}
+                onApplyResched={handleApplyResched}
+                onRejectResched={handleRejectResched}
               />
             ))}
           </div>
@@ -164,11 +178,15 @@ function NeedCard({
   opening,
   onOpenRatify,
   onAccess,
+  onApplyResched,
+  onRejectResched,
 }: {
   need: InboxNeed;
   opening: string | null;
   onOpenRatify: (item: QueueItem) => void;
   onAccess: (grantId: string, accept: boolean) => void;
+  onApplyResched: (id: string) => void;
+  onRejectResched: (id: string) => void;
 }) {
   if (need.kind === "ratify" && need.item) {
     const item = need.item;
@@ -242,6 +260,40 @@ function NeedCard({
             style={{ fontSize: 12, padding: "6px 14px" }}
             onClick={() => grantId && onAccess(grantId, false)}
             disabled={!grantId}
+          >
+            Reject
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (need.kind === "reschedule" && need.item) {
+    const p = need.item as RescheduleProposal;
+    return (
+      <div className="card-soft" style={{ padding: 16, textAlign: "left" }}>
+        <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", opacity: .7 }}>
+          AI reschedule · {p.strategy.action} · {p.strategy.confidence}% conf
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 14, marginTop: 4 }}>{p.strategy.impact_summary || p.strategy.rationale}</div>
+        <div style={{ fontSize: 12, opacity: .7, marginTop: 6 }}>
+          {p.impacted.length} task(s): {p.impacted.map((t) => t.title).join(", ")}
+        </div>
+        {p.strategy.action === "reassign" && p.strategy.reassign_to && (
+          <div style={{ fontSize: 12, marginTop: 4 }}>→ reassign to <b>@{p.strategy.reassign_to}</b></div>
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button
+            className="btn btn-primary"
+            style={{ fontSize: 12, padding: "6px 14px" }}
+            onClick={() => onApplyResched(p.id)}
+          >
+            Apply
+          </button>
+          <button
+            className="btn btn-ghost"
+            style={{ fontSize: 12, padding: "6px 14px" }}
+            onClick={() => onRejectResched(p.id)}
           >
             Reject
           </button>

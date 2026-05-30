@@ -453,7 +453,34 @@ export interface AccessGrant {
   id: string; requester_id: string; subject_id: string;
   status: "pending" | "granted" | "revoked"; notifications_muted?: boolean; created_at: string; updated_at: string;
 }
-export interface InboxNeed { kind: "ratify" | "access_request"; title: string; ref: Record<string, unknown>; item?: QueueItem; }
+
+export interface RescheduleStrategy {
+  action: "right_shift" | "reassign" | "compress" | "descope" | "re_estimate" | "re_plan" | "escalate";
+  target_task_ids: string[];
+  reassign_to: string | null;
+  rationale: string;
+  confidence: number;
+  impact_summary: string;
+}
+
+export interface ImpactedTask {
+  task_id: string;
+  title: string;
+  assignee: string | null;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+}
+
+export interface RescheduleProposal {
+  id: string;
+  project_id: number | null;
+  strategy: RescheduleStrategy;
+  impacted: ImpactedTask[];
+  affected_users: string[];
+  status: "proposed" | "applied" | "rejected";
+}
+
+export interface InboxNeed { kind: "ratify" | "access_request" | "reschedule"; title: string; ref: Record<string, unknown> & { proposal_id?: string }; item?: QueueItem | RescheduleProposal; }
 export interface InboxResponse { needs_action: InboxNeed[]; notifications: NotificationItem[]; unread: number; }
 
 /* ── Transport helpers ───────────────────────────────────────────────── */
@@ -683,4 +710,18 @@ export const api = {
   listAccess(): Promise<{ i_can_see: AccessGrant[]; can_see_me: AccessGrant[]; pending_in: AccessGrant[] }> { return jget("/api/access"); },
   revokeAccess(grantId: string): Promise<AccessGrant> { return jdelete(`/api/access/${grantId}`); },
   muteAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/${grantId}/mute`); },
+
+  /* Reschedule / event reflow (Phase E) */
+  postEvent(body: { kind: string; user_id?: string; task_id?: string; project_id?: number; start?: string; end?: string; payload?: Record<string, unknown> }): Promise<{ event: unknown; reflowed: WorkTask[]; strategy: RescheduleStrategy | null }> {
+    return jpost(`/api/events`, body);
+  },
+  getReschedule(id: string): Promise<RescheduleProposal> {
+    return jget(`/api/reschedule/proposals/${id}`);
+  },
+  applyReschedule(id: string): Promise<{ status: string; action: string; flagged_manual: boolean; moved: WorkTask[] }> {
+    return jpost(`/api/reschedule/proposals/${id}/apply`);
+  },
+  rejectReschedule(id: string): Promise<{ status: string }> {
+    return jpost(`/api/reschedule/proposals/${id}/reject`);
+  },
 };

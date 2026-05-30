@@ -319,6 +319,30 @@ class RescheduleStrategy(BaseModel):
     impact_summary: str = ""                                   # ≤200 chars — human-facing "what & who"
 
 
+class ImpactedTask(BaseModel):
+    """One task touched by a reschedule — the new dates the reflow produced (for the consent card)."""
+    task_id: str
+    title: str = ""
+    assignee: Optional[str] = None
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+
+
+class RescheduleProposal(BaseModel):
+    """A high-impact strategy held for the manager to ratify before it applies. The reflow's
+    right-shift is already live; this proposes the smarter fix (reassign/descope/re-estimate)."""
+    id: str
+    project_id: Optional[int] = None
+    event: ChangeEvent
+    strategy: RescheduleStrategy
+    impacted: list[ImpactedTask] = Field(default_factory=list)
+    affected_users: list[str] = Field(default_factory=list)
+    status: Literal["proposed", "applied", "rejected"] = "proposed"
+    created_at: str
+    resolved_at: Optional[str] = None
+    resolved_by: Optional[str] = None
+
+
 class Task(BaseModel):
     """Persistent unit of work — source of truth for the Work hub. Materialized from a plan,
     linked to a GitLab issue on dispatch."""

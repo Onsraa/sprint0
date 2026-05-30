@@ -28,6 +28,7 @@ from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, RatifyRequest, RelayState, Task,
+    ImpactedTask, RescheduleProposal,
 )
 from app.execute import execute_plan, extend_project
 from app.rag import (
@@ -37,6 +38,8 @@ from app.rag import (
     save_project_record, update_access_grant, update_project_record,
     all_events, all_tasks, delete_tasks_for_project, get_task, mongo_close, save_event, save_tasks,
     tasks_for_project, update_task,
+    save_reschedule_proposal, open_reschedule_proposals,
+    get_reschedule_proposal, update_reschedule_proposal,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -223,6 +226,19 @@ async def inbox(member: DeveloperProfile = Depends(auth.current_member)) -> dict
                 needs_action.append({"kind": "access_request",
                                      "title": f"@{g['requester_id']} requests access to your tasks",
                                      "ref": {"grant_id": g["id"]}})
+    except Exception:
+        pass
+    try:
+        for prop in await open_reschedule_proposals():
+            is_mgr = member.role == "manager"
+            if is_mgr or member.username in prop.get("affected_users", []):
+                st = prop.get("strategy", {})
+                needs_action.append({
+                    "kind": "reschedule",
+                    "title": f"AI proposes: {st.get('action', '?')} — {st.get('impact_summary') or st.get('rationale', '')}"[:90],
+                    "ref": {"proposal_id": prop["id"]},
+                    "item": prop,
+                })
     except Exception:
         pass
     try:
@@ -969,12 +985,24 @@ async def _maybe_strategize(ev: ChangeEvent, moved: list[dict]) -> dict | None:
             return None
         await team.ensure_loaded()
         strategy = await strategist.judge(ev, impacted, team.all_members())
-        mgr = next((m for m in team.all_members() if m.role == "manager"), None)
-        if mgr and not strategist.should_auto_apply(strategy):
-            await notify(mgr.username, "reschedule_proposed", "Reschedule strategy proposed",
-                         body=strategy.impact_summary or strategy.rationale,
-                         ref={"action": strategy.action, "tasks": strategy.target_task_ids,
-                              "reassign_to": strategy.reassign_to}, actionable=True)
+        affected = sorted({t.assignee for t in impacted if t.assignee})
+        if not strategist.should_auto_apply(strategy):
+            prop = RescheduleProposal(
+                id=f"rsp_{uuid.uuid4().hex[:8]}", project_id=ev.project_id, event=ev, strategy=strategy,
+                impacted=[ImpactedTask(task_id=t.id, title=t.title, assignee=t.assignee,
+                                       scheduled_start=t.scheduled_start, scheduled_end=t.scheduled_end)
+                          for t in impacted],
+                affected_users=affected, created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            try:
+                await save_reschedule_proposal(prop.model_dump())
+            except Exception:
+                pass
+            mgr = next((m for m in team.all_members() if m.role == "manager"), None)
+            if mgr:
+                await notify(mgr.username, "reschedule_proposed", "AI reschedule strategy proposed",
+                             body=strategy.impact_summary or strategy.rationale,
+                             ref={"proposal_id": prop.id}, actionable=True)
         for n in strategist.impact_notifications(impacted, ev):
             await notify(n["user_id"], "reschedule_proposed", n["title"], body=n["body"])
         return strategy.model_dump()
@@ -1006,6 +1034,87 @@ async def post_event(req: EventRequest, member: DeveloperProfile = Depends(auth.
         pass  # event logging is best-effort; still attempt the reflow
     moved = await _reflow_for_event(ev)
     return {"event": ev.model_dump(), "reflowed": moved, "strategy": await _maybe_strategize(ev, moved)}
+
+
+async def _apply_strategy(prop: dict) -> list[dict]:
+    """Execute the ratified strategy deterministically, then re-reflow. Returns moved tasks.
+    right_shift is already live (the reflow did it) → just acknowledge. reassign/re_estimate change
+    the task then reflow. descope marks the task blocked. compress/re_plan/escalate flag for manual."""
+    strat = prop["strategy"]
+    action, targets = strat["action"], strat.get("target_task_ids", [])
+    now = datetime.now(timezone.utc).isoformat()
+    if action == "reassign" and strat.get("reassign_to"):
+        for tid in targets:
+            if await get_task(tid):
+                await update_task(tid, {"assignee": strat["reassign_to"], "assigned_by": "ai", "updated_at": now})
+    elif action == "re_estimate":
+        new = (prop.get("event", {}).get("payload", {}) or {}).get("new")
+        for tid in targets:
+            if await get_task(tid) and new is not None:
+                await update_task(tid, {"estimate_days": float(new), "updated_at": now})
+    elif action == "descope":
+        for tid in targets:
+            if await get_task(tid):
+                await update_task(tid, {"status": "blocked", "updated_at": now})
+    # right_shift / compress / re_plan / escalate → no further task mutation (right_shift already live)
+    changed = list(targets)
+    if not changed:
+        return []
+    objs = [Task(**d) for d in await all_tasks()]
+    await team.ensure_loaded()
+    avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+    prior = {o.id: (o.scheduled_start, o.scheduled_end) for o in objs}
+    scheduler.reflow(objs, team.all_members(), now, changed, availability=avail)
+    moved = [o for o in objs if (o.scheduled_start, o.scheduled_end) != prior[o.id]]
+    for o in moved:
+        await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
+    return [o.model_dump() for o in moved]
+
+
+@app.get("/api/reschedule/proposals/{proposal_id}")
+async def get_reschedule(proposal_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    prop = await get_reschedule_proposal(proposal_id)
+    if not prop:
+        raise HTTPException(404, "no such proposal")
+    return prop
+
+
+@app.post("/api/reschedule/proposals/{proposal_id}/apply")
+async def apply_reschedule(proposal_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The manager (or an affected discipline lead) ratifies the AI strategy → apply it."""
+    prop = await get_reschedule_proposal(proposal_id)
+    if not prop:
+        raise HTTPException(404, "no such proposal")
+    if member.role != "manager" and member.username not in prop.get("affected_users", []):
+        raise HTTPException(403, "only the manager or an affected member can apply this")
+    if prop.get("status") != "proposed":
+        raise HTTPException(409, "proposal already resolved")
+    moved = await _apply_strategy(prop)
+    now = datetime.now(timezone.utc).isoformat()
+    await update_reschedule_proposal(proposal_id, {"status": "applied", "resolved_at": now, "resolved_by": member.username})
+    action = prop["strategy"]["action"]
+    flagged = action in ("escalate", "re_plan", "compress")
+    for u in prop.get("affected_users", []):
+        await notify(u, "reschedule_resolved",
+                     f"Reschedule applied: {action}" if not flagged else f"Flagged for manual handling: {action}",
+                     body=prop["strategy"].get("impact_summary", ""), ref={"proposal_id": proposal_id})
+    return {"proposal_id": proposal_id, "status": "applied", "action": action, "flagged_manual": flagged, "moved": moved}
+
+
+@app.post("/api/reschedule/proposals/{proposal_id}/reject")
+async def reject_reschedule(proposal_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Discard the AI strategy (the safe right-shift the reflow already applied stands)."""
+    prop = await get_reschedule_proposal(proposal_id)
+    if not prop:
+        raise HTTPException(404, "no such proposal")
+    if member.role != "manager" and member.username not in prop.get("affected_users", []):
+        raise HTTPException(403, "only the manager or an affected member can reject this")
+    if prop.get("status") != "proposed":
+        raise HTTPException(409, "proposal already resolved")
+    await update_reschedule_proposal(proposal_id, {"status": "rejected",
+                                                   "resolved_at": datetime.now(timezone.utc).isoformat(),
+                                                   "resolved_by": member.username})
+    return {"proposal_id": proposal_id, "status": "rejected"}
 
 
 @app.post("/api/projects/{project_id}/qa/run", response_model=QAReport)

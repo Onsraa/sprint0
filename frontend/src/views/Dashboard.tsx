@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApp } from "../app/AppContext";
-import { api, type ProjectSummary } from "../lib/api";
+import { api, type Member, type ProjectSummary } from "../lib/api";
 import { planIssues } from "../lib/relayUtils";
 
 /* Manager home: every dispatched project from GET /api/projects (real GitLab scaffolds).
@@ -23,10 +23,11 @@ const fmtDate = (s?: string) => {
 };
 
 export function Dashboard() {
-  const { projects, refreshProjects, role, setWizardOpen, setWizardKind, setFeatureProjectId, liveProjectId } = useApp();
+  const { projects, refreshProjects, role, setWizardOpen, setWizardKind, setFeatureProjectId, liveProjectId, roster, loadInbox } = useApp();
   const isManager = role === "manager";
   const [filter, setFilter] = useState<"all" | "active" | "shipped">("all");
   const [closing, setClosing] = useState<ProjectSummary | null>(null);
+  const [changeOpen, setChangeOpen] = useState(false);
 
   const newProject = () => {
     setFeatureProjectId(null);
@@ -71,9 +72,16 @@ export function Dashboard() {
             {totalIssues} issues scaffolded across the relay
           </div>
         </div>
-        <button onClick={newProject} className="btn btn-primary" style={{ padding: "16px 24px", fontSize: 15 }}>
-          + New project
-        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          {isManager && (
+            <button onClick={() => setChangeOpen(true)} className="btn btn-ghost" style={{ padding: "16px 20px", fontSize: 15 }}>
+              ⚡ Change
+            </button>
+          )}
+          <button onClick={newProject} className="btn btn-primary" style={{ padding: "16px 24px", fontSize: 15 }}>
+            + New project
+          </button>
+        </div>
       </div>
 
       {liveProjectId != null && (
@@ -154,6 +162,13 @@ export function Dashboard() {
       )}
 
       {closing && <CloseModal project={closing} onClose={() => setClosing(null)} onDone={refreshProjects} />}
+      {changeOpen && (
+        <ChangeModal
+          roster={roster.filter((m) => m.role !== "manager")}
+          onClose={() => setChangeOpen(false)}
+          onDone={loadInbox}
+        />
+      )}
     </div>
   );
 }
@@ -283,6 +298,166 @@ function ProjectCard({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/* Change-event trigger: lets the manager inject a calendar or scope-change event so the
+   reschedule engine reflows and surfaces a proposal in the Inbox. */
+function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: () => void; onDone: () => void }) {
+  const [mode, setMode] = useState<"out" | "scope">("out");
+
+  // "Mark someone out" fields
+  const [who, setWho] = useState(roster[0]?.username ?? "");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+
+  // "Scope change" fields
+  const [taskId, setTaskId] = useState("");
+  const [note, setNote] = useState("");
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const canSubmit =
+    !busy &&
+    (mode === "out" ? who !== "" && start !== "" && end !== "" : taskId.trim() !== "");
+
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r =
+        mode === "out"
+          ? await api.postEvent({ kind: "sick", user_id: who, start, end })
+          : await api.postEvent({ kind: "scope_change", task_id: taskId.trim(), payload: { note } });
+      setResult(
+        `Re-flowed ${r.reflowed.length} task(s)${r.strategy ? ` · AI proposed: ${r.strategy.action} — see Inbox` : ""}`,
+      );
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(26,20,16,0.45)", display: "grid", placeItems: "center", zIndex: 50 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card-soft"
+        style={{ padding: 24, width: 480, maxWidth: "90vw", background: "var(--paper)" }}
+      >
+        <div className="kicker">Trigger a change event</div>
+        <div className="display" style={{ fontSize: 22, marginTop: 4, marginBottom: 14 }}>⚡ Change</div>
+
+        {/* Mode toggle */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+          {(["out", "scope"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className="chip"
+              style={{
+                cursor: "pointer",
+                textTransform: "none",
+                ...(mode === m ? { background: "var(--ink)", color: "var(--paper)" } : {}),
+              }}
+            >
+              {m === "out" ? "📅 Mark someone out" : "🔀 Scope change on task"}
+            </button>
+          ))}
+        </div>
+
+        {result ? (
+          <>
+            <div style={{ fontSize: 14, color: "var(--positive)", fontWeight: 700, margin: "14px 0" }}>
+              ✓ {result}
+            </div>
+            <button onClick={onClose} className="btn btn-primary btn-sm">Done</button>
+          </>
+        ) : (
+          <>
+            {mode === "out" ? (
+              <>
+                <label style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
+                  <span className="kicker">Developer</span>
+                  <select
+                    value={who}
+                    onChange={(e) => setWho(e.target.value)}
+                    style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                  >
+                    {roster.map((m) => (
+                      <option key={m.username} value={m.username}>
+                        {m.name} ({m.username})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 5, flex: 1 }}>
+                    <span className="kicker">Start date</span>
+                    <input
+                      type="date"
+                      value={start}
+                      onChange={(e) => setStart(e.target.value)}
+                      style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                    />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 5, flex: 1 }}>
+                    <span className="kicker">End date</span>
+                    <input
+                      type="date"
+                      value={end}
+                      onChange={(e) => setEnd(e.target.value)}
+                      style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                    />
+                  </label>
+                </div>
+              </>
+            ) : (
+              <>
+                <label style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
+                  <span className="kicker">Task ID</span>
+                  <input
+                    type="text"
+                    value={taskId}
+                    onChange={(e) => setTaskId(e.target.value)}
+                    placeholder="e.g. task-abc123"
+                    style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                  />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
+                  <span className="kicker">Note (optional)</span>
+                  <input
+                    type="text"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="e.g. Add real-time sync requirement"
+                    style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                  />
+                </label>
+              </>
+            )}
+
+            {err && (
+              <div className="mono" style={{ fontSize: 12, color: "var(--orange-deep)", marginBottom: 10 }}>{err}</div>
+            )}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={submit} disabled={!canSubmit} className="btn btn-primary btn-sm" style={{ opacity: canSubmit ? 1 : 0.4 }}>
+                {busy ? "Sending…" : "Send event"}
+              </button>
+              <button onClick={onClose} disabled={busy} className="btn btn-ghost btn-sm">Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

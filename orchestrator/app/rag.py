@@ -270,6 +270,30 @@ async def all_events(limit: int = 1000) -> list[dict]:
         return await m.find(EVENTS_COLL, projection={"_id": 0}, limit=limit)
 
 
+RESCHEDULE_COLL = "RescheduleProposals"
+
+
+async def save_reschedule_proposal(doc: dict) -> None:
+    async with MongoMCP() as m:
+        await m.insert_many(RESCHEDULE_COLL, [doc])
+
+
+async def get_reschedule_proposal(proposal_id: str) -> dict:
+    async with MongoMCP() as m:
+        rows = await m.find(RESCHEDULE_COLL, query={"id": proposal_id}, projection={"_id": 0}, limit=1)
+    return rows[0] if rows else {}
+
+
+async def update_reschedule_proposal(proposal_id: str, patch: dict) -> None:
+    async with MongoMCP() as m:
+        await m.update_many(RESCHEDULE_COLL, {"id": proposal_id}, {"$set": patch})
+
+
+async def open_reschedule_proposals() -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(RESCHEDULE_COLL, query={"status": "proposed"}, projection={"_id": 0}, limit=50)
+
+
 def _parse_docs(text: str) -> list[dict]:
     """The MCP returns a prose line + an EJSON array (wrapped in safety tags)."""
     a, b = text.find("["), text.rfind("]")
