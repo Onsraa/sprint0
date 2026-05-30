@@ -22,12 +22,12 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, gitlab, handoff, relay, scheduler, staffing, tasks as tasklib, team
+from app import auth, gitlab, handoff, relay, scheduler, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
-    AccessGrant, ApproveRequest, ArchitectureOptions, ClarifiedSpec, ClarifyResolution, Constraints,
-    Decision, DeveloperProfile, DispatchRequest, FeatureRequest, Notification, PlanJSON, PlanRequest, ProjectRecord,
-    QAReport, RatifyRequest, RelayState, Task,
+    AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
+    Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
+    PlanRequest, ProjectRecord, QAReport, RatifyRequest, RelayState, Task,
 )
 from app.execute import execute_plan, extend_project
 from app.rag import (
@@ -35,7 +35,8 @@ from app.rag import (
     get_access_grant, get_project_record, past_projects, record_merge,
     save_access_grant, save_decision, save_notification, notifications_for_user, mark_all_read,
     save_project_record, update_access_grant, update_project_record,
-    all_tasks, delete_tasks_for_project, get_task, mongo_close, save_tasks, tasks_for_project, update_task,
+    all_events, all_tasks, delete_tasks_for_project, get_task, mongo_close, save_event, save_tasks,
+    tasks_for_project, update_task,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -528,6 +529,8 @@ async def ratify_gate(
         raise HTTPException(404, f"no {discipline} gate")
     if member.role != "manager" and member.discipline != discipline:
         raise HTTPException(403, f"only the {discipline} lead or the manager can ratify this gate")
+    if next(g.status for g in state.gates if g.discipline == discipline) == "blocked":
+        raise HTTPException(409, "gate is blocked by an open integration failure — mark it api-ok first")
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
     if req.approve:  # capture a durable Decision record (reasoning memory) — only on approval
         sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
@@ -544,6 +547,111 @@ async def ratify_gate(
         except Exception:
             pass  # best-effort persistence, mirrors save_project_record at dispatch
     return state
+
+
+# ── Integration gate (B+C+D): declared api-failing signal → reject to producer, block qa ──
+def _find_issue(plan: PlanJSON, issue_id: str | None):
+    if not issue_id:
+        return None
+    return next((i for e in plan.epics for i in e.issues if i.id == issue_id), None)
+
+
+def _owns_issue(member: DeveloperProfile, issue) -> bool:
+    return issue is not None and issue.assignee in (member.username, member.gitlab_username)
+
+
+def _is_qa_owner(member: DeveloperProfile, members: list[DeveloperProfile]) -> bool:
+    """The qa-gate owner: the qa lead, or — when no one holds qa — the manager (orphan-inheritance,
+    the same rule as _my_gates / ratify_gate)."""
+    return member.discipline == "qa" or (member.role == "manager" and staffing.is_orphan("qa", members))
+
+
+async def _reopen_producer(plan_id: str, issue) -> None:
+    """Best-effort GitLab side-effect: reopen the producer's issue if the plan is dispatched and we
+    can resolve its iid (title-matched from the dispatch result). No-ops otherwise — the relay state
+    is the source of truth either way."""
+    try:
+        res = RESULTS.get(plan_id) or {}
+        pid = res.get("project_id")
+        if not pid:
+            return
+        iid = next((it.get("iid") for it in res.get("issues", []) if it.get("title") == issue.title), None)
+        if iid is None:
+            return
+        await run_in_threadpool(gitlab.reopen_issue, pid, iid, "Integration failure reported via sprint0 — reopening for fix.")
+    except Exception:
+        pass  # best-effort, mirrors save_project_record — never fail the flag over a GitLab call
+
+
+class IntegrationFlagRequest(BaseModel):
+    state: Literal["failing", "ok"] = "failing"
+    reporter_issue_id: Optional[str] = None   # the consumer issue whose assignee is reporting
+    target_issue_id: Optional[str] = None     # the producer issue (explicit pick; else derived from depends_on)
+    source: Literal["manual", "webhook", "ci", "ai"] = "manual"
+    note: str = ""
+
+
+@app.post("/api/plans/{plan_id}/integration/flag")
+async def flag_integration(
+    plan_id: str, req: IntegrationFlagRequest,
+    member: DeveloperProfile = Depends(auth.current_member),
+) -> dict:
+    """Declare an issue's API integration failing (or back ok). Fired by the CONSUMER (a downstream
+    issue's assignee) or the qa-gate owner; routes to the PRODUCER (via `depends_on`). An open
+    `failing` signal holds the qa gate `blocked` and pings the producer's Inbox. No DAG cascade —
+    only the qa gate's status moves. On ambiguity (>1 producer) returns the candidates to pick from."""
+    state, plan = RELAYS.get(plan_id), PLANS.get(plan_id)
+    if state is None or plan is None:
+        raise HTTPException(404, "plan not found")
+    await team.ensure_loaded()
+    members = team.all_members()
+    qa_owner = _is_qa_owner(member, members)
+
+    reporter_issue = _find_issue(plan, req.reporter_issue_id)
+    if req.reporter_issue_id and reporter_issue is None:
+        raise HTTPException(404, "reporter issue not found")
+
+    if req.target_issue_id:                                   # explicit producer pick
+        target_issue = _find_issue(plan, req.target_issue_id)
+        if target_issue is None:
+            raise HTTPException(404, "target issue not found")
+    elif reporter_issue is not None:                          # derive producer from the consumer's depends_on
+        if not (qa_owner or _owns_issue(member, reporter_issue)):
+            raise HTTPException(403, "only the issue's assignee or the qa lead/manager can flag integration")
+        producers = relay.resolve_producers(plan, req.reporter_issue_id)  # type: ignore[arg-type]
+        if not producers:
+            raise HTTPException(400, "reporter issue has no upstream producer (depends_on) to route to")
+        if len(producers) > 1:                                # ambiguous → let the UI disambiguate
+            return {"need_target": True, "candidates": [
+                {"id": p.id, "title": p.title, "assignee": p.assignee, "api_contract": p.api_contract}
+                for p in producers
+            ]}
+        target_issue = producers[0]
+    else:
+        raise HTTPException(400, "need reporter_issue_id or target_issue_id")
+
+    # Authority: the consumer (reporter assignee), the producer (target assignee — e.g. re-marking ok),
+    # or the qa-gate owner. The one new per-issue permission vs. today's gate-only authority.
+    if not (qa_owner or _owns_issue(member, reporter_issue) or _owns_issue(member, target_issue)):
+        raise HTTPException(403, "only the issue's assignee or the qa lead/manager can flag integration")
+
+    sig = IntegrationSignal(
+        target_issue_id=target_issue.id, state=req.state, by=member.username,
+        reporter_issue_id=req.reporter_issue_id, source=req.source, note=req.note,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    relay.record_integration_signal(state, sig)
+
+    if req.state == "failing" and target_issue.assignee:      # ping the producer's Inbox + reopen their issue
+        await notify(
+            target_issue.assignee, "qa_failed",
+            f"API reported failing: {target_issue.title}",
+            body=(req.note or f"@{member.username} reports your API integration is failing.")[:300],
+            ref={"plan_id": plan_id, "issue_id": target_issue.id, "reporter_issue_id": req.reporter_issue_id},
+            actionable=True,
+        )
+        await _reopen_producer(plan_id, target_issue)
+    return state.model_dump()
 
 
 @app.get("/api/plans/{plan_id}/staffing")
@@ -789,7 +897,8 @@ async def _reschedule_project(project_id: int) -> int:
             return 0
         objs = [Task(**d) for d in docs]
         await team.ensure_loaded()
-        scheduler.schedule_tasks(objs, team.all_members(), datetime.now(timezone.utc).isoformat())
+        avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+        scheduler.schedule_tasks(objs, team.all_members(), datetime.now(timezone.utc).isoformat(), availability=avail)
         for o in objs:
             await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
         return len(objs)
@@ -801,6 +910,102 @@ async def _reschedule_project(project_id: int) -> int:
 async def recompute_schedule(project_id: int, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Re-run the deterministic scheduler for a project's Tasks and persist the dates."""
     return {"project_id": project_id, "scheduled": await _reschedule_project(project_id)}
+
+
+# ── Reflow engine: one event-driven, cross-roadmap, minimal-perturbation re-flow path ──
+async def _reflow_for_event(ev: ChangeEvent) -> list[dict]:
+    """Incremental, availability-aware, cross-project reflow for a single change event. Recomputes
+    only the affected subgraph (minimal perturbation), persists ONLY tasks whose dates moved, returns
+    them. A work event marks its task changed (and applies an estimate change); a calendar event marks
+    the affected person's whole task stream. Best-effort: never raises into the request."""
+    try:
+        objs = [Task(**d) for d in await all_tasks()]
+        if not objs:
+            return []
+        if ev.task_id:                                            # work/assignment event on one task
+            changed = [ev.task_id]
+            if ev.kind == "estimate_change" and "new" in ev.payload:
+                new_est = float(ev.payload["new"])
+                for o in objs:
+                    if o.id == ev.task_id:
+                        o.estimate_days = new_est
+                await update_task(ev.task_id, {"estimate_days": new_est})
+        elif ev.user_id:                                          # calendar event → that person's tasks
+            changed = [o.id for o in objs if o.assignee == ev.user_id]
+        else:
+            changed = []
+        if not changed:
+            return []
+        await team.ensure_loaded()
+        avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+        prior = {o.id: (o.scheduled_start, o.scheduled_end) for o in objs}
+        scheduler.reflow(objs, team.all_members(), datetime.now(timezone.utc).isoformat(),
+                         changed, availability=avail)
+        moved = [o for o in objs if (o.scheduled_start, o.scheduled_end) != prior[o.id]]
+        for o in moved:                                           # only-changed write (not N updates)
+            await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
+        return [o.model_dump() for o in moved]
+    except Exception:
+        return []
+
+
+SEMANTIC_KINDS = {"spec_change", "scope_change", "blocked"}  # content changes the date-graph can't judge
+STRATEGIST_IMPACT_THRESHOLD = 3                              # tasks moved → high-impact enough to ask the AI
+
+
+async def _maybe_strategize(ev: ChangeEvent, moved: list[dict]) -> dict | None:
+    """Fire the AI Strategist only when the change is semantic or high-impact (keeps tokens near-zero).
+    It sees only the delta; low-impact strategies auto-apply (the reflow already shifted), high-impact
+    ones are proposed to the manager + each affected person is notified. Best-effort — never raises."""
+    if ev.kind not in SEMANTIC_KINDS and len(moved) < STRATEGIST_IMPACT_THRESHOLD:
+        return None
+    try:
+        impacted = [Task(**d) for d in moved]
+        if ev.task_id and not any(t.id == ev.task_id for t in impacted):
+            ct = await get_task(ev.task_id)
+            if ct:
+                impacted.append(Task(**ct))
+        if not impacted:
+            return None
+        await team.ensure_loaded()
+        strategy = await strategist.judge(ev, impacted, team.all_members())
+        mgr = next((m for m in team.all_members() if m.role == "manager"), None)
+        if mgr and not strategist.should_auto_apply(strategy):
+            await notify(mgr.username, "reschedule_proposed", "Reschedule strategy proposed",
+                         body=strategy.impact_summary or strategy.rationale,
+                         ref={"action": strategy.action, "tasks": strategy.target_task_ids,
+                              "reassign_to": strategy.reassign_to}, actionable=True)
+        for n in strategist.impact_notifications(impacted, ev):
+            await notify(n["user_id"], "reschedule_proposed", n["title"], body=n["body"])
+        return strategy.model_dump()
+    except Exception:
+        return None
+
+
+class EventRequest(BaseModel):
+    kind: str
+    user_id: str | None = None
+    task_id: str | None = None
+    project_id: int | None = None
+    start: str | None = None     # ISO date — for date-range calendar events (sick/holiday/time_off)
+    end: str | None = None
+    payload: dict = {}           # kind-specific, e.g. {"new": 6.0} for an estimate_change
+
+
+@app.post("/api/events")
+async def post_event(req: EventRequest, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Record a change (calendar or work) and re-flow the affected calendars across the roadmap.
+    Returns only the tasks whose dates moved — minimal perturbation, so the UI patches just those —
+    plus an optional AI Strategist proposal when the change is semantic or high-impact."""
+    ev = ChangeEvent(id=f"evt_{uuid.uuid4().hex[:8]}", kind=req.kind, user_id=req.user_id,
+                     task_id=req.task_id, project_id=req.project_id, start=req.start, end=req.end,
+                     payload=req.payload, created_at=datetime.now(timezone.utc).isoformat())
+    try:
+        await save_event(ev.model_dump())
+    except Exception:
+        pass  # event logging is best-effort; still attempt the reflow
+    moved = await _reflow_for_event(ev)
+    return {"event": ev.model_dump(), "reflowed": moved, "strategy": await _maybe_strategize(ev, moved)}
 
 
 @app.post("/api/projects/{project_id}/qa/run", response_model=QAReport)

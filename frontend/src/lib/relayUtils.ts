@@ -33,6 +33,8 @@ export function statusStyle(s: GateStatus): StatusStyle {
       return { label: "Auto-passed", fg: "var(--paper)", bg: "var(--info)", border: "var(--info)" };
     case "changes_requested":
       return { label: "Changes requested", fg: "var(--paper)", bg: "var(--warn)", border: "var(--warn)" };
+    case "blocked":
+      return { label: "Blocked · integration", fg: "var(--paper)", bg: "var(--orange-deep)", border: "var(--orange-deep)" };
     case "locked":
       return { label: "Locked", fg: "var(--ink-mute)", bg: "var(--cream-deep)", border: "var(--line-strong)" };
     case "pending":

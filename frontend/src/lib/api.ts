@@ -68,7 +68,8 @@ export type GateStatus =
   | "locked"
   | "auto_passed"
   | "ratified"
-  | "changes_requested";
+  | "changes_requested"
+  | "blocked";
 
 export interface ContextScope {
   files: string[];
@@ -152,10 +153,31 @@ export interface Gate {
   note: string;
 }
 
+/** A declared api-failing/ok flag on a producer issue (the integration gate, B+C+D). */
+export interface IntegrationSignal {
+  target_issue_id: string;
+  state: "failing" | "ok";
+  by: string;
+  reporter_issue_id: string | null;
+  source: "manual" | "webhook" | "ci" | "ai";
+  note: string;
+  created_at: string;
+}
+
 export interface RelayState {
   gates: Gate[];
   baton: Discipline[];
+  integration_signals: IntegrationSignal[];
 }
+
+/** When a consumer's `depends_on` has >1 producer, the flag endpoint asks which to reject. */
+export interface IntegrationCandidate {
+  id: string;
+  title: string;
+  assignee: string | null;
+  api_contract: string | null;
+}
+export type FlagIntegrationResult = RelayState | { need_target: true; candidates: IntegrationCandidate[] };
 
 export interface PlanResponse {
   plan_id: string;
@@ -572,6 +594,20 @@ export const api = {
     body: { edits?: Issue[]; note?: string; approve?: boolean; reasoning?: string },
   ): Promise<RelayState> {
     return jpost(`/api/plans/${planId}/ratify/${discipline}`, body);
+  },
+  /** Integration gate: declare an issue's API failing/ok. Consumer (own issue) or qa-gate owner.
+   *  Returns the new RelayState, or `{need_target, candidates}` when the producer is ambiguous. */
+  flagIntegration(
+    planId: string,
+    body: {
+      state: "failing" | "ok";
+      reporter_issue_id?: string;
+      target_issue_id?: string;
+      source?: "manual";
+      note?: string;
+    },
+  ): Promise<FlagIntegrationResult> {
+    return jpost(`/api/plans/${planId}/integration/flag`, body);
   },
   staffing(planId: string): Promise<StaffingResponse> {
     return jget(`/api/plans/${planId}/staffing`);

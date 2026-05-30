@@ -257,6 +257,19 @@ async def delete_tasks_for_project(project_id: int) -> None:
         await m.delete_many(TASKS_COLL, {"project_id": project_id})
 
 
+EVENTS_COLL = "ChangeEvents"  # append-only change log (calendar + work) driving the reflow engine
+
+
+async def save_event(doc: dict) -> None:
+    async with MongoMCP() as m:
+        await m.insert_many(EVENTS_COLL, [doc])
+
+
+async def all_events(limit: int = 1000) -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(EVENTS_COLL, projection={"_id": 0}, limit=limit)
+
+
 def _parse_docs(text: str) -> list[dict]:
     """The MCP returns a prose line + an EJSON array (wrapped in safety tags)."""
     a, b = text.find("["), text.rfind("]")

@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useApp } from "../app/AppContext";
-import type { Discipline, Gate } from "../lib/api";
+import { api } from "../lib/api";
+import type { Discipline, FlagIntegrationResult, Gate, IntegrationCandidate, IntegrationSignal } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, statusStyle } from "../lib/relayUtils";
 
 /* The ratification relay: {uiux ∥ backend ∥ devops} → frontend → qa.
@@ -74,9 +76,165 @@ export function RelayBoard() {
         <Connector />
         <div style={{ width: "60%", maxWidth: 360 }}>{renderRow(ROW_3)}</div>
       </div>
+
+      <IntegrationPanel />
     </div>
   );
 }
+
+/* The integration gate (B+C+D): a consumer dev reports their API producer failing → the qa gate
+   blocks and the producer is pinged; anyone can mark it back ok. Authority is enforced server-side. */
+function IntegrationPanel() {
+  const { relay, plan, planId, member, setRelay } = useApp();
+  const [reporterId, setReporterId] = useState("");
+  const [note, setNote] = useState("");
+  const [candidates, setCandidates] = useState<IntegrationCandidate[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (!relay || !plan || !planId) return null;
+
+  const issues = plan.epics.flatMap((e) => e.issues);
+  const titleOf = (id: string) => issues.find((i) => i.id === id)?.title ?? id;
+
+  const latest = new Map<string, IntegrationSignal>();
+  for (const s of relay.integration_signals ?? []) latest.set(s.target_issue_id, s);
+  const failing = [...latest.values()].filter((s) => s.state === "failing");
+
+  // The caller's consumer issues — assigned to me AND depending on an upstream producer.
+  const mine = member
+    ? issues.filter(
+        (i) => (i.assignee === member.username || i.assignee === member.gitlab_username) && i.depends_on.length > 0,
+      )
+    : [];
+
+  if (failing.length === 0 && mine.length === 0) return null;  // nothing for this user → hide
+
+  const applyResult = (res: FlagIntegrationResult) => {
+    if ("gates" in res) {
+      setRelay(res);
+      setCandidates(null);
+      setReporterId("");
+      setNote("");
+    } else {
+      setCandidates(res.candidates);  // >1 producer → ask which one
+    }
+  };
+
+  const run = async (body: Parameters<typeof api.flagIntegration>[1]) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      applyResult(await api.flagIntegration(planId, body));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="card-soft"
+      style={{
+        padding: 18,
+        marginTop: 24,
+        borderColor: failing.length ? "var(--orange-soft)" : "var(--line-strong)",
+        background: failing.length ? "var(--orange-tint)" : undefined,
+      }}
+    >
+      <div className="kicker" style={{ color: failing.length ? "var(--orange-deep)" : undefined }}>
+        API integration
+      </div>
+      <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4, marginBottom: 12 }}>
+        A failing API holds the QA gate until the producer fixes it — ratified slices aren't reworked.
+      </div>
+
+      {failing.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: mine.length ? 16 : 0 }}>
+          {failing.map((s) => (
+            <div key={s.target_issue_id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="chip" style={{ background: "var(--orange-deep)", color: "var(--paper)", borderColor: "var(--orange-deep)", fontSize: 11 }}>
+                failing
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{titleOf(s.target_issue_id)}</span>
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", marginLeft: 8 }}>
+                  by @{s.by}
+                  {s.reporter_issue_id ? ` · ${titleOf(s.reporter_issue_id)}` : ""}
+                </span>
+                {s.note && <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>{s.note}</div>}
+              </div>
+              <button onClick={() => run({ state: "ok", target_issue_id: s.target_issue_id })} disabled={busy} className="btn btn-ghost btn-sm">
+                Mark api-ok ✓
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {mine.length > 0 && (
+        <div style={{ borderTop: failing.length ? "1px solid var(--line)" : undefined, paddingTop: failing.length ? 14 : 0, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700 }}>Report a failing API on one of your issues</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <select
+              value={reporterId}
+              onChange={(e) => { setReporterId(e.target.value); setCandidates(null); }}
+              style={selectStyle}
+            >
+              <option value="">Select your issue…</option>
+              {mine.map((i) => (
+                <option key={i.id} value={i.id}>{i.title}</option>
+              ))}
+            </select>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="what's broken? (optional)"
+              style={{ ...selectStyle, flex: 1, minWidth: 180 }}
+            />
+            <button
+              onClick={() => run({ state: "failing", reporter_issue_id: reporterId, note: note.trim() || undefined })}
+              disabled={busy || !reporterId}
+              className="btn btn-primary btn-sm"
+              style={{ opacity: busy || !reporterId ? 0.6 : 1 }}
+            >
+              {busy ? "…" : "Report failing →"}
+            </button>
+          </div>
+          {candidates && (
+            <div style={{ marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>Which API is failing? Pick the producer:</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {candidates.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => run({ state: "failing", reporter_issue_id: reporterId, target_issue_id: c.id, note: note.trim() || undefined })}
+                    disabled={busy}
+                    className="btn btn-ghost btn-sm"
+                  >
+                    {c.title}{c.assignee ? ` · @${c.assignee}` : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {err && <div style={{ fontSize: 12, color: "var(--orange-deep)", fontFamily: "var(--font-mono)", marginTop: 8 }}>{err}</div>}
+    </div>
+  );
+}
+
+const selectStyle: React.CSSProperties = {
+  padding: "8px 11px",
+  border: "1.5px solid var(--line-strong)",
+  borderRadius: 8,
+  fontSize: 13,
+  background: "var(--paper)",
+  fontFamily: "inherit",
+};
 
 function Connector() {
   return (

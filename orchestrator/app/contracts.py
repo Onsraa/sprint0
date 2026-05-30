@@ -17,7 +17,7 @@ TrustLevel = Literal["low", "medium", "high"]
 # LLM keeps emitting the small, familiar schema and we derive the rest in code.
 Discipline = Literal["uiux", "backend", "frontend", "qa", "devops"]
 Kind = Literal["code", "design", "audit", "content", "infra", "runbook"]
-GateStatus = Literal["pending", "locked", "auto_passed", "ratified", "changes_requested"]
+GateStatus = Literal["pending", "locked", "auto_passed", "ratified", "changes_requested", "blocked"]
 Role = Literal["manager", "developer"]
 Seniority = Literal["junior", "mid", "senior"]
 
@@ -204,9 +204,25 @@ class Gate(BaseModel):
     note: str = ""
 
 
+class IntegrationSignal(BaseModel):
+    """An append-only declaration that one issue's API integration is failing (or back ok).
+    The CONSUMER (a downstream issue's assignee) or the qa-gate owner fires it; it routes to the
+    PRODUCER issue (`target_issue_id`, resolved from the consumer's `depends_on`). An open `failing`
+    signal blocks the qa gate. `source` is the pluggable seam: `manual` now; `ci`/`ai` slot in later
+    behind the same routing with no change to the relay."""
+    target_issue_id: str                                   # producer issue being rejected
+    state: Literal["failing", "ok"]
+    by: str                                                 # username who fired it
+    reporter_issue_id: Optional[str] = None                # consumer issue that flagged it (None = owner picked)
+    source: Literal["manual", "webhook", "ci", "ai"] = "manual"
+    note: str = ""
+    created_at: str = ""
+
+
 class RelayState(BaseModel):
     gates: list[Gate]
     baton: list[Discipline] = Field(default_factory=list)  # active gates: unblocked, not yet done
+    integration_signals: list[IntegrationSignal] = Field(default_factory=list)  # api-failing/ok flags (B+C+D)
 
 
 # ── Persistence: a scaffolded project (for mid-prod delta grounding) ──
@@ -275,6 +291,34 @@ class AccessGrant(BaseModel):
     updated_at: str
 
 
+class ChangeEvent(BaseModel):
+    """Append-only delta in the project/roadmap change log — a calendar OR a work change. Drives the
+    reflow engine: calendar kinds derive per-person availability; work kinds trigger impact analysis."""
+    id: str
+    kind: Literal["meeting", "holiday", "sick", "time_off", "capacity",        # calendar
+                  "estimate_change", "spec_change", "scope_change", "blocked", # work
+                  "dependency_added", "task_done",
+                  "claim", "release", "reassign"]                              # assignment
+    user_id: Optional[str] = None          # whose calendar/capacity (calendar + assignment kinds)
+    task_id: Optional[str] = None          # which task (work + assignment kinds)
+    project_id: Optional[int] = None
+    start: Optional[str] = None            # ISO date — for date-range calendar events (sick/holiday/…)
+    end: Optional[str] = None              # ISO date — inclusive; defaults to `start` when absent
+    payload: dict = Field(default_factory=dict)   # kind-specific, e.g. {"old": 2.0, "new": 6.0}
+    created_at: str
+
+
+class RescheduleStrategy(BaseModel):
+    """The AI Strategist's verdict on a change — a typed strategy the deterministic solver executes,
+    never prose, never dates. Typed fields only (no open dict) so Gemini's schema accepts it."""
+    action: Literal["right_shift", "reassign", "compress", "descope", "re_estimate", "re_plan", "escalate"]
+    target_task_ids: list[str] = Field(default_factory=list)   # tasks the action applies to
+    reassign_to: Optional[str] = None                          # action=reassign → the new assignee
+    rationale: str                                             # one line, ≤200 chars — why
+    confidence: int = 50                                       # 0-100
+    impact_summary: str = ""                                   # ≤200 chars — human-facing "what & who"
+
+
 class Task(BaseModel):
     """Persistent unit of work — source of truth for the Work hub. Materialized from a plan,
     linked to a GitLab issue on dispatch."""
@@ -293,6 +337,7 @@ class Task(BaseModel):
     priority: Literal["low", "normal", "high", "urgent"] = "normal"
     scheduled_start: Optional[str] = None   # ISO date, engine-computed (Phase C)
     scheduled_end: Optional[str] = None
+    pinned: bool = False                     # locked dates → reflow treats as fixed, never moves it
     context_scope: ContextScope
     created_at: str
     updated_at: str

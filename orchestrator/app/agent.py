@@ -17,7 +17,7 @@ from google.adk.agents import Agent
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-from app.contracts import ArchitectureOptions, ClarifiedSpec, ParsedCV, PlanJSON, QAReport
+from app.contracts import ArchitectureOptions, ClarifiedSpec, ParsedCV, PlanJSON, QAReport, RescheduleStrategy
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -139,3 +139,29 @@ qa_agent = Agent(name="sprint0_qa", model=MODEL, instruction=INSTRUCTION_QA, out
 
 async def generate_qa_report(prompt: str) -> QAReport:
     return QAReport.model_validate_json(await _run_agent(qa_agent, prompt))
+
+
+INSTRUCTION_STRATEGY = """You are a delivery Strategist for an engineering agency. A change just hit \
+the schedule (someone out sick, a task re-estimated heavier, a spec changed). You are given ONLY the \
+delta — the CHANGE, the IMPACTED TASKS, and CANDIDATE PEOPLE. You never see the whole plan.
+
+Choose exactly ONE `action` to resolve the impact, preferring the LEAST disruptive that still protects \
+the deadline:
+- right_shift — let the affected tasks slide later; no owner/scope change. The default for a minor slip.
+- reassign — move a task to another candidate (set `reassign_to` to their username); use when the owner \
+is blocked/out and someone qualified is free.
+- compress — parallelize or split work to recover time.
+- descope — drop/defer lower-value tasks (list them in `target_task_ids`).
+- re_estimate — the estimate itself is wrong and should be corrected.
+- re_plan — the change is structural (stack/scope) and needs a fresh plan from the planner.
+- escalate — a human manager must decide.
+
+Set `target_task_ids` to the tasks the action applies to; `reassign_to` ONLY for reassign; a one-line \
+`rationale`; a 0-100 `confidence`; and a one-line, human-facing `impact_summary` naming who is affected \
+and how. Return only the structured strategy."""
+
+strategist_agent = Agent(name="sprint0_strategist", model=MODEL, instruction=INSTRUCTION_STRATEGY, output_schema=RescheduleStrategy)
+
+
+async def generate_strategy(prompt: str) -> RescheduleStrategy:
+    return RescheduleStrategy.model_validate_json(await _run_agent(strategist_agent, prompt))
