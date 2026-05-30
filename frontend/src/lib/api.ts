@@ -203,6 +203,25 @@ export interface Decision {
   updated_at: string;
 }
 
+export interface DecisionCard {
+  domain: string;
+  context: string;
+  recommendation: string;
+  confidence: number;
+  pros: string[];
+  cons: string[];
+  conflict: boolean;
+  conflict_reason: string | null;
+}
+
+export interface DecisionCardResponse {
+  card: DecisionCard | null;
+  signal: "green" | "orange" | "grey";
+  low_confidence: boolean;
+  past: { own: Decision[]; team: Decision[] };
+  error?: string;
+}
+
 export interface QueueItem {
   plan_id: string;
   project: string;
@@ -641,9 +660,16 @@ export const api = {
   ratify(
     planId: string,
     discipline: Discipline,
-    body: { edits?: Issue[]; note?: string; approve?: boolean; reasoning?: string },
+    body: {
+      edits?: Issue[]; note?: string; approve?: boolean; reasoning?: string;
+      ai_recommendation?: string; ai_confidence?: number | null; deviated?: boolean; deviation_reason?: string;
+    },
   ): Promise<RelayState> {
     return jpost(`/api/plans/${planId}/ratify/${discipline}`, body);
+  },
+  /** Decision Card (System 2): two-pass adversarial AI evaluation for a relay gate. */
+  decisionCard(planId: string, discipline: Discipline): Promise<DecisionCardResponse> {
+    return jget(`/api/relays/${planId}/gates/${discipline}/card`);
   },
   /** Integration gate: declare an issue's API failing/ok. Consumer (own issue) or qa-gate owner.
    *  Returns the new RelayState, or `{need_target, candidates}` when the producer is ambiguous. */

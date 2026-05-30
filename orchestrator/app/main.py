@@ -28,8 +28,9 @@ from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, RatifyRequest, RelayState, Task,
-    ImpactedTask, RescheduleProposal,
+    DecisionCard, ImpactedTask, RescheduleProposal,
 )
+from app.agent import DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card
 from app.execute import execute_plan, extend_project
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
@@ -557,7 +558,10 @@ async def ratify_gate(
             context_tags=sorted({i.required_skill for i in sl if i.required_skill}),
             recommendation=("; ".join(i.title for i in sl))[:100],
             reasoning=req.reasoning, project_id=plan_id, project_name=plan.project_name,
-            issue_ids=[i.id for i in sl], created_at=now, updated_at=now,
+            issue_ids=[i.id for i in sl],
+            ai_proposal_at_time=req.ai_recommendation or None, confidence_at_time=req.ai_confidence,
+            deviation_from_ai=req.deviated, deviation_reason=req.deviation_reason or None,
+            created_at=now, updated_at=now,
         )
         try:
             await save_decision(dec.model_dump())
@@ -1280,6 +1284,47 @@ async def surface_decisions(domain: str = "", tags: str = "",
     except Exception:
         pass
     return {"own": own, "team": team}
+
+
+@app.get("/api/relays/{plan_id}/gates/{discipline}/card")
+async def decision_card_for_gate(plan_id: str, discipline: str,
+                                 member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Decision Card (System 2): two-pass adversarial AI for a relay gate. Pass 1 (domain persona, no
+    past in context → no anchoring) proposes; we surface the team's past validated decisions (System 3);
+    Pass 2 fires only if a past exists → conflict. Signal: orange=conflict, green=past+agree, grey=new.
+    AI emits structured fields only; best-effort (card=null on AI failure — never blocks ratify)."""
+    plan = PLANS.get(plan_id)
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
+    tags = sorted({i.required_skill for i in sl if i.required_skill})
+    ctx = (sl[0].title if sl else discipline)[:50]
+    surfaced = await surface_decisions(domain=discipline, tags=",".join(tags), member=member)
+    best_past = next((d for d in surfaced["own"] + surfaced["team"] if d.get("reasoning")), None)
+    try:
+        p1 = await generate_decision_card(
+            f"DOMAIN: {discipline}\n"
+            f"YOUR CONSTRAINTS: {DECISION_DOMAIN_CONSTRAINTS.get(discipline, discipline)}\n"
+            f"DECISION CONTEXT: {ctx}\n"
+            f"RELEVANT SKILLS/TAGS: {', '.join(tags) or '—'}\n"
+            f"THE SLICE BEING RATIFIED: {('; '.join(i.title for i in sl))[:300] or '(empty)'}")
+        conflict, reason = False, ""
+        if best_past:
+            v = await generate_conflict(
+                f"DECISION CONTEXT: {ctx}\n"
+                f"Position A — AI recommendation: {p1.recommendation}\n"
+                f"Position B — past decision by @{best_past.get('owner_id')} "
+                f"({best_past.get('project_name')}): {best_past.get('recommendation', '')} — "
+                f"{best_past.get('reasoning', '')}")
+            conflict, reason = v.conflict, v.conflict_reason
+        card = DecisionCard(domain=discipline, context=ctx, recommendation=p1.recommendation,
+                            confidence=p1.confidence, pros=p1.pros, cons=p1.cons,
+                            conflict=conflict, conflict_reason=reason or None)
+        signal = "orange" if conflict else ("green" if best_past else "grey")
+        return {"card": card.model_dump(), "signal": signal,
+                "low_confidence": p1.confidence < 60, "past": surfaced}
+    except Exception as e:
+        return {"card": None, "signal": "grey", "low_confidence": False, "past": surfaced, "error": str(e)[:200]}
 
 
 # Attribution queue — merges sprint0 can't map to a roster member land here (the human

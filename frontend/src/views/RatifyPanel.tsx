@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
-import type { Issue, Risk } from "../lib/api";
+import type { DecisionCardResponse, Issue, Risk } from "../lib/api";
 import { api } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
 
@@ -10,6 +10,8 @@ import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle
    manager — that error surfaces in the footer. */
 
 const RISKS: Risk[] = ["low", "medium", "high"];
+
+const SIGNAL_COLOR: Record<string, string> = { green: "var(--positive)", orange: "var(--orange)", grey: "var(--line-strong)" };
 
 /** A scoped file is "existing" if it's already in the target repo's module manifest, else "new". */
 const fileStatus = (file: string, manifest: string[]): "existing" | "new" =>
@@ -34,6 +36,18 @@ export function RatifyPanel() {
   const [reasoning, setReasoning] = useState("");
   const [busy, setBusy] = useState<"approve" | "changes" | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [card, setCard] = useState<DecisionCardResponse | null>(null);
+  const [deviated, setDeviated] = useState(false);
+
+  // Decision Card (System 2): the two-pass adversarial AI evaluation for this gate (best-effort).
+  useEffect(() => {
+    setCard(null);
+    setDeviated(false);
+    if (!planId || !target) return;
+    let cancelled = false;
+    api.decisionCard(planId, target).then((c) => !cancelled && setCard(c)).catch(() => {});
+    return () => { cancelled = true; };
+  }, [planId, target]);
 
   if (!target || !plan || !planId) {
     return (
@@ -67,7 +81,12 @@ export function RatifyPanel() {
     setErr(null);
     try {
       const payload = slice.map(editOf);
-      const next = await api.ratify(planId, target, { edits: payload, note, approve, reasoning });
+      const next = await api.ratify(planId, target, {
+        edits: payload, note, approve, reasoning,
+        ai_recommendation: card?.card?.recommendation ?? "",
+        ai_confidence: card?.card?.confidence ?? null,
+        deviated, deviation_reason: deviated ? reasoning : "",
+      });
       setRelay(next);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -105,6 +124,44 @@ export function RatifyPanel() {
           </div>
         )}
       </div>
+
+      {/* Decision Card — two-pass adversarial AI evaluation (System 2) */}
+      {card?.card && (
+        <div className="card-soft" style={{ padding: 14, marginBottom: 14, borderColor: SIGNAL_COLOR[card.signal] }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: SIGNAL_COLOR[card.signal], display: "inline-block" }} />
+            <span className="kicker">AI evaluation</span>
+            <span style={{ color: "var(--ink-mute)" }}>{card.card.confidence}% confidence</span>
+            {card.low_confidence && (
+              <span style={{ color: "var(--orange-deep)", fontWeight: 700 }}>⚠ AI uncertain — your judgment is primary</span>
+            )}
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6 }}>{card.card.recommendation}</div>
+          <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap", fontSize: 12 }}>
+            {card.card.pros.length > 0 && <div><b style={{ color: "var(--positive)" }}>+ </b>{card.card.pros.join(" · ")}</div>}
+            {card.card.cons.length > 0 && <div><b style={{ color: "var(--orange-deep)" }}>− </b>{card.card.cons.join(" · ")}</div>}
+          </div>
+          {card.signal === "orange" && card.card.conflict_reason && (
+            <div style={{ marginTop: 8, padding: "6px 10px", background: "var(--orange-soft)", borderRadius: 8, fontSize: 12, color: "var(--orange-deep)" }}>
+              ⚠ Conflicts with a past decision: {card.card.conflict_reason}
+            </div>
+          )}
+          {[...card.past.own, ...card.past.team].length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-soft)" }}>
+              <span className="kicker">Past decisions</span>
+              {[...card.past.own, ...card.past.team].slice(0, 3).map((d) => (
+                <div key={d.id} style={{ marginTop: 2 }}>
+                  <b>@{d.owner_id}</b> ({d.project_name}): {d.recommendation} — {d.reasoning}
+                </div>
+              ))}
+            </div>
+          )}
+          <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12 }}>
+            <input type="checkbox" checked={deviated} onChange={(e) => setDeviated(e.target.checked)} />
+            I'm overriding the AI recommendation{deviated ? " — say why in the reasoning field below" : ""}
+          </label>
+        </div>
+      )}
 
       {slice.length === 0 ? (
         <div className="card-soft" style={{ padding: 28, textAlign: "center", color: "var(--ink-soft)" }}>

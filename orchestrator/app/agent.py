@@ -17,7 +17,10 @@ from google.adk.agents import Agent
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-from app.contracts import ArchitectureOptions, ClarifiedSpec, ParsedCV, PlanJSON, QAReport, RescheduleStrategy
+from app.contracts import (
+    ArchitectureOptions, ClarifiedSpec, ConflictVerdict, DecisionCardPass1, ParsedCV, PlanJSON,
+    QAReport, RescheduleStrategy,
+)
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -165,3 +168,37 @@ strategist_agent = Agent(name="sprint0_strategist", model=MODEL, instruction=INS
 
 async def generate_strategy(prompt: str) -> RescheduleStrategy:
     return RescheduleStrategy.model_validate_json(await _run_agent(strategist_agent, prompt))
+
+
+# ── Decision Cards (System 2): two-pass adversarial evaluation ──
+DECISION_DOMAIN_CONSTRAINTS = {
+    "backend": "performance, data integrity, API contracts, security surface, scalability",
+    "frontend": "component reusability, state management, bundle size, accessibility, rendering strategy",
+    "devops": "deployment reliability, cost efficiency, scaling behavior, observability, failure recovery",
+    "qa": "edge cases, failure modes, testability, regression risk, coverage gaps",
+    "uiux": "user mental model, interaction clarity, accessibility, design consistency",
+}
+
+INSTRUCTION_CARD = """You are a senior engineer evaluating a delivery decision for ONE discipline. The \
+prompt names your DOMAIN and the only CONSTRAINTS you may reason about — stay strictly inside them; never \
+comment outside your domain. Be skeptical, never sycophantic. Output an HONEST confidence 0-100 — do NOT \
+inflate; uncertainty is valuable, below 60 is valid when you are unsure. Be extremely concise: \
+recommendation <=10 words, <=3 pros and <=3 cons, each <=8 words. Output structured data only, no prose."""
+
+card_agent = Agent(name="sprint0_card", model=MODEL, instruction=INSTRUCTION_CARD, output_schema=DecisionCardPass1)
+
+
+async def generate_decision_card(prompt: str) -> DecisionCardPass1:
+    return DecisionCardPass1.model_validate_json(await _run_agent(card_agent, prompt))
+
+
+INSTRUCTION_CONFLICT = """You are an adversarial reviewer comparing two positions on the same decision: \
+Position A (an AI recommendation) and Position B (the team's past decision). Find the STRONGEST argument \
+against each — be adversarial, not diplomatic — then decide whether they genuinely CONFLICT. Output \
+`conflict` (bool) and, only if true, a `conflict_reason` of at most 15 words. Change neither position."""
+
+conflict_agent = Agent(name="sprint0_conflict", model=MODEL, instruction=INSTRUCTION_CONFLICT, output_schema=ConflictVerdict)
+
+
+async def generate_conflict(prompt: str) -> ConflictVerdict:
+    return ConflictVerdict.model_validate_json(await _run_agent(conflict_agent, prompt))
