@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { api } from "../lib/api";
 import type { Decision } from "../lib/api";
 import { DISCIPLINE_LABEL, DISCIPLINE_COLOR } from "../lib/relayUtils";

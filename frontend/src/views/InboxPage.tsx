@@ -129,7 +129,7 @@ export function InboxPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {needs.map((need) => (
               <NeedCard
-                key={need.kind === "ratify" ? `r-${need.item?.plan_id}-${need.item?.discipline}` : need.kind === "reschedule" ? `s-${String(need.ref?.proposal_id)}` : `a-${String(need.ref?.grant_id)}`}
+                key={need.kind === "ratify" ? `r-${(need.item as QueueItem | undefined)?.plan_id}-${(need.item as QueueItem | undefined)?.discipline}` : need.kind === "reschedule" ? `s-${String(need.ref?.proposal_id)}` : `a-${String(need.ref?.grant_id)}`}
                 need={need}
                 opening={opening}
                 onOpenRatify={openRatify}
@@ -200,7 +200,7 @@ function NeedCard({
   onRejectResched: (id: string) => void;
 }) {
   if (need.kind === "ratify" && need.item) {
-    const item = need.item;
+    const item = need.item as QueueItem;  // kind==="ratify" guarantees QueueItem (P1 makes InboxNeed a discriminated union)
     const key = item.plan_id + item.discipline;
     const busy = opening === key;
     const discColor = DISCIPLINE_COLOR[item.discipline] ?? "var(--info)";

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../app/AppContext";
-import type { Discipline, Issue, Member, MyIssue, TrustLevel } from "../../lib/api";
+import type { Discipline, Member, MyIssue, TrustLevel } from "../../lib/api";
 import { api } from "../../lib/api";
 import { DISCIPLINE_LABEL, KIND_LABEL, RISK_COLOR } from "../../lib/relayUtils";
 import { KindSurface } from "../KindSurface";

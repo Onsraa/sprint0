@@ -6,6 +6,9 @@
    browser window logs in independently. It is sent on EVERY request as the
    `X-Sprint0-User` header — server-side it is the caller's username. */
 
+import { z } from "zod";
+import * as S from "./schemas";
+
 const BASE: string = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 const TOKEN_KEY = "sprint0_token";
@@ -550,8 +553,11 @@ async function jpost<T>(path: string, body?: unknown): Promise<T> {
   return unwrap<T>(res);
 }
 
-async function jget<T>(path: string): Promise<T> {
-  return unwrap<T>(await fetch(BASE + path, { headers: authHeaders() }));
+async function jget<T>(path: string, schema?: z.ZodType<T>): Promise<T> {
+  const data = await unwrap<T>(await fetch(BASE + path, { headers: authHeaders() }));
+  // Zod validation at the boundary (opt-in): a backend contract change throws HERE with a clear,
+  // located message instead of leaking undefined into a component three layers down.
+  return schema ? schema.parse(data) : data;
 }
 
 async function jdelete<T>(path: string): Promise<T> {
@@ -572,10 +578,10 @@ export const api = {
     return jpost("/api/auth/login", { username });
   },
   me(): Promise<Member> {
-    return jget("/api/me");
+    return jget("/api/me", S.Member);
   },
   myIssues(): Promise<MyIssuesResponse> {
-    return jget("/api/me/issues");
+    return jget("/api/me/issues", S.MyIssuesResponse);
   },
   myDecisions(): Promise<{ username: string; count: number; decisions: Decision[] }> {
     return jget("/api/me/decisions");
@@ -604,12 +610,13 @@ export const api = {
     return jget("/api/relays");
   },
   projects(): Promise<{ count: number; projects: ProjectSummary[] }> {
+    // Not Zod-validated: embedded stored-project plans have leaner, variable-shape issues.
     return jget("/api/projects");
   },
 
   /* Work hub (Phase A Task store) */
   work(scope: string): Promise<WorkResponse> {
-    return jget(`/api/work?scope=${encodeURIComponent(scope)}`);
+    return jget(`/api/work?scope=${encodeURIComponent(scope)}`, S.WorkResponse);
   },
   task(taskId: string): Promise<WorkTask> {
     return jget(`/api/tasks/${taskId}`);
@@ -676,10 +683,10 @@ export const api = {
     return `${BASE.replace(/^http/, "ws")}/api/plans/${planId}/events`;
   },
   getRelay(planId: string): Promise<RelayState> {
-    return jget(`/api/plans/${planId}/relay`);
+    return jget(`/api/plans/${planId}/relay`, S.RelayState);
   },
   relay(planId: string): Promise<RelayState> {
-    return jget(`/api/plans/${planId}/relay`);
+    return jget(`/api/plans/${planId}/relay`, S.RelayState);
   },
   relayAuto(planId: string, dial: number): Promise<RelayState> {
     return jpost(`/api/plans/${planId}/relay/auto`, { dial });
@@ -696,7 +703,7 @@ export const api = {
   },
   /** Decision Card (System 2): two-pass adversarial AI evaluation for a relay gate. */
   decisionCard(planId: string, discipline: Discipline): Promise<DecisionCardResponse> {
-    return jget(`/api/relays/${planId}/gates/${discipline}/card`);
+    return jget(`/api/relays/${planId}/gates/${discipline}/card`, S.DecisionCardResponse);
   },
   /* Code Graph (roadmap System 4) */
   buildGraph(): Promise<{ project_id: string; root: string; nodes: number; edges: number }> {
@@ -749,7 +756,19 @@ export const api = {
     return jpost(`/api/plans/${planId}/integration/flag`, body);
   },
   staffing(planId: string): Promise<StaffingResponse> {
-    return jget(`/api/plans/${planId}/staffing`);
+    return jget(`/api/plans/${planId}/staffing`, S.StaffingResponse);
+  },
+
+  /* Capability profiles (spine P2 — net-new) */
+  profiles(): Promise<S.ProfilesResponse> {
+    return jget("/api/profiles", S.ProfilesResponse);
+  },
+  confirmProfile(profileId: string): Promise<{ profile_id: string; status: string }> {
+    return jpost(`/api/profiles/${profileId}/confirm`);
+  },
+  /* Dispatch dry-run preview (spine P4 — net-new) */
+  dispatchPreview(planId: string): Promise<S.DispatchPreview> {
+    return jget(`/api/plans/${planId}/dispatch/preview`, S.DispatchPreview);
   },
 
   /* Dispatch + mid-prod */
@@ -804,7 +823,7 @@ export const api = {
     return jpost(`/api/projects/${projectId}/close`, { outcome_notes: outcome_notes ?? "" });
   },
   developers(): Promise<DeveloperProfile[]> {
-    return jget("/api/developers");
+    return jget("/api/developers", z.array(S.Member));
   },
   addDeveloper(input: { text?: string; file?: File }): Promise<DeveloperProfile> {
     const fd = new FormData();
@@ -814,7 +833,7 @@ export const api = {
   },
 
   /* Inbox / notifications */
-  inbox(): Promise<InboxResponse> { return jget("/api/inbox"); },
+  inbox(): Promise<InboxResponse> { return jget("/api/inbox", S.InboxResponse); },
   inboxReadAll(): Promise<{ ok: boolean }> { return jpost("/api/inbox/read-all"); },
   requestAccess(subjectId: string): Promise<AccessGrant> { return jpost("/api/access/requests", { subject_id: subjectId }); },
   acceptAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/requests/${grantId}/accept`); },
