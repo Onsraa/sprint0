@@ -262,6 +262,7 @@ export interface WorkTask {
   priority?: TaskPriority;
   scheduled_start?: string | null;
   scheduled_end?: string | null;
+  pinned?: boolean;            // locked dates → the reflow engine never moves this task
   gitlab_issue_iid?: number | null;
   context_scope?: ContextScope;
   created_at?: string;
@@ -563,6 +564,10 @@ export const api = {
   },
   reassignTask(taskId: string, assignee: string): Promise<WorkTask> {
     return jpost(`/api/tasks/${taskId}/reassign?assignee=${encodeURIComponent(assignee)}`);
+  },
+  /** Lock (or unlock) a task's dates so the reflow engine never moves it (Reclaim-style lock). */
+  pinTask(taskId: string, pinned: boolean): Promise<WorkTask> {
+    return jpost(`/api/tasks/${taskId}/pin?pinned=${pinned}`);
   },
 
   /* Briefs / intake */

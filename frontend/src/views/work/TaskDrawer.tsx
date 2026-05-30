@@ -53,6 +53,22 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
     runAction(() => api.setTaskStatus(taskId, status));
   };
 
+  const togglePin = async () => {
+    if (busy || !detail) return;
+    setBusy(true);
+    setActionErr(null);
+    try {
+      const updated = await api.pinTask(taskId, !detail.pinned);
+      setDetail(updated);
+      patchTask(updated.id, { pinned: updated.pinned }); // board/timeline reflect the lock instantly
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : String(e));
+      refetch();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div
       onClick={onClose}
@@ -148,6 +164,15 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                     />
                     {DISCIPLINE_LABEL[detail.discipline]}
                   </span>
+                  {detail.pinned && (
+                    <span
+                      className="chip"
+                      style={{ fontSize: 11, padding: "2px 9px", background: "var(--orange-soft)", color: "var(--orange-deep)", borderColor: "var(--orange)" }}
+                      title="Locked — the reflow engine will not move this task"
+                    >
+                      📌 pinned
+                    </span>
+                  )}
                 </div>
 
                 {/* Field rows */}
@@ -356,6 +381,26 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                         ))}
                       </select>
                     </label>
+                  )}
+                  {(isManager || detail.assignee === me) && (
+                    <button
+                      onClick={togglePin}
+                      disabled={busy}
+                      title={detail.pinned ? "Unlock — let the reflow engine reschedule this" : "Lock these dates — the reflow engine never moves this task"}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: 999,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        border: detail.pinned ? "1.5px solid var(--orange)" : "1.5px solid var(--line-strong)",
+                        background: detail.pinned ? "var(--orange-soft)" : "var(--cream)",
+                        color: detail.pinned ? "var(--orange-deep)" : "var(--ink-soft)",
+                        cursor: busy ? "not-allowed" : "pointer",
+                        opacity: busy ? 0.5 : 1,
+                      }}
+                    >
+                      {detail.pinned ? "📌 Pinned" : "📌 Pin dates"}
+                    </button>
                   )}
                 </div>
 

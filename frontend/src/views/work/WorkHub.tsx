@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../app/AppContext";
-import { api, type TaskStatus } from "../../lib/api";
+import { api, type TaskStatus, type WorkTask, type RescheduleStrategy } from "../../lib/api";
 import { WorkBoard } from "./WorkBoard";
 import { WorkList } from "./WorkList";
 import { WorkTimeline } from "./WorkTimeline";
 import { TaskDrawer } from "./TaskDrawer";
+import { WorkEventControl } from "./WorkEventControl";
 
 type Mode = "board" | "list" | "timeline";
 
@@ -13,6 +14,7 @@ export function WorkHub() {
   const [scope, setScope] = useState("me");
   const [mode, setMode] = useState<Mode>("board");
   const [selected, setSelected] = useState<string | null>(null);
+  const [reflowMsg, setReflowMsg] = useState<string | null>(null);
 
   // Stale-while-revalidate: render the cached board instantly, refresh in the background each visit.
   useEffect(() => { loadTasks(scope); }, [scope, loadTasks]);
@@ -31,6 +33,30 @@ export function WorkHub() {
     } catch {
       invalidateTasks(scope); // server unchanged (e.g. 403) → snap back to truth
     }
+  };
+
+  // Optimistic reflow: patch the moved tasks straight into the cache so the board + Gantt re-flow
+  // instantly (no spinner). The server already persisted them, so this matches the truth.
+  const onReflow = (moved: WorkTask[], strategy: RescheduleStrategy | null) => {
+    moved.forEach((t) =>
+      patchTask(t.id, {
+        scheduled_start: t.scheduled_start,
+        scheduled_end: t.scheduled_end,
+        status: t.status,
+        assignee: t.assignee,
+        estimate_days: t.estimate_days,
+        pinned: t.pinned,
+      }),
+    );
+    if (moved.length) setMode("timeline"); // jump to the Gantt so the re-flow is visible
+    setReflowMsg(
+      moved.length
+        ? `${moved.length} task${moved.length === 1 ? "" : "s"} re-flowed instantly` +
+            (strategy ? ` · AI strategist: ${strategy.action}${strategy.action === "right_shift" ? " (auto-applied)" : " (proposed in Inbox)"}` : "")
+        : strategy
+          ? `No dates moved · AI strategist chose ${strategy.action} (proposed in Inbox)`
+          : "No change",
+    );
   };
 
   const isPersonScope = scope.startsWith("user:");
@@ -132,7 +158,36 @@ export function WorkHub() {
             ))}
           </select>
         </button>
+
+        <WorkEventControl roster={roster} tasks={tasks} onReflow={onReflow} />
       </div>
+
+      {reflowMsg && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            marginBottom: 16,
+            padding: "10px 14px",
+            background: "var(--orange-soft)",
+            border: "1.5px solid var(--orange)",
+            borderRadius: 8,
+            fontSize: 13,
+            color: "var(--orange-deep)",
+            fontWeight: 600,
+          }}
+        >
+          <span>📅 {reflowMsg}</span>
+          <button
+            onClick={() => setReflowMsg(null)}
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--orange-deep)", fontWeight: 800, fontSize: 16, lineHeight: 1 }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Body */}
       {loading ? (

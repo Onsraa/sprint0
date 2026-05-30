@@ -908,6 +908,19 @@ async def task_status(task_id: str, status: str, member: DeveloperProfile = Depe
     return updated.model_dump()
 
 
+@app.post("/api/tasks/{task_id}/pin")
+async def pin_task(task_id: str, pinned: bool = True, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Lock (or unlock) a task's dates so the reflow engine never moves it (Reclaim-style lock).
+    The scheduler already honors Task.pinned — this is the only path that sets it."""
+    t = await _load_task_or_404(task_id)
+    if member.role != "manager" and t.assignee != member.username:
+        raise HTTPException(403, "only the manager or the task's owner can pin/unpin it")
+    now = datetime.now(timezone.utc).isoformat()
+    await update_task(task_id, {"pinned": pinned, "updated_at": now})
+    t.pinned, t.updated_at = pinned, now
+    return t.model_dump()
+
+
 async def _reschedule_project(project_id: int) -> int:
     """Re-run the deterministic scheduler for a project's Tasks + persist the dates (best-effort).
     Called after any assignment change so the old + new owner's calendars re-pack. Returns the count."""
