@@ -222,6 +222,20 @@ export interface DecisionCardResponse {
   error?: string;
 }
 
+export interface GraphNode { path: string; domain: string; node_type: string; loc: number; project_id: string; }
+export interface GraphEdge { from_path: string; to_path: string; edge_type: string; }
+export interface GovernanceRule { id: string; decision_id: string; domain: string; governs_pattern: string; constraint: string; }
+export interface DriftReport {
+  severity: "blocking" | "drift" | "cosmetic";
+  drift_from_decision_id: string;
+  drift_from_description: string;
+  affected_files: string[];
+  violation: string;
+  suggested_fix: string;
+  effort: "small" | "medium" | "large";
+  domain: string;
+}
+
 export interface QueueItem {
   plan_id: string;
   project: string;
@@ -670,6 +684,28 @@ export const api = {
   /** Decision Card (System 2): two-pass adversarial AI evaluation for a relay gate. */
   decisionCard(planId: string, discipline: Discipline): Promise<DecisionCardResponse> {
     return jget(`/api/relays/${planId}/gates/${discipline}/card`);
+  },
+  /* Code Graph (roadmap System 4) */
+  buildGraph(): Promise<{ project_id: string; root: string; nodes: number; edges: number }> {
+    return jpost(`/api/graph/build`, {});
+  },
+  getGraph(projectId = "local"): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+    return jget(`/api/graph?project_id=${projectId}`);
+  },
+  graphDependents(path: string): Promise<{ path: string; dependents: string[]; dependencies: string[] }> {
+    return jget(`/api/graph/dependents?path=${encodeURIComponent(path)}`);
+  },
+  addGovernance(body: { governs_pattern: string; constraint?: string; domain?: string }): Promise<GovernanceRule> {
+    return jpost(`/api/graph/governance`, body);
+  },
+  listGovernance(): Promise<{ rules: GovernanceRule[] }> {
+    return jget(`/api/graph/governance`);
+  },
+  checkDrift(): Promise<{ count: number; reports: DriftReport[] }> {
+    return jpost(`/api/graph/drift`, {});
+  },
+  createRefactorTask(projectId: number, report: DriftReport): Promise<WorkTask> {
+    return jpost(`/api/graph/refactor`, { project_id: projectId, report });
   },
   /** Integration gate: declare an issue's API failing/ok. Consumer (own issue) or qa-gate owner.
    *  Returns the new RelayState, or `{need_target, candidates}` when the producer is ambiguous. */

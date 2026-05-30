@@ -14,6 +14,7 @@ import { RatifyQueue } from "../views/RatifyQueue";
 import { RelayPortfolio } from "../views/RelayPortfolio";
 import { Portfolio } from "../views/Portfolio";
 import { Attributions } from "../views/Attributions";
+import { CodeGraph } from "../views/CodeGraph";
 import { QAGate } from "../views/QAGate";
 import { Wizard } from "../wizard/Wizard";
 
@@ -67,6 +68,7 @@ function navFor(role: Role): NavSection[] {
         { id: "queue", label: "Ratify", icon: "✓" },
         { id: "team", label: "Team", icon: "◉" },
         { id: "attributions", label: "Merges", icon: "⇄" },
+        { id: "codegraph", label: "Code graph", icon: "🕸" },
       ]},
       { title: "You", items: [
         { id: "portfolio", label: "Portfolio", icon: "🗂" },
@@ -258,6 +260,7 @@ function TopBar() {
     queue: "Ratify queue",
     attributions: "Merge attribution",
     portfolio: "Decision Portfolio",
+    codegraph: "Code Graph",
     qa: "QA gate",
     inbox: "Inbox",
   };
@@ -388,6 +391,7 @@ function MainView() {
         {view === "queue" && <RatifyQueue />}
         {view === "ratify" && <RatifyPanel />}
         {view === "attributions" && <Attributions />}
+        {view === "codegraph" && <CodeGraph />}
         {view === "portfolio" && <Portfolio />}
         {view === "inbox" && <InboxPage />}
       </div>

@@ -464,3 +464,43 @@ class DispatchRequest(BaseModel):
 class FeatureRequest(BaseModel):  # mid-prod feature add
     text: str
     constraints: Optional[Constraints] = None
+
+
+# ── Code Graph (roadmap System 4): dependency graph (A) + decision governance (B) + drift ──
+class GraphNode(BaseModel):
+    path: str                                              # repo-relative file path
+    domain: str = "backend"                                # inferred from path
+    node_type: Literal["file", "module", "interface"] = "file"
+    project_id: str = "local"
+    loc: int = 0                                           # lines of code (cheap size signal)
+    governed_by: list[str] = Field(default_factory=list)   # decision ids that govern this file
+
+
+class GraphEdge(BaseModel):
+    from_path: str
+    to_path: str
+    edge_type: Literal["import", "export", "contract", "data-flow"] = "import"
+    project_id: str = "local"
+
+
+class GovernanceRule(BaseModel):
+    """Graph B: a ratified decision governs a path pattern (e.g. 'all auth code lives under app/auth')."""
+    id: str
+    decision_id: str = ""
+    domain: str = "backend"
+    governs_pattern: str                                   # glob, e.g. 'app/*auth*' or 'app/scheduler*'
+    constraint: str = ""                                   # human-readable rule
+    forbid_importers_outside: bool = True                  # flag files OUTSIDE the pattern importing a governed file
+    created_at: str = ""
+
+
+class DriftReport(BaseModel):
+    """A graph-detected violation → becomes a maintenance/refactor task in the relay."""
+    severity: Literal["blocking", "drift", "cosmetic"] = "drift"
+    drift_from_decision_id: str = ""
+    drift_from_description: str = ""                       # human-readable governing rule/cause
+    affected_files: list[str] = Field(default_factory=list)
+    violation: str = ""
+    suggested_fix: str = ""
+    effort: Literal["small", "medium", "large"] = "medium"
+    domain: str = "backend"

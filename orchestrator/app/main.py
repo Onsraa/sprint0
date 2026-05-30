@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import io
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -22,19 +23,20 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, gitlab, handoff, relay, scheduler, staffing, strategist, tasks as tasklib, team
+from app import auth, gitlab, graph, handoff, relay, scheduler, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, RatifyRequest, RelayState, Task,
-    DecisionCard, ImpactedTask, RescheduleProposal,
+    ContextScope, DecisionCard, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
 )
 from app.agent import DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card
 from app.execute import execute_plan, extend_project
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
     all_decisions, decisions_for_project, delete_decision, get_decision, update_decision,
+    save_graph, graph_nodes, graph_edges, save_governance_rule, all_governance_rules,
     get_access_grant, get_project_record, past_projects, record_merge,
     save_access_grant, save_decision, save_notification, notifications_for_user, mark_all_read,
     save_project_record, update_access_grant, update_project_record,
@@ -1325,6 +1327,107 @@ async def decision_card_for_gate(plan_id: str, discipline: str,
                 "low_confidence": p1.confidence < 60, "past": surfaced}
     except Exception as e:
         return {"card": None, "signal": "grey", "low_confidence": False, "past": surfaced, "error": str(e)[:200]}
+
+
+# ── Code Graph (roadmap System 4): dependency graph (A) + governance (B) + drift → refactor ──
+_GRAPH_ROOT = os.path.dirname(os.path.abspath(__file__))  # the live backend package (orchestrator/app)
+
+
+class GraphBuildRequest(BaseModel):
+    root: str = ""            # default = the live backend package
+    project_id: str = "local"
+
+
+@app.post("/api/graph/build")
+async def graph_build(req: GraphBuildRequest, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Build Graph A — parse Python imports under `root` (default: this backend) → nodes + edges → persist."""
+    root = req.root or _GRAPH_ROOT
+    nodes, edges = graph.build_python_graph(root, project_id=req.project_id)
+    try:
+        await save_graph([n.model_dump() for n in nodes], [e.model_dump() for e in edges], req.project_id)
+    except Exception:
+        pass
+    return {"project_id": req.project_id, "root": root, "nodes": len(nodes), "edges": len(edges)}
+
+
+@app.get("/api/graph")
+async def graph_get(project_id: str = "local", member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    return {"project_id": project_id, "nodes": await graph_nodes(project_id), "edges": await graph_edges(project_id)}
+
+
+@app.get("/api/graph/dependents")
+async def graph_dependents(path: str, project_id: str = "local",
+                           member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Transitive dependents (who breaks if `path` changes) + dependencies (the focus-branch set)."""
+    edges = [GraphEdge(**e) for e in await graph_edges(project_id)]
+    return {"path": path, "dependents": graph.dependents_of(path, edges),
+            "dependencies": graph.dependencies_of(path, edges)}
+
+
+class GovernanceRuleRequest(BaseModel):
+    governs_pattern: str
+    constraint: str = ""
+    domain: str = "backend"
+    decision_id: str = ""
+
+
+@app.post("/api/graph/governance")
+async def graph_add_governance(req: GovernanceRuleRequest,
+                               member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Graph B: register a decision-governance rule (a path pattern + constraint)."""
+    if member.role != "manager" and member.discipline != req.domain:
+        raise HTTPException(403, "only the manager or the domain lead can set governance for this domain")
+    rule = GovernanceRule(id=f"gov_{uuid.uuid4().hex[:8]}", governs_pattern=req.governs_pattern,
+                          constraint=req.constraint, domain=req.domain, decision_id=req.decision_id,
+                          created_at=datetime.now(timezone.utc).isoformat())
+    try:
+        await save_governance_rule(rule.model_dump())
+    except Exception:
+        pass
+    return rule.model_dump()
+
+
+@app.get("/api/graph/governance")
+async def graph_list_governance(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    return {"rules": await all_governance_rules()}
+
+
+@app.post("/api/graph/drift")
+async def graph_drift(project_id: str = "local", member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Drift: import cycles (blocking) + governance violations (drift) over the stored Graph A × Graph B."""
+    nodes = [GraphNode(**n) for n in await graph_nodes(project_id)]
+    edges = [GraphEdge(**e) for e in await graph_edges(project_id)]
+    rules = [GovernanceRule(**r) for r in await all_governance_rules()]
+    reports = graph.drift_reports(nodes, edges, rules)
+    return {"project_id": project_id, "count": len(reports), "reports": [r.model_dump() for r in reports]}
+
+
+class RefactorRequest(BaseModel):
+    project_id: int                 # the project the maintenance task lands in
+    report: DriftReport
+
+
+@app.post("/api/graph/refactor")
+async def graph_refactor(req: RefactorRequest, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Drift report → a maintenance Task in the work hub / relay (same system as feature work)."""
+    if member.role != "manager":
+        raise HTTPException(403, "only the manager can schedule a refactor task")
+    r = req.report
+    now = datetime.now(timezone.utc).isoformat()
+    disc = r.domain if r.domain in ("uiux", "backend", "frontend", "qa", "devops") else "backend"
+    pri = "urgent" if r.severity == "blocking" else ("high" if r.severity == "drift" else "low")
+    task = Task(
+        id=f"refactor_{uuid.uuid4().hex[:8]}", project_id=req.project_id,
+        title=f"Refactor: {r.drift_from_description or r.violation}"[:120],
+        description=f"{r.violation}\n\nFix: {r.suggested_fix}\n\nFiles: {', '.join(r.affected_files)}",
+        discipline=disc, risk="medium", priority=pri, status="planned",
+        context_scope=ContextScope(files=r.affected_files, note="maintenance/refactor (Code Graph drift)"),
+        created_at=now, updated_at=now)
+    try:
+        await save_tasks([task.model_dump()])
+    except Exception:
+        pass
+    return task.model_dump()
 
 
 # Attribution queue — merges sprint0 can't map to a roster member land here (the human

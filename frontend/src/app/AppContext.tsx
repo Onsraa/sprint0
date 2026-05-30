@@ -80,7 +80,7 @@ export function useApp(): AppContextValue {
   return ctx;
 }
 
-const MANAGER_VIEWS: View[] = ["dashboard", "work", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions", "inbox"];
+const MANAGER_VIEWS: View[] = ["dashboard", "work", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions", "codegraph", "inbox"];
 const DEV_VIEWS: View[] = ["work", "today", "issue", "passport", "ratify", "qa", "queue", "portfolio", "inbox"];
 
 /** Where each persona lands. Leads land on the cross-project ratify queue (not

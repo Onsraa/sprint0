@@ -202,6 +202,43 @@ async def all_decisions(limit: int = 500) -> list[dict]:
         return await m.find(DECISIONS_COLLECTION, projection={"_id": 0}, limit=limit)
 
 
+# ── Code Graph (System 4): Graph A (nodes/edges) + Graph B (governance rules) ──
+GRAPH_NODES_COLL = "GraphNodes"
+GRAPH_EDGES_COLL = "GraphEdges"
+GOVERNANCE_COLL = "GovernanceRules"
+
+
+async def save_graph(nodes: list[dict], edges: list[dict], project_id: str) -> None:
+    """Replace the stored Graph A for a project (clear then insert) — a rebuild is idempotent."""
+    async with MongoMCP() as m:
+        await m.delete_many(GRAPH_NODES_COLL, {"project_id": project_id})
+        await m.delete_many(GRAPH_EDGES_COLL, {"project_id": project_id})
+        if nodes:
+            await m.insert_many(GRAPH_NODES_COLL, nodes)
+        if edges:
+            await m.insert_many(GRAPH_EDGES_COLL, edges)
+
+
+async def graph_nodes(project_id: str = "local") -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(GRAPH_NODES_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=2000)
+
+
+async def graph_edges(project_id: str = "local") -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(GRAPH_EDGES_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=5000)
+
+
+async def save_governance_rule(doc: dict) -> None:
+    async with MongoMCP() as m:
+        await m.insert_many(GOVERNANCE_COLL, [doc])
+
+
+async def all_governance_rules() -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(GOVERNANCE_COLL, projection={"_id": 0}, limit=200)
+
+
 NOTIFICATIONS_COLL = "Notifications"
 ACCESS_GRANTS_COLL = "AccessGrants"
 
