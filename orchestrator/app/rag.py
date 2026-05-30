@@ -174,6 +174,34 @@ async def decisions_by_owner(owner_id: str) -> list[dict]:
         return await m.find(DECISIONS_COLLECTION, query={"owner_id": owner_id}, projection={"_id": 0}, limit=200)
 
 
+async def get_decision(decision_id: str) -> dict:
+    async with MongoMCP() as m:
+        rows = await m.find(DECISIONS_COLLECTION, query={"id": decision_id}, projection={"_id": 0}, limit=1)
+    return rows[0] if rows else {}
+
+
+async def update_decision(decision_id: str, patch: dict) -> None:
+    async with MongoMCP() as m:
+        await m.update_many(DECISIONS_COLLECTION, {"id": decision_id}, {"$set": patch})
+
+
+async def delete_decision(decision_id: str) -> None:
+    async with MongoMCP() as m:
+        await m.delete_many(DECISIONS_COLLECTION, {"id": decision_id})
+
+
+async def decisions_for_project(project_name: str) -> list[dict]:
+    """Decisions captured for a given project (matched by project_name) — Outcome Validation join."""
+    async with MongoMCP() as m:
+        return await m.find(DECISIONS_COLLECTION, query={"project_name": project_name}, projection={"_id": 0}, limit=200)
+
+
+async def all_decisions(limit: int = 500) -> list[dict]:
+    """The whole Decisions pool — the cross-user surfacing endpoint filters it by the quality gate."""
+    async with MongoMCP() as m:
+        return await m.find(DECISIONS_COLLECTION, projection={"_id": 0}, limit=limit)
+
+
 NOTIFICATIONS_COLL = "Notifications"
 ACCESS_GRANTS_COLL = "AccessGrants"
 

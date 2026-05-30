@@ -198,6 +198,7 @@ export interface Decision {
   outcome_validated: boolean;
   visibility: "personal" | "team";
   deprecated: boolean;
+  deprecation_reason?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -532,6 +533,23 @@ export const api = {
   },
   myDecisions(): Promise<{ username: string; count: number; decisions: Decision[] }> {
     return jget("/api/me/decisions");
+  },
+  /* Outcome Validation (roadmap System 3) — per-decision memory control + cross-user surfacing */
+  surfaceDecisions(domain?: string, tags?: string): Promise<{ own: Decision[]; team: Decision[] }> {
+    const q = new URLSearchParams();
+    if (domain) q.set("domain", domain);
+    if (tags) q.set("tags", tags);
+    const qs = q.toString();
+    return jget(`/api/decisions/surface${qs ? `?${qs}` : ""}`);
+  },
+  deprecateDecision(id: string, reason: string): Promise<Decision> {
+    return jpost(`/api/decisions/${id}/deprecate`, { reason });
+  },
+  setDecisionVisibility(id: string, visibility: "personal" | "team"): Promise<Decision> {
+    return jpost(`/api/decisions/${id}/visibility`, { visibility });
+  },
+  deleteDecision(id: string): Promise<{ deleted: string }> {
+    return jdelete(`/api/decisions/${id}`);
   },
   myQueue(): Promise<{ username: string; count: number; items: QueueItem[] }> {
     return jget("/api/me/queue");

@@ -33,6 +33,7 @@ from app.contracts import (
 from app.execute import execute_plan, extend_project
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
+    all_decisions, decisions_for_project, delete_decision, get_decision, update_decision,
     get_access_grant, get_project_record, past_projects, record_merge,
     save_access_grant, save_decision, save_notification, notifications_for_user, mark_all_read,
     save_project_record, update_access_grant, update_project_record,
@@ -1149,9 +1150,35 @@ class CloseRequest(BaseModel):
     outcome_notes: str = ""
 
 
+async def _validate_project_decisions(project_name: str) -> int:
+    """Outcome Validation: a shipped project is the success signal → every Decision captured for it
+    (matched by project_name) becomes outcome_validated, and each owner is notified. Best-effort.
+    Returns how many decisions flipped to validated."""
+    if not project_name:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    owners: set[str] = set()
+    count = 0
+    try:
+        for d in await decisions_for_project(project_name):
+            if not d.get("outcome_validated"):
+                await update_decision(d["id"], {"outcome_validated": True, "updated_at": now})
+                count += 1
+                if d.get("owner_id"):
+                    owners.add(d["owner_id"])
+        for owner in owners:
+            await notify(owner, "project_shipped",
+                         f"Shipped: {project_name} — your decisions are now validated",
+                         ref={"project_name": project_name})
+    except Exception:
+        pass
+    return count
+
+
 @app.post("/api/projects/{project_id}/close")
 async def close(project_id: int, req: CloseRequest) -> dict:
-    """Post-mortem: write the shipped project into agency memory; mark the record closed."""
+    """Post-mortem: write the shipped project into agency memory; mark the record closed. Outcome
+    Validation fires here — this project's decisions become outcome_validated + owners notified."""
     record = await get_project_record(project_id)
     if not record:
         raise HTTPException(404, "no project record")
@@ -1160,7 +1187,99 @@ async def close(project_id: int, req: CloseRequest) -> dict:
         await update_project_record(project_id, {"status": "closed"})
     except Exception:
         pass
-    return out
+    validated = await _validate_project_decisions(record.get("name", ""))
+    return {**out, "decisions_validated": validated}
+
+
+# ── Outcome Validation: per-decision memory control + cross-user surfacing (roadmap System 3) ──
+class DeprecateRequest(BaseModel):
+    reason: str = ""
+
+
+class ReasoningEdit(BaseModel):
+    reasoning: str
+
+
+class VisibilityRequest(BaseModel):
+    visibility: Literal["personal", "team"]
+
+
+async def _owned_decision_or_403(decision_id: str, member: DeveloperProfile) -> dict:
+    d = await get_decision(decision_id)
+    if not d:
+        raise HTTPException(404, "no such decision")
+    if member.role != "manager" and d.get("owner_id") != member.username:
+        raise HTTPException(403, "only the decision owner or a manager can change it")
+    return d
+
+
+@app.post("/api/decisions/{decision_id}/deprecate")
+async def deprecate_decision(decision_id: str, req: DeprecateRequest,
+                             member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Cautionary record: won't surface as a proposal; the AI treats the reason as a negative signal."""
+    await _owned_decision_or_403(decision_id, member)
+    await update_decision(decision_id, {"deprecated": True, "deprecation_reason": req.reason,
+                                        "updated_at": datetime.now(timezone.utc).isoformat()})
+    return await get_decision(decision_id)
+
+
+@app.patch("/api/decisions/{decision_id}")
+async def edit_decision(decision_id: str, req: ReasoningEdit,
+                        member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Improve a decision's reasoning (signal quality); still surfaceable."""
+    await _owned_decision_or_403(decision_id, member)
+    await update_decision(decision_id, {"reasoning": req.reasoning,
+                                        "updated_at": datetime.now(timezone.utc).isoformat()})
+    return await get_decision(decision_id)
+
+
+@app.post("/api/decisions/{decision_id}/visibility")
+async def set_decision_visibility(decision_id: str, req: VisibilityRequest,
+                                  member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Toggle surfacing scope: personal (only you) ↔ team (eligible for cross-user surfacing)."""
+    await _owned_decision_or_403(decision_id, member)
+    await update_decision(decision_id, {"visibility": req.visibility,
+                                        "updated_at": datetime.now(timezone.utc).isoformat()})
+    return await get_decision(decision_id)
+
+
+@app.delete("/api/decisions/{decision_id}")
+async def remove_decision(decision_id: str,
+                          member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Remove a decision from the pool entirely (cannot be undone)."""
+    await _owned_decision_or_403(decision_id, member)
+    await delete_decision(decision_id)
+    return {"deleted": decision_id}
+
+
+@app.get("/api/decisions/surface")
+async def surface_decisions(domain: str = "", tags: str = "",
+                            member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Cross-user surfacing + the quality gate: your own decisions (always, even unvalidated) plus
+    OTHER members' decisions that passed the gate — outcome_validated AND reasoning AND visibility=team.
+    Deprecated decisions never surface. Optional filter by `domain` + comma-separated `tags`."""
+    want_tags = {t.strip() for t in tags.split(",") if t.strip()}
+
+    def matches(d: dict) -> bool:
+        if domain and d.get("domain") != domain:
+            return False
+        if want_tags and not (want_tags & set(d.get("context_tags", []))):
+            return False
+        return True
+
+    own: list[dict] = []
+    team: list[dict] = []
+    try:
+        for d in await all_decisions():
+            if d.get("deprecated") or not matches(d):
+                continue
+            if d.get("owner_id") == member.username:
+                own.append(d)                                                    # rule 1: own always surfaced
+            elif d.get("outcome_validated") and d.get("reasoning") and d.get("visibility") == "team":
+                team.append(d)                                                   # rule 2 + quality gate (attribution via owner_id)
+    except Exception:
+        pass
+    return {"own": own, "team": team}
 
 
 # Attribution queue — merges sprint0 can't map to a roster member land here (the human
