@@ -222,6 +222,8 @@ export interface DecisionCardResponse {
   error?: string;
 }
 
+export interface UserSubscription { id: string; watcher_id: string; subject_id: string; events: string[]; created_at: string; }
+
 export interface GraphNode { path: string; domain: string; node_type: string; loc: number; project_id: string; }
 export interface GraphEdge { from_path: string; to_path: string; edge_type: string; }
 export interface GovernanceRule { id: string; decision_id: string; domain: string; governs_pattern: string; constraint: string; }
@@ -706,6 +708,20 @@ export const api = {
   },
   createRefactorTask(projectId: number, report: DriftReport): Promise<WorkTask> {
     return jpost(`/api/graph/refactor`, { project_id: projectId, report });
+  },
+  /* Subscriptions + live notifications (roadmap System 5) */
+  subscribe(subjectId: string, events: string[] = ["assigned", "qa_failed"]): Promise<UserSubscription> {
+    return jpost(`/api/subscriptions`, { subject_id: subjectId, events });
+  },
+  unsubscribe(subjectId: string): Promise<{ unsubscribed: string }> {
+    return jdelete(`/api/subscriptions/${subjectId}`);
+  },
+  listSubscriptions(): Promise<{ watching: UserSubscription[]; watchers: UserSubscription[] }> {
+    return jget(`/api/subscriptions`);
+  },
+  /** WS URL for the live notification stream (System 5). */
+  notificationsWsUrl(user: string): string {
+    return `${BASE.replace(/^http/, "ws")}/api/ws/notifications?user=${encodeURIComponent(user)}`;
   },
   /** Integration gate: declare an issue's API failing/ok. Consumer (own issue) or qa-gate owner.
    *  Returns the new RelayState, or `{need_target, candidates}` when the producer is ambiguous. */

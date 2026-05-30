@@ -270,7 +270,8 @@ class Notification(BaseModel):
     id: str
     user_id: str                  # recipient username
     type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed",
-                  "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned"]
+                  "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned",
+                  "task_completed", "drift_flagged"]
     title: str
     body: str = ""
     ref: dict = Field(default_factory=dict)
@@ -289,6 +290,17 @@ class AccessGrant(BaseModel):
     notifications_muted: bool = False
     created_at: str
     updated_at: str
+
+
+class UserSubscription(BaseModel):
+    """Roadmap System 5: a watcher opts in to another member's events (e.g. a senior follows a junior's
+    `assigned`/`qa_failed`). Drives notification fan-out + live WS push — NOT visibility (that stays
+    consent-based via AccessGrant)."""
+    id: str
+    watcher_id: str
+    subject_id: str
+    events: list[Literal["assigned", "completed", "qa_failed", "drift_flagged"]] = Field(default_factory=list)
+    created_at: str
 
 
 class ChangeEvent(BaseModel):

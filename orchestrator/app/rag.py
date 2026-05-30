@@ -239,6 +239,32 @@ async def all_governance_rules() -> list[dict]:
         return await m.find(GOVERNANCE_COLL, projection={"_id": 0}, limit=200)
 
 
+# ── Subscriptions (System 5): watcher → subject event follows (notification fan-out) ──
+SUBSCRIPTIONS_COLL = "Subscriptions"
+
+
+async def save_subscription(doc: dict) -> None:
+    """Upsert a watcher→subject subscription (one row per pair)."""
+    async with MongoMCP() as m:
+        await m.delete_many(SUBSCRIPTIONS_COLL, {"watcher_id": doc["watcher_id"], "subject_id": doc["subject_id"]})
+        await m.insert_many(SUBSCRIPTIONS_COLL, [doc])
+
+
+async def delete_subscription(watcher_id: str, subject_id: str) -> None:
+    async with MongoMCP() as m:
+        await m.delete_many(SUBSCRIPTIONS_COLL, {"watcher_id": watcher_id, "subject_id": subject_id})
+
+
+async def subscriptions_of(watcher_id: str) -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(SUBSCRIPTIONS_COLL, query={"watcher_id": watcher_id}, projection={"_id": 0}, limit=200)
+
+
+async def watchers_of(subject_id: str) -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(SUBSCRIPTIONS_COLL, query={"subject_id": subject_id}, projection={"_id": 0}, limit=200)
+
+
 NOTIFICATIONS_COLL = "Notifications"
 ACCESS_GRANTS_COLL = "AccessGrants"
 

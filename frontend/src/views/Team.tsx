@@ -195,6 +195,16 @@ function DevCard({
   const linked = d.gitlab_user_id != null;
   const [accessBusy, setAccessBusy] = useState(false);
   const [inlineNote, setInlineNote] = useState<string | null>(null);
+  const [watched, setWatched] = useState(false);
+
+  const toggleWatch = async () => {
+    if (accessBusy) return;
+    setAccessBusy(true);
+    try {
+      if (watched) { await api.unsubscribe(d.username); setWatched(false); }
+      else { await api.subscribe(d.username, ["assigned", "qa_failed"]); setWatched(true); }
+    } catch { /* ignore */ } finally { setAccessBusy(false); }
+  };
 
   const handleRequestAccess = async () => {
     if (accessBusy) return;
@@ -294,6 +304,15 @@ function DevCard({
 
         {!isMe && (
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+            <button
+              onClick={toggleWatch}
+              disabled={accessBusy}
+              title="Get notified of this member's assigned / QA-failed events (System 5)"
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: 10, padding: "2px 8px", opacity: accessBusy ? 0.5 : 1 }}
+            >
+              {watched ? "🔔 Watching" : "Watch"}
+            </button>
             {grant ? (
               <>
                 <span className="chip mono" style={{ fontSize: 9, padding: "2px 6px", background: "var(--positive-tint)", color: "var(--positive)", fontWeight: 700 }}>✓ access</span>

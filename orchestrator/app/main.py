@@ -28,7 +28,7 @@ from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
-    PlanRequest, ProjectRecord, QAReport, RatifyRequest, RelayState, Task,
+    PlanRequest, ProjectRecord, QAReport, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, DecisionCard, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
 )
 from app.agent import DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card
@@ -37,6 +37,7 @@ from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
     all_decisions, decisions_for_project, delete_decision, get_decision, update_decision,
     save_graph, graph_nodes, graph_edges, save_governance_rule, all_governance_rules,
+    save_subscription, delete_subscription, subscriptions_of, watchers_of,
     get_access_grant, get_project_record, past_projects, record_merge,
     save_access_grant, save_decision, save_notification, notifications_for_user, mark_all_read,
     save_project_record, update_access_grant, update_project_record,
@@ -204,13 +205,42 @@ async def my_queue(member: DeveloperProfile = Depends(auth.current_member)) -> d
     return {"username": member.username, "count": len(items), "items": items}
 
 
-async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
-    """Best-effort: append a Notification to a member's Inbox feed."""
+# ── Live notification push (System 5): query-identified WS channel (browsers can't set WS headers) ──
+_WS_CLIENTS: dict[str, set[WebSocket]] = {}
+
+
+async def _push_ws(user_id: str, payload: dict) -> None:
+    """Best-effort: push a JSON payload to every live socket the user has open."""
+    for ws in list(_WS_CLIENTS.get(user_id, ())):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            _WS_CLIENTS.get(user_id, set()).discard(ws)
+
+
+async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned", "task_completed", "drift_flagged"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
+    """Best-effort: append a Notification to a member's Inbox feed + push it live over WS (System 5)."""
     try:
         n = Notification(id=f"ntf_{uuid.uuid4().hex[:8]}", user_id=user_id, type=type, title=title,
                          body=body, ref=ref or {}, actionable=actionable,
                          created_at=datetime.now(timezone.utc).isoformat())
         await save_notification(n.model_dump())
+        await _push_ws(user_id, {"kind": "notification", "notification": n.model_dump()})
+    except Exception:
+        pass
+
+
+_EVENT_TO_TYPE = {"assigned": "task_assigned", "completed": "task_completed",
+                  "qa_failed": "qa_failed", "drift_flagged": "drift_flagged"}
+
+
+async def notify_watchers(subject_id: str, event: str, title: str, *, body: str = "", ref: dict | None = None) -> None:
+    """Fan-out (System 5): notify everyone subscribed to `subject_id` for `event`. Best-effort."""
+    try:
+        for sub in await watchers_of(subject_id):
+            w = sub.get("watcher_id")
+            if w and w != subject_id and event in (sub.get("events") or []):
+                await notify(w, _EVENT_TO_TYPE.get(event, "task_assigned"), title, body=body, ref=ref)  # type: ignore[arg-type]
     except Exception:
         pass
 
@@ -674,6 +704,9 @@ async def flag_integration(
             actionable=True,
         )
         await _reopen_producer(plan_id, target_issue)
+        await notify_watchers(target_issue.assignee, "qa_failed",
+                              f"@{target_issue.assignee}'s API flagged failing: {target_issue.title}",
+                              ref={"plan_id": plan_id, "issue_id": target_issue.id})
     return state.model_dump()
 
 
@@ -899,6 +932,8 @@ async def reassign_task(task_id: str, assignee: str = "", member: DeveloperProfi
         await notify(new, "task_assigned", f"Task assigned to you: {updated.title}",
                      body=f"@{member.username} assigned you “{updated.title}”.",
                      ref={"task_id": task_id, "project_id": updated.project_id})
+        await notify_watchers(new, "assigned", f"@{new} was assigned “{updated.title}”",
+                              ref={"task_id": task_id, "project_id": updated.project_id})
     return await get_task(task_id) or updated.model_dump()  # return the freshly re-scheduled task
 
 
@@ -1554,3 +1589,56 @@ async def plan_events(ws: WebSocket, plan_id: str) -> None:
         await ws.close()
     except WebSocketDisconnect:
         return
+
+
+# ── Subscriptions + live notifications (roadmap System 5) ──
+class SubscriptionRequest(BaseModel):
+    subject_id: str
+    events: list[str] = ["assigned", "qa_failed"]
+
+
+@app.post("/api/subscriptions")
+async def subscribe(req: SubscriptionRequest, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Follow another member's events (notification fan-out — not visibility)."""
+    if req.subject_id == member.username:
+        raise HTTPException(400, "can't subscribe to yourself")
+    valid = [e for e in req.events if e in ("assigned", "completed", "qa_failed", "drift_flagged")]
+    sub = UserSubscription(id=f"sub_{uuid.uuid4().hex[:8]}", watcher_id=member.username,
+                           subject_id=req.subject_id, events=valid or ["assigned", "qa_failed"],
+                           created_at=datetime.now(timezone.utc).isoformat())
+    await save_subscription(sub.model_dump())
+    return sub.model_dump()
+
+
+@app.delete("/api/subscriptions/{subject_id}")
+async def unsubscribe(subject_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    await delete_subscription(member.username, subject_id)
+    return {"unsubscribed": subject_id}
+
+
+@app.get("/api/subscriptions")
+async def list_subscriptions(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    return {"watching": await subscriptions_of(member.username), "watchers": await watchers_of(member.username)}
+
+
+@app.websocket("/api/ws/notifications")
+async def ws_notifications(ws: WebSocket, user: str = "") -> None:
+    """Live notification stream (System 5). Connect with ?user=<username>; notify()/notify_watchers push
+    new Notifications here in real time (the bell updates without polling). Query-param identity — unauthed,
+    matching the existing demo WS (browsers can't set custom WS headers)."""
+    await ws.accept()
+    if not user:
+        await ws.close()
+        return
+    _WS_CLIENTS.setdefault(user, set()).add(ws)
+    try:
+        while True:
+            await ws.receive_text()  # keep-alive; client messages are ignored
+    except WebSocketDisconnect:
+        pass
+    finally:
+        socks = _WS_CLIENTS.get(user)
+        if socks is not None:
+            socks.discard(ws)
+            if not socks:
+                _WS_CLIENTS.pop(user, None)

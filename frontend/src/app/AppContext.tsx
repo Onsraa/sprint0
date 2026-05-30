@@ -212,6 +212,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [member]);
   useEffect(() => { loadInbox(); }, [loadInbox]);
 
+  // Live notifications (System 5): open a WS for the logged-in member; refresh the inbox on each push.
+  useEffect(() => {
+    if (!member) return;
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(api.notificationsWsUrl(member.username));
+      ws.onmessage = () => loadInbox();
+    } catch {
+      /* WS unavailable — the poll-based inbox still works */
+    }
+    return () => {
+      try { ws?.close(); } catch { /* ignore */ }
+    };
+  }, [member, loadInbox]);
+
   // Work-hub Tasks: cached by scope, stale-while-revalidate — stops the refetch-on-every-nav.
   const [tasksByScope, setTasksByScope] = useState<Record<string, WorkTask[]>>({});
   const [taskFetching, setTaskFetching] = useState<string | null>(null);
