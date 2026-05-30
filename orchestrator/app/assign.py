@@ -1,38 +1,28 @@
-"""Assignment + trust gate (per-account demo).
+"""Assignment — scored attribution (spine refactor P3).
 
-Candidates arrive pre-ranked by skill (vector match) carrying their Member attributes
-(per-discipline trust, discipline, load). Rules:
-  1. Skip the unavailable (load ≥ 100 — e.g. the senior engineer already at full capacity).
-  2. Prefer a qualified, in-discipline dev (per-discipline trust clears the issue's risk).
-  3. Else assign the best available anyway and FLAG the stretch ("no prior <discipline>").
-Mutates the PlanJSON in place (assignee + stretch_flag).
+Each issue's required_skill is vector-matched to developers (skill_dev); we pick the best by a
+weighted score (scoring.best_assignment): skill cosine × per-lane trust × load × lane-match ×
+seniority-vs-risk × history. The lane/discipline is ONE signal, not a hard gate — a high-skill
+out-of-lane dev can win. A weak best score (below the floor) or an out-of-lane pick sets stretch_flag
+so the manager looks. Mutates the PlanJSON in place (assignee + stretch_flag).
 """
 from __future__ import annotations
 
+from app import scoring
 from app.contracts import PlanJSON
 
-_RANK = {"low": 0, "medium": 1, "high": 2}
-
-
-def _trust_in(cand: dict, discipline: str) -> str:
-    return (cand.get("trust") or {}).get(discipline) or cand.get("trust_level", "low")
+_RANK = {"low": 0, "medium": 1, "high": 2}  # kept here — routing.py imports it
 
 
 def assign_developers(plan: PlanJSON, skill_dev: dict[str, list[dict]]) -> None:
     for epic in plan.epics:
         for issue in epic.issues:
-            disc = issue.discipline
-            need = _RANK[issue.risk]
-            cands = [c for c in skill_dev.get(issue.required_skill, []) if c.get("role", "developer") == "developer"]
-            avail = [c for c in cands if int(c.get("load", 0) or 0) < 100]  # drop the fully-loaded
-            chosen: dict | None = None
-            for c in avail:  # best-first by skill: qualified + in-discipline + trust clears risk
-                if c.get("discipline") == disc and _RANK.get(_trust_in(c, disc), 0) >= need:
-                    chosen = c
-                    break
-            if chosen is None and avail:  # nobody qualified+available → best available (a stretch)
-                chosen = max(avail, key=lambda c: _RANK.get(_trust_in(c, disc), 0))
-            if chosen:
-                issue.assignee = chosen.get("gitlab_username")
-                if chosen.get("discipline") != disc or _RANK.get(_trust_in(chosen, disc), 0) < need:
-                    issue.stretch_flag = f"{chosen.get('name', 'dev')} has no prior {disc} experience"
+            chosen, s, below = scoring.best_assignment(issue, skill_dev.get(issue.required_skill, []))
+            if chosen is None:
+                continue
+            issue.assignee = chosen.get("gitlab_username")
+            lane = issue.lane or issue.discipline
+            out_of_lane = chosen.get("discipline") != lane
+            if below or out_of_lane:
+                why = f"no prior {lane}" if out_of_lane else f"low match ({s})"
+                issue.stretch_flag = f"{chosen.get('name', 'dev')} — scored stretch · {why}"

@@ -23,7 +23,7 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, gitlab, graph, handoff, relay, scheduler, staffing, strategist, tasks as tasklib, team
+from app import auth, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
@@ -37,6 +37,7 @@ from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
     all_decisions, decisions_for_project, delete_decision, get_decision, update_decision,
     save_graph, graph_nodes, graph_edges, save_governance_rule, all_governance_rules,
+    all_profiles, update_profile,
     save_subscription, delete_subscription, subscriptions_of, watchers_of,
     get_access_grant, get_project_record, past_projects, record_merge,
     save_access_grant, save_decision, save_notification, notifications_for_user, mark_all_read,
@@ -92,6 +93,19 @@ def _dev_trust() -> dict[str, dict]:
         out[mbr.username if hasattr(mbr, "username") and mbr.username else mbr.gitlab_username] = entry
         out[mbr.gitlab_username] = entry
     return out
+
+
+_DEFAULT_DIAL = 70  # the product-default Trust Dial; used to render a gate's tier when none is set
+
+
+async def _routing_edges() -> list | None:
+    """Best-effort graph edges (the local backend Graph A) for blast-radius routing. None when no
+    graph is built → the router reduces to today's dial check; otherwise blast-aware routing kicks in."""
+    try:
+        edges = [GraphEdge(**e) for e in await graph_edges("local")]
+        return edges or None
+    except Exception:
+        return None
 
 
 @app.get("/health")
@@ -186,7 +200,7 @@ def _my_gates(member: DeveloperProfile, members: list[DeveloperProfile]) -> list
                 continue
             issue_count = sum(
                 1 for e in plan.epics for i in e.issues
-                if g.discipline == "qa" or i.discipline == g.discipline
+                if relay.is_acceptance_gate(g) or i.lane == g.discipline
             )
             items.append({
                 "plan_id": plan_id, "project": plan.project_name, "discipline": g.discipline,
@@ -561,7 +575,7 @@ async def apply_dial(plan_id: str, req: DialRequest) -> RelayState:
     state, plan = RELAYS.get(plan_id), PLANS.get(plan_id)
     if state is None or plan is None:
         raise HTTPException(404, "plan not found")
-    relay.auto_pass(state, plan, _dev_trust(), req.dial)
+    relay.auto_pass(state, plan, _dev_trust(), req.dial, edges=await _routing_edges())
     return state
 
 
@@ -618,9 +632,11 @@ def _owns_issue(member: DeveloperProfile, issue) -> bool:
 
 
 def _is_qa_owner(member: DeveloperProfile, members: list[DeveloperProfile]) -> bool:
-    """The qa-gate owner: the qa lead, or — when no one holds qa — the manager (orphan-inheritance,
-    the same rule as _my_gates / ratify_gate)."""
-    return member.discipline == "qa" or (member.role == "manager" and staffing.is_orphan("qa", members))
+    """The acceptance-gate owner: a member in an acceptance lane (qa today), or — when no developer
+    holds one — the manager (orphan-inheritance). Decoupled from the literal name 'qa'."""
+    member_owns = relay.lane_stage(member.discipline or "") == "accept"
+    has_owner = any(relay.lane_stage(m.discipline or "") == "accept" for m in members if m.role == "developer")
+    return member_owns or (member.role == "manager" and not has_owner)
 
 
 async def _reopen_producer(plan_id: str, issue) -> None:
@@ -729,10 +745,40 @@ async def approve_plan(plan_id: str, req: ApproveRequest) -> dict:
     plan = req.edits or PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
+    state = RELAYS.get(plan_id)  # create-late (decision 5): never scaffold before the relay clears
+    if state is not None and not relay.all_ratified(state):
+        pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
+        raise HTTPException(409, f"relay not cleared — gates still open: {pending}")
     # EXECUTE: scaffold real GitLab infra (sync httpx → threadpool).
     result = await run_in_threadpool(execute_plan, plan)
     RESULTS[plan_id] = result
     return {"plan_id": plan_id, "mode": req.mode, **result}
+
+
+@app.get("/api/plans/{plan_id}/dispatch/preview")
+async def dispatch_preview(plan_id: str) -> dict:
+    """Dry-run the irreversible GitLab creation (decision 5): what it will create, who it will invite,
+    and whether the invite count exceeds the free-tier 5-member group cap. The manager reviews this
+    BEFORE committing via /dispatch — the router can auto-clear the relay with no human, so this is the
+    real go/no-go on spending real GitLab budget."""
+    plan = PLANS.get(plan_id)
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    await team.ensure_loaded()
+    issues = [i for e in plan.epics for i in e.issues]
+    repo_members = sorted({
+        i.assignee for i in issues
+        if i.assignee and (mb := team.get(i.assignee)) and mb.gitlab_user_id and policy.needs_repo(mb.discipline)
+    })
+    cap = 5  # GitLab free-tier members-per-group cap
+    state = RELAYS.get(plan_id)
+    return {
+        "plan_id": plan_id, "project_name": plan.project_name, "is_delta": plan_id in DELTA_TARGET,
+        "creates": {"project": 0 if plan_id in DELTA_TARGET else 1, "issues": len(issues)},
+        "member_invites": repo_members, "invite_count": len(repo_members),
+        "free_tier_cap": cap, "exceeds_cap": len(repo_members) > cap,
+        "relay_cleared": bool(state and relay.all_ratified(state)),
+    }
 
 
 @app.post("/api/plans/{plan_id}/dispatch")
@@ -742,7 +788,7 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest) -> dict:
     if plan is None or state is None:
         raise HTTPException(404, "plan not found")
     if req.mode == "autonomous":
-        relay.auto_pass(state, plan, _dev_trust(), 100)
+        relay.auto_pass(state, plan, _dev_trust(), 100, edges=await _routing_edges())
     if not relay.all_ratified(state):
         pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
         raise HTTPException(409, f"relay not cleared — gates still open: {pending}")
@@ -1209,7 +1255,11 @@ async def _validate_project_decisions(project_name: str) -> int:
     try:
         for d in await decisions_for_project(project_name):
             if not d.get("outcome_validated"):
-                await update_decision(d["id"], {"outcome_validated": True, "updated_at": now})
+                # ship is the strongest validation signal: the slice merged + cleared QA → grade up
+                patch = {"outcome_validated": True, "updated_at": now, "merged": True,
+                         "qa_passed": True, "promoted_at": now}
+                patch["grade"] = grading.next_grade({**d, **patch})
+                await update_decision(d["id"], patch)
                 count += 1
                 if d.get("owner_id"):
                     owners.add(d["owner_id"])
@@ -1352,7 +1402,7 @@ async def decision_card_for_gate(plan_id: str, discipline: str,
             f"RELEVANT SKILLS/TAGS: {', '.join(tags) or '—'}\n"
             f"THE SLICE BEING RATIFIED: {('; '.join(i.title for i in sl))[:300] or '(empty)'}")
         conflict, reason = False, ""
-        if best_past:
+        if best_past and grading.carries_routing_weight(best_past):  # only a proven past can route (decision 4)
             v = await generate_conflict(
                 f"DECISION CONTEXT: {ctx}\n"
                 f"Position A — AI recommendation: {p1.recommendation}\n"
@@ -1364,10 +1414,36 @@ async def decision_card_for_gate(plan_id: str, discipline: str,
                             confidence=p1.confidence, pros=p1.pros, cons=p1.cons,
                             conflict=conflict, conflict_reason=reason or None)
         signal = "orange" if conflict else ("green" if best_past else "grey")
+        # Spine: fold the real AI confidence + grounding signal into this gate's routing tier (zero
+        # extra LLM cost — both are already computed here). Returned for the panel; not persisted.
+        tier, cost, blast, note = routing.route_gate(
+            sl, await _routing_edges(), _dev_trust(), _DEFAULT_DIAL,
+            confidence=p1.confidence, signal=signal)
         return {"card": card.model_dump(), "signal": signal,
+                "routing": {"tier": tier, "expected_cost": cost, "blast_radius": blast, "note": note},
                 "low_confidence": p1.confidence < 60, "past": surfaced}
     except Exception as e:
-        return {"card": None, "signal": "grey", "low_confidence": False, "past": surfaced, "error": str(e)[:200]}
+        return {"card": None, "signal": "grey", "routing": None,
+                "low_confidence": False, "past": surfaced, "error": str(e)[:200]}
+
+
+# ── Capability profiles (spine refactor P2): the growing, manager-confirmed lane vocabulary ──
+@app.get("/api/profiles")
+async def list_profiles(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The capability-profile dictionary (the growing taxonomy). `proposed` profiles await a manager
+    confirm; only `confirmed`/`seed` ones are eligible to shape the bounded lane topology."""
+    return {"profiles": await all_profiles()}
+
+
+@app.post("/api/profiles/{profile_id}/confirm")
+async def confirm_profile(profile_id: str,
+                          member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The confirm gate (decision A): the manager promotes a discovered profile proposed → confirmed,
+    keeping the lane taxonomy bounded. Only the manager can grow the vocabulary."""
+    if member.role != "manager":
+        raise HTTPException(403, "only the manager can confirm a capability profile")
+    await update_profile(profile_id, {"status": "confirmed"})
+    return {"profile_id": profile_id, "status": "confirmed"}
 
 
 # ── Code Graph (roadmap System 4): dependency graph (A) + governance (B) + drift → refactor ──

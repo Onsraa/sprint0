@@ -11,10 +11,10 @@ from app.agent import (
     generate_architectures, generate_clarification, generate_cv_profile, generate_plan, generate_qa_report,
 )
 from app.assign import assign_developers
-from app.contracts import ArchitectureOptions, ClarifiedSpec, Constraints, PlanJSON, QAReport, TechStack
+from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, PlanJSON, QAReport, TechStack
 from app.rag import (
     DEV_COLL, DEV_INDEX, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
-    embed_document, embed_queries, embed_query, record_postmortem,
+    all_profiles, embed_document, embed_queries, embed_query, record_postmortem, save_profile,
 )
 
 _PP_PROJECTION = {"name": 1, "tech_stack": 1, "total_estimate_days": 1, "actual_days": 1, "outcome_notes": 1}
@@ -89,15 +89,21 @@ async def clarify_brief(brief_text: str, constraints: Constraints | None = None)
     return await generate_clarification(prompt)
 
 
-def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | None, constraints: Constraints | None) -> str:
+def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | None,
+                       constraints: Constraints | None, vocab: list[str] | None = None) -> str:
     chosen = ""
     if chosen_stack:
         s = chosen_stack
         chosen = f"\nCHOSEN STACK (use EXACTLY this):\n- frontend: {s.frontend}\n- backend: {s.backend}\n- db: {s.db}\n- infra: {s.infra}\n"
+    vocab_line = ""
+    if vocab:
+        vocab_line = ("KNOWN CAPABILITY PROFILES (reuse these capability_tags when one fits; only coin "
+                      f"a new kebab-case tag if none match):\n{', '.join(vocab)}\n\n")
     return (
         f"CLIENT BRIEF:\n{brief}\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n"
         f"{chosen}\n"
+        f"{vocab_line}"
         f"SIMILAR PAST PROJECTS (ground your plan in these):\n{_format_past(past)}\n\nProduce the Sprint-0 plan."
     )
 
@@ -105,12 +111,37 @@ def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | N
 async def run_brief(
     brief_text: str, chosen_stack: TechStack | None = None, constraints: Constraints | None = None
 ) -> PlanJSON:
+    vocab = await _known_profile_labels()  # own MCP context — fetch BEFORE the main one (no re-entrancy)
     async with MongoMCP() as m:
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
-        plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints))
+        plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab))
         plan.grounded_on = plan.grounded_on or [p["name"] for p in past]
         await _match_and_assign(plan, m)
+    await _discover_profiles(plan)  # own MCP context — AFTER the main one (no re-entrancy)
     return plan
+
+
+async def _known_profile_labels() -> list[str]:
+    """The confirmed/proposed capability vocabulary, injected into the planner so it reuses tags."""
+    try:
+        return sorted(p.get("label") or p.get("id", "") for p in await all_profiles())
+    except Exception:
+        return []
+
+
+async def _discover_profiles(plan: PlanJSON) -> None:
+    """Any capability_tag the planner emitted that isn't already a known profile becomes a `proposed`
+    CapabilityProfile (the growing dictionary). A manager confirms it before it can shape the lanes."""
+    try:
+        known = {p.get("id") for p in await all_profiles()}
+        tags = sorted({t for e in plan.epics for i in e.issues for t in i.capability_tags})
+        for tag in tags:
+            pid = tag.strip().lower().replace(" ", "-")
+            if pid and pid not in known:
+                await save_profile(CapabilityProfile(id=pid, label=tag, status="proposed").model_dump())
+                known.add(pid)
+    except Exception:
+        pass  # best-effort, mirrors the rest of grounding
 
 
 async def _match_and_assign(plan: PlanJSON, m: MongoMCP) -> None:
@@ -121,7 +152,8 @@ async def _match_and_assign(plan: PlanJSON, m: MongoMCP) -> None:
     for skill, vec in zip(skills, skill_vecs):
         skill_dev[skill] = await m.vector_search(
             DEV_COLL, DEV_INDEX, "skill_embedding", vec, k=5,
-            projection={"name": 1, "gitlab_username": 1, "trust_level": 1, "trust": 1, "discipline": 1, "load": 1, "role": 1},
+            projection={"name": 1, "gitlab_username": 1, "trust_level": 1, "trust": 1, "discipline": 1,
+                        "load": 1, "role": 1, "seniority": 1, "history": 1},
         )
     assign_developers(plan, skill_dev)
 

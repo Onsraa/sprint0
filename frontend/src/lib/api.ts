@@ -151,6 +151,12 @@ export interface Gate {
   status: GateStatus;
   depends_on: Discipline[];
   note: string;
+  /** Spine routing tier (null on legacy gates): how much expert attention the router budgeted. */
+  tier?: "auto_pass" | "one_expert" | "two_expert" | null;
+  confidence?: number | null;
+  blast_radius?: number | null;
+  expected_cost?: number | null;
+  routed_note?: string;
 }
 
 /** A declared api-failing/ok flag on a producer issue (the integration gate, B+C+D). */

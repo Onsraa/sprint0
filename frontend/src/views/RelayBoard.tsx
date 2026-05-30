@@ -302,6 +302,24 @@ function GateCard({
         {st.label}
       </div>
 
+      {gate.tier && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+          <span
+            className={gate.tier === "two_expert" ? "chip chip-orange" : "chip"}
+            title={gate.routed_note || "router tier = f(P(error) × blast)"}
+            style={{ fontSize: 10, padding: "2px 8px", fontWeight: 800 }}
+          >
+            {gate.tier === "auto_pass" ? "auto-pass" : gate.tier === "one_expert" ? "1 expert" : "2 experts"}
+          </span>
+          {gate.blast_radius != null && (
+            <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>
+              blast {gate.blast_radius}
+              {gate.expected_cost != null ? ` · cost ${gate.expected_cost}` : ""}
+            </span>
+          )}
+        </div>
+      )}
+
       {gate.depends_on.length > 0 && (
         <div className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", marginTop: 10 }}>
           waits on: {gate.depends_on.map((d) => DISCIPLINE_LABEL[d]).join(" · ")}

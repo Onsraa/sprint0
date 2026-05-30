@@ -239,6 +239,27 @@ async def all_governance_rules() -> list[dict]:
         return await m.find(GOVERNANCE_COLL, projection={"_id": 0}, limit=200)
 
 
+# ── Capability Profiles (spine refactor): the growing dictionary of AI-discovered work profiles ──
+PROFILES_COLL = "Profiles"
+
+
+async def save_profile(doc: dict) -> None:
+    """Upsert a capability profile by id (idempotent — re-discovering a profile updates it)."""
+    async with MongoMCP() as m:
+        await m.delete_many(PROFILES_COLL, {"id": doc["id"]})
+        await m.insert_many(PROFILES_COLL, [doc])
+
+
+async def all_profiles() -> list[dict]:
+    async with MongoMCP() as m:
+        return await m.find(PROFILES_COLL, projection={"_id": 0}, limit=200)
+
+
+async def update_profile(profile_id: str, patch: dict) -> None:
+    async with MongoMCP() as m:
+        await m.update_many(PROFILES_COLL, {"id": profile_id}, {"$set": patch})
+
+
 # ── Subscriptions (System 5): watcher → subject event follows (notification fan-out) ──
 SUBSCRIPTIONS_COLL = "Subscriptions"
 

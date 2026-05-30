@@ -20,6 +20,12 @@ Kind = Literal["code", "design", "audit", "content", "infra", "runbook"]
 GateStatus = Literal["pending", "locked", "auto_passed", "ratified", "changes_requested", "blocked"]
 Role = Literal["manager", "developer"]
 Seniority = Literal["junior", "mid", "senior"]
+# Spine refactor: a "lane" = a relay-DAG gate node. Bounded IN PRACTICE (the manager confirms new
+# lanes), but a plain str — not a closed enum — so an AI-discovered lane can flow through the relay.
+# The 5 seed lanes mirror the disciplines; capability_tags (free strings) carry the finer taxonomy.
+KNOWN_LANES = ("uiux", "backend", "frontend", "qa", "devops")
+Lane = str
+RoutingTier = Literal["auto_pass", "one_expert", "two_expert"]
 
 _TYPE_TO_DISCIPLINE: dict[str, Discipline] = {
     "backend": "backend", "db": "backend", "frontend": "frontend", "design": "uiux", "devops": "devops",
@@ -62,11 +68,16 @@ class Issue(BaseModel):
     api_contract: Optional[str] = None  # mock payload a backend issue produces; flows into FE micro-context
     context: IssueContext = Field(default_factory=IssueContext)  # kind-specific extras, filled at ratify
     stretch_flag: Optional[str] = None  # set by assignment when a dev is stretched out of discipline (e.g. "no prior uiux")
+    # ── spine refactor (P0, additive) ──
+    capability_tags: list[str] = Field(default_factory=list)  # dynamic AI-discovered skills; closed list[str] (Gemini-safe)
+    lane: Optional[Lane] = None  # relay-DAG gate node; defaults to `discipline` (the transition shim)
 
     @model_validator(mode="after")
     def _fill_kind(self) -> "Issue":
         if self.kind is None:
             self.kind = _TYPE_TO_KIND.get(self.type, "code")
+        if self.lane is None:
+            self.lane = self.discipline  # shim: legacy issues get lane == discipline for free
         return self
 
     @computed_field  # serialized so the frontend relay board can group by discipline
@@ -198,10 +209,16 @@ class ClarifiedSpec(BaseModel):
 
 # ── Relay: the ratification DAG ({uiux ∥ be} → fe → qa) ──
 class Gate(BaseModel):
-    discipline: Discipline
+    discipline: Lane  # the lane this gate ratifies (a seed discipline today; an AI-discovered lane tomorrow)
     status: GateStatus = "pending"
-    depends_on: list[Discipline] = Field(default_factory=list)  # gates that must finish first
+    depends_on: list[Lane] = Field(default_factory=list)  # gates that must finish first
     note: str = ""
+    # ── spine refactor (P0, additive): the router's per-gate decision; all null on legacy gates ──
+    tier: Optional[RoutingTier] = None            # auto_pass | one_expert | two_expert (the router's call)
+    confidence: Optional[int] = None              # AI confidence (0-100) feeding P(error)
+    blast_radius: Optional[int] = None            # measured graph-dependents count of the slice's files
+    expected_cost: Optional[float] = None         # P(error) × blast — what the tier thresholds on
+    routed_note: str = ""                         # why this tier (e.g. "blast estimated — no graph")
 
 
 class IntegrationSignal(BaseModel):
@@ -221,8 +238,21 @@ class IntegrationSignal(BaseModel):
 
 class RelayState(BaseModel):
     gates: list[Gate]
-    baton: list[Discipline] = Field(default_factory=list)  # active gates: unblocked, not yet done
+    baton: list[Lane] = Field(default_factory=list)  # active gates: unblocked, not yet done
     integration_signals: list[IntegrationSignal] = Field(default_factory=list)  # api-failing/ok flags (B+C+D)
+
+
+class CapabilityProfile(BaseModel):
+    """A discovered unit of capability the planner can tag work with (spine refactor). The dictionary
+    grows as the AI proposes new profiles; a manager confirms (proposed→confirmed) before a profile
+    shapes the bounded lane topology. `skill_keywords` feed scored attribution + soft lane adjacency."""
+    id: str
+    label: str
+    summary: str = ""
+    skill_keywords: list[str] = Field(default_factory=list)
+    default_lane: Lane = "backend"
+    status: Literal["seed", "proposed", "confirmed"] = "proposed"
+    created_at: str = ""
 
 
 # ── Persistence: a scaffolded project (for mid-prod delta grounding) ──
@@ -260,6 +290,12 @@ class Decision(BaseModel):
     confidence_at_time: Optional[int] = None            # the AI's confidence (0-100), if any
     deviation_from_ai: bool = False                     # did the lead override the AI draft?
     deviation_reason: Optional[str] = None
+    # ── spine refactor (P0): graded reference strength, auto-promoted by real signals at slice granularity ──
+    grade: Literal["proposed", "shipped", "prod_survived", "retro_validated"] = "proposed"
+    merged: bool = False                                # slice merged to the main branch
+    qa_passed: bool = False                             # slice cleared QA / acceptance
+    days_clean: int = 0                                 # consecutive days with no reopen on the slice
+    promoted_at: Optional[str] = None                   # when grade last advanced
     created_at: str
     updated_at: str
 

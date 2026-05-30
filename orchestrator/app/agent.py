@@ -51,7 +51,9 @@ names you used in `grounded_on`.
 
 Produce 2-4 epics, each 2-4 issues. Every issue: a clear title, short markdown description, \
 type in {backend, frontend, db, devops, design}, estimate_days, risk in {low, medium, high} \
-(security/payments/data-loss skew higher), required_skill as "area:topic", and context_scope \
+(security/payments/data-loss skew higher), required_skill as "area:topic", capability_tags as \
+1-3 fine-grained kebab-case capability labels (e.g. "stripe-webhooks", "map-clustering"; REUSE a \
+tag from KNOWN CAPABILITY PROFILES when one fits, else coin a new one), and context_scope \
 naming the 2-3 files that matter. Leave assignee null. Choose project_name, a one-sentence \
 client_summary, and a realistic timeline_weeks."""
 

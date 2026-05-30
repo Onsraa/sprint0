@@ -8,31 +8,40 @@ functions over RelayState — no I/O, so it's trivially testable.
 """
 from __future__ import annotations
 
-from app.assign import _RANK
-from app.contracts import Discipline, Gate, IntegrationSignal, Issue, PlanJSON, RelayState
+from app import routing
+from app.contracts import Gate, IntegrationSignal, Issue, Lane, PlanJSON, RelayState
 
 _DONE = {"auto_passed", "ratified"}
-_START: list[Discipline] = ["uiux", "backend", "devops"]  # can ratify in parallel
+
+# Lane topology — the relay DAG, data-driven instead of hardcoded names. Each lane sits in a stage;
+# stages run in order, each gate depending on the previous NON-EMPTY stage. Unknown (AI-discovered)
+# lanes default to the build wave, so every present lane ALWAYS gets a gate — never silently dropped.
+# The seed mapping reproduces the original {uiux ∥ backend ∥ devops} → frontend → qa exactly.
+_LANE_STAGE: dict[str, str] = {
+    "uiux": "build", "backend": "build", "devops": "build",
+    "frontend": "integrate", "qa": "accept",
+}
+_DEFAULT_STAGE = "build"
+_STAGE_ORDER = ["build", "integrate", "accept"]
 
 
-def _issues_by_discipline(plan: PlanJSON) -> dict[str, list[Issue]]:
+def lane_stage(lane: str) -> str:
+    return _LANE_STAGE.get(lane, _DEFAULT_STAGE)
+
+
+def is_acceptance_gate(gate: Gate) -> bool:
+    """The terminal acceptance gate (qa today). It reviews the WHOLE plan (not just its lane's slice)
+    and is the gate an open integration failure holds `blocked`. Decoupled from the literal name 'qa'
+    so an AI-discovered acceptance lane behaves identically."""
+    return lane_stage(gate.discipline) == "accept"
+
+
+def _issues_by_lane(plan: PlanJSON) -> dict[str, list[Issue]]:
     out: dict[str, list[Issue]] = {}
     for epic in plan.epics:
         for issue in epic.issues:
-            out.setdefault(issue.discipline, []).append(issue)
+            out.setdefault(issue.lane or issue.discipline, []).append(issue)
     return out
-
-
-def _dial_max_risk(dial: int) -> int:
-    """Trust Dial (0-100) → highest risk tier eligible for auto-pass.
-    Advisor / Co-pilot / Navigator / Autonomous."""
-    if dial >= 85:
-        return 2  # high
-    if dial >= 55:
-        return 1  # medium
-    if dial >= 25:
-        return 0  # low only
-    return -1     # nothing auto-passes — every gate needs a human
 
 
 # ── Integration gate (B+C+D): a declared api-failing signal blocks qa + routes to the producer ──
@@ -65,15 +74,22 @@ def record_integration_signal(state: RelayState, signal: IntegrationSignal) -> N
 
 
 def build_relay(plan: PlanJSON) -> RelayState:
-    """Build the gate DAG from the disciplines actually present in the plan (qa always last)."""
-    present = set(_issues_by_discipline(plan))
-    starts = [d for d in _START if d in present]
-    gates: list[Gate] = [Gate(discipline=d) for d in starts]
-    if "frontend" in present:
-        deps = list(starts)  # whole present start-wave (uiux ∥ backend ∥ devops) converges into frontend
-        gates.append(Gate(discipline="frontend", depends_on=deps, status="locked" if deps else "pending"))
-    qa_deps: list[Discipline] = ["frontend"] if "frontend" in present else list(starts)
-    gates.append(Gate(discipline="qa", depends_on=qa_deps, status="locked" if qa_deps else "pending"))
+    """Build the gate DAG from the lanes actually present in the plan. Stages run in order; each
+    stage's gates depend on the previous NON-EMPTY stage. Every present lane gets a gate (unknown
+    lanes fold into the build wave) — nothing is silently dropped."""
+    by_lane = _issues_by_lane(plan)
+    present = set(by_lane)
+    if not any(lane_stage(lane) == "accept" for lane in present):
+        present.add("qa")  # the relay always ends in an acceptance gate (it reviews the whole plan)
+    gates: list[Gate] = []
+    prev: list[str] = []
+    for stage in _STAGE_ORDER:
+        lanes = sorted(lane for lane in present if lane_stage(lane) == stage)
+        deps = list(prev)
+        for lane in lanes:
+            gates.append(Gate(discipline=lane, depends_on=deps, status="locked" if deps else "pending"))
+        if lanes:
+            prev = lanes  # the next stage converges on this one
     state = RelayState(gates=gates)
     _recompute_baton(state)
     return state
@@ -85,12 +101,12 @@ def _recompute_baton(state: RelayState) -> None:
     so the plan can't clear to dispatch until the failure is marked ok."""
     done = {g.discipline for g in state.gates if g.status in _DONE}
     blocked_qa = bool(open_integration_failures(state))
-    baton: list[Discipline] = []
+    baton: list[Lane] = []
     for g in state.gates:
         if g.status in _DONE:
             continue
         if all(dep in done for dep in g.depends_on):
-            if g.discipline == "qa" and blocked_qa:
+            if is_acceptance_gate(g) and blocked_qa:
                 g.status = "blocked"          # deps met, but an integration failure is open
             elif g.status in ("locked", "blocked"):
                 g.status = "pending"          # blocked clears back to pending once failures resolve
@@ -100,18 +116,19 @@ def _recompute_baton(state: RelayState) -> None:
     state.baton = baton
 
 
-def _tier(dev_trust: dict[str, dict], username: str | None, discipline: str) -> str:
-    """The assignee's PER-DISCIPLINE trust (falls back to their overall trust_level)."""
-    m = dev_trust.get(username or "", {})
-    return (m.get("trust") or {}).get(discipline) or m.get("trust_level", "low")
-
-
-def auto_pass(state: RelayState, plan: PlanJSON, dev_trust: dict[str, dict], dial: int) -> None:
-    """Auto-ratify any active gate whose whole slice clears per-discipline trust×risk under the dial.
-    Cascades: passing uiux+backend can unlock frontend, which may then auto-pass too."""
-    by_disc = _issues_by_discipline(plan)
+def auto_pass(
+    state: RelayState, plan: PlanJSON, dev_trust: dict[str, dict], dial: int,
+    *, edges: list | None = None,
+    confidence_by_gate: dict[str, int] | None = None,
+    signal_by_gate: dict[str, str] | None = None,
+) -> None:
+    """Auto-ratify any active gate the router clears (tier == auto_pass). The router scores
+    expected_cost = P(error) × blast_radius scaled by the dial; with no `edges`/`confidence` it
+    reduces to the legacy trust×risk×dial check, so existing callers keep today's behavior. Cascades:
+    passing uiux+backend can unlock frontend, which may then auto-pass too. Populates each touched
+    gate's routing fields (tier/confidence/blast_radius/expected_cost) for the UI."""
+    by_lane = _issues_by_lane(plan)
     all_issues = [i for e in plan.epics for i in e.issues]
-    max_auto = _dial_max_risk(dial)
     changed = True
     while changed:
         changed = False
@@ -119,21 +136,26 @@ def auto_pass(state: RelayState, plan: PlanJSON, dev_trust: dict[str, dict], dia
         for g in state.gates:
             if g.discipline not in state.baton or g.status in ("changes_requested", "blocked"):
                 continue
-            issues = all_issues if g.discipline == "qa" else by_disc.get(g.discipline, [])  # qa accepts everything
-            cleared = bool(issues) and all(
-                _RANK[i.risk] <= max_auto
-                and _RANK.get(_tier(dev_trust, i.assignee, i.discipline), 0) >= _RANK[i.risk]
-                for i in issues
-            )
-            if cleared:
+            issues = all_issues if is_acceptance_gate(g) else by_lane.get(g.discipline, [])  # acceptance gate reviews all
+            conf = (confidence_by_gate or {}).get(g.discipline)
+            sig = (signal_by_gate or {}).get(g.discipline)
+            tier, cost, blast, note = routing.route_gate(
+                issues, edges, dev_trust, dial, confidence=conf, signal=sig)
+            g.tier, g.expected_cost, g.blast_radius = tier, cost, blast
+            if conf is not None:
+                g.confidence = conf
+            if note:
+                g.routed_note = note
+            if tier == "auto_pass":
+                detail = f"cost={cost}" if cost is not None else "trust clears risk"
                 g.status = "auto_passed"
-                g.note = f"auto-passed · trust clears risk · dial={dial}"
+                g.note = f"auto-passed · {detail} · dial={dial}"
                 changed = True
     _recompute_baton(state)
 
 
 def ratify(
-    state: RelayState, plan: PlanJSON, discipline: Discipline,
+    state: RelayState, plan: PlanJSON, discipline: Lane,
     edits: list[Issue] | None, approve: bool, note: str,
 ) -> None:
     """A lead adjusts their slice (edits replace matching issue ids in the plan) and passes
