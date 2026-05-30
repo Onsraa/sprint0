@@ -4,6 +4,24 @@ import { api } from "../lib/api";
 import type { InboxNeed, QueueItem, RescheduleProposal } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
 
+// Human-readable presentation for the Inbox notification feed (type → icon + chip label).
+const NOTIF_META: Record<string, { label: string; icon: string }> = {
+  ratify_needed: { label: "Ratify", icon: "⚖" },
+  access_requested: { label: "Access", icon: "🔑" },
+  access_granted: { label: "Access granted", icon: "✅" },
+  qa_failed: { label: "QA failed", icon: "⚠" },
+  project_shipped: { label: "Shipped", icon: "🚀" },
+  reschedule_proposed: { label: "Reschedule", icon: "🔄" },
+  reschedule_resolved: { label: "Reschedule done", icon: "✅" },
+  task_assigned: { label: "Assigned", icon: "📌" },
+};
+
+// Friendly labels for AI reschedule-strategy actions (shown on the proposal card).
+const ACTION_LABEL: Record<string, string> = {
+  right_shift: "Right-shift", reassign: "Reassign", compress: "Compress",
+  descope: "De-scope", re_estimate: "Re-estimate", re_plan: "Re-plan", escalate: "Escalate",
+};
+
 export function InboxPage() {
   const { inbox, loadInbox, setActiveGate, setView, setPlan, setPlanId, setRelay } = useApp();
   const [opening, setOpening] = useState<string | null>(null);
@@ -145,6 +163,9 @@ export function InboxPage() {
                   fontSize: 13,
                 }}
               >
+                <span style={{ flexShrink: 0, fontSize: 13, lineHeight: 1 }}>
+                  {NOTIF_META[n.type]?.icon ?? "•"}
+                </span>
                 <span style={{ flex: 1, fontWeight: n.read ? 400 : 600 }}>
                   {n.title}
                 </span>
@@ -152,7 +173,7 @@ export function InboxPage() {
                   className="chip"
                   style={{ fontSize: 10, flexShrink: 0 }}
                 >
-                  {n.type}
+                  {NOTIF_META[n.type]?.label ?? n.type}
                 </span>
                 <span
                   style={{
@@ -273,7 +294,7 @@ function NeedCard({
     return (
       <div className="card-soft" style={{ padding: 16, textAlign: "left" }}>
         <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", opacity: .7 }}>
-          AI reschedule · {p.strategy.action} · {p.strategy.confidence}% conf
+          AI reschedule · {ACTION_LABEL[p.strategy.action] ?? p.strategy.action} · {p.strategy.confidence}% conf
         </div>
         <div style={{ fontWeight: 700, fontSize: 14, marginTop: 4 }}>{p.strategy.impact_summary || p.strategy.rationale}</div>
         <div style={{ fontSize: 12, opacity: .7, marginTop: 6 }}>
