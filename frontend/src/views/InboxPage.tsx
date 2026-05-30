@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { api } from "../lib/api";
-import type { InboxNeed, QueueItem, RescheduleProposal } from "../lib/api";
+import type { InboxNeed, NotificationItem, QueueItem, RescheduleProposal } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
 
 // Human-readable presentation for the Inbox notification feed (type → icon + chip label).
@@ -20,6 +20,13 @@ const NOTIF_META: Record<string, { label: string; icon: string }> = {
 const ACTION_LABEL: Record<string, string> = {
   right_shift: "Right-shift", reassign: "Reassign", compress: "Compress",
   descope: "De-scope", re_estimate: "Re-estimate", re_plan: "Re-plan", escalate: "Escalate",
+};
+
+// Leading icon per needs-action kind, so the queue is scannable at a glance.
+const KIND_META: Record<string, { icon: string }> = {
+  ratify: { icon: "⚖" },
+  access_request: { icon: "🔑" },
+  reschedule: { icon: "🔄" },
 };
 
 export function InboxPage() {
@@ -97,9 +104,14 @@ export function InboxPage() {
       <div style={{ marginTop: 20 }}>
         <div
           className="kicker"
-          style={{ marginBottom: 8, paddingLeft: 0 }}
+          style={{ marginBottom: 8, paddingLeft: 0, display: "flex", alignItems: "center", gap: 8 }}
         >
           Needs action
+          {needs.length > 0 && (
+            <span className="chip" style={{ fontSize: 10, background: "var(--orange)", color: "var(--paper)", borderColor: "var(--orange)" }}>
+              {needs.length}
+            </span>
+          )}
         </div>
         {needs.length === 0 ? (
           <div
@@ -132,9 +144,12 @@ export function InboxPage() {
       <div style={{ marginTop: 28 }}>
         <div
           className="kicker"
-          style={{ marginBottom: 8, paddingLeft: 0 }}
+          style={{ marginBottom: 8, paddingLeft: 0, display: "flex", alignItems: "center", gap: 8 }}
         >
           Notifications
+          {notifications.length > 0 && (
+            <span className="chip" style={{ fontSize: 10 }}>{notifications.length}</span>
+          )}
         </div>
         {notifications.length === 0 ? (
           <div
@@ -147,44 +162,17 @@ export function InboxPage() {
             No notifications.
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {notifications.map((n) => (
-              <div
-                key={n.id}
-                style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  gap: 10,
-                  padding: "9px 12px",
-                  borderRadius: 8,
-                  background: n.read ? "transparent" : "var(--orange-tint)",
-                  borderLeft: n.read ? "2px solid transparent" : "2px solid var(--orange)",
-                  opacity: n.read ? 0.65 : 1,
-                  fontSize: 13,
-                }}
-              >
-                <span style={{ flexShrink: 0, fontSize: 13, lineHeight: 1 }}>
-                  {NOTIF_META[n.type]?.icon ?? "•"}
-                </span>
-                <span style={{ flex: 1, fontWeight: n.read ? 400 : 600 }}>
-                  {n.title}
-                </span>
-                <span
-                  className="chip"
-                  style={{ fontSize: 10, flexShrink: 0 }}
-                >
-                  {NOTIF_META[n.type]?.label ?? n.type}
-                </span>
-                <span
-                  style={{
-                    color: "var(--ink-mute)",
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    flexShrink: 0,
-                  }}
-                >
-                  {relTime(n.created_at)}
-                </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {dayGroups(notifications).map((g) => (
+              <div key={g.label}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "var(--ink-mute)", padding: "2px 12px 4px" }}>
+                  {g.label}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  {g.items.map((n) => (
+                    <NotifRow key={n.id} n={n} />
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -227,6 +215,7 @@ function NeedCard({
         }}
       >
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: 13 }}>{KIND_META.ratify.icon}</span>
           <span
             className="chip"
             style={{
@@ -266,7 +255,9 @@ function NeedCard({
     const grantId = need.ref?.grant_id as string | undefined;
     return (
       <div className="card-soft" style={{ textAlign: "left" }}>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{need.title}</div>
+        <div style={{ fontWeight: 600, fontSize: 14, display: "flex", gap: 8, alignItems: "center" }}>
+          <span>{KIND_META.access_request.icon}</span>{need.title}
+        </div>
         <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
           <button
             className="btn btn-primary"
@@ -294,7 +285,7 @@ function NeedCard({
     return (
       <div className="card-soft" style={{ padding: 16, textAlign: "left" }}>
         <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", opacity: .7 }}>
-          AI reschedule · {ACTION_LABEL[p.strategy.action] ?? p.strategy.action} · {p.strategy.confidence}% conf
+          {KIND_META.reschedule.icon} AI reschedule · {ACTION_LABEL[p.strategy.action] ?? p.strategy.action} · {p.strategy.confidence}% conf
         </div>
         <div style={{ fontWeight: 700, fontSize: 14, marginTop: 4 }}>{p.strategy.impact_summary || p.strategy.rationale}</div>
         <div style={{ fontSize: 12, opacity: .7, marginTop: 6 }}>
@@ -339,4 +330,49 @@ function relTime(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function NotifRow({ n }: { n: NotificationItem }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: 10,
+        padding: "9px 12px",
+        borderRadius: 8,
+        background: n.read ? "transparent" : "var(--orange-tint)",
+        borderLeft: n.read ? "2px solid transparent" : "2px solid var(--orange)",
+        opacity: n.read ? 0.65 : 1,
+        fontSize: 13,
+      }}
+    >
+      <span style={{ flexShrink: 0, fontSize: 13, lineHeight: 1 }}>
+        {NOTIF_META[n.type]?.icon ?? "•"}
+      </span>
+      <span style={{ flex: 1, fontWeight: n.read ? 400 : 600 }}>{n.title}</span>
+      <span className="chip" style={{ fontSize: 10, flexShrink: 0 }}>
+        {NOTIF_META[n.type]?.label ?? n.type}
+      </span>
+      <span style={{ color: "var(--ink-mute)", fontSize: 11, fontFamily: "var(--font-mono)", flexShrink: 0 }}>
+        {relTime(n.created_at)}
+      </span>
+    </div>
+  );
+}
+
+/** Bucket notifications into Today / Yesterday / Earlier (preserving the desc order within each). */
+function dayBucket(iso: string): string {
+  const t = new Date(iso).getTime();
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (t >= startOfToday) return "Today";
+  if (t >= startOfToday - 86_400_000) return "Yesterday";
+  return "Earlier";
+}
+
+function dayGroups(items: NotificationItem[]): { label: string; items: NotificationItem[] }[] {
+  return ["Today", "Yesterday", "Earlier"]
+    .map((label) => ({ label, items: items.filter((n) => dayBucket(n.created_at) === label) }))
+    .filter((g) => g.items.length > 0);
 }
