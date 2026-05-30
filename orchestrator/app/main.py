@@ -200,7 +200,7 @@ async def my_queue(member: DeveloperProfile = Depends(auth.current_member)) -> d
     return {"username": member.username, "count": len(items), "items": items}
 
 
-async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
+async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
     """Best-effort: append a Notification to a member's Inbox feed."""
     try:
         n = Notification(id=f"ntf_{uuid.uuid4().hex[:8]}", user_id=user_id, type=type, title=title,
@@ -888,6 +888,10 @@ async def reassign_task(task_id: str, assignee: str = "", member: DeveloperProfi
     updated.assigned_by = member.username if new else "ai"  # provenance: placed by the reassigner
     await update_task(task_id, updated.model_dump())
     await _reschedule_project(updated.project_id)
+    if new and new != member.username:  # ping the new owner's Inbox (skip unassign + self-reassign)
+        await notify(new, "task_assigned", f"Task assigned to you: {updated.title}",
+                     body=f"@{member.username} assigned you “{updated.title}”.",
+                     ref={"task_id": task_id, "project_id": updated.project_id})
     return await get_task(task_id) or updated.model_dump()  # return the freshly re-scheduled task
 
 

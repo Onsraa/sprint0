@@ -270,7 +270,7 @@ class Notification(BaseModel):
     id: str
     user_id: str                  # recipient username
     type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed",
-                  "project_shipped", "reschedule_proposed", "reschedule_resolved"]
+                  "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned"]
     title: str
     body: str = ""
     ref: dict = Field(default_factory=dict)
