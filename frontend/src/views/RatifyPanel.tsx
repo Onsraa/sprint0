@@ -3,6 +3,7 @@ import { useApp } from "../app/AppContext";
 import type { DecisionCardResponse, Issue, Risk } from "../lib/api";
 import { api } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
+import { KindSurface } from "./KindSurface";
 
 /* A discipline lead's slice of the plan. Edit issue fields inline, then pass
    the baton (approve) or request changes → POST /ratify/{discipline}.
@@ -170,7 +171,10 @@ export function RatifyPanel() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {slice.map((issue) => (
-            <IssueEditor key={issue.id} value={editOf(issue)} accent={accent} manifest={manifest} onPatch={(p) => patch(issue, p)} />
+            <div key={issue.id} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <IssueEditor value={editOf(issue)} accent={accent} manifest={manifest} onPatch={(p) => patch(issue, p)} />
+              <KindSurface work={editOf(issue)} />
+            </div>
           ))}
         </div>
       )}

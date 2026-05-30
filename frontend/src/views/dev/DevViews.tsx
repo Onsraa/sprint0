@@ -3,6 +3,7 @@ import { useApp } from "../../app/AppContext";
 import type { Discipline, Issue, Member, MyIssue, TrustLevel } from "../../lib/api";
 import { api } from "../../lib/api";
 import { DISCIPLINE_LABEL, KIND_LABEL, RISK_COLOR } from "../../lib/relayUtils";
+import { KindSurface } from "../KindSurface";
 import { Mascot } from "../../components/Mascot";
 
 /* sprint0 app — Developer views: Today, Active issue (per-kind), Passport.
@@ -264,7 +265,6 @@ export function DevIssue() {
    ============================================================ */
 function ActiveIssuePanel({ mine }: { mine: MyIssue }) {
   const issue = mine.issue;
-  const files = issue.context_scope.files;
 
   return (
     <div style={{ maxWidth: 980, margin: "0 auto" }}>
@@ -294,149 +294,8 @@ function ActiveIssuePanel({ mine }: { mine: MyIssue }) {
         )}
       </div>
 
-      {/* kind-specific surface */}
-      {(issue.kind === "code" || issue.kind === "infra") && <CodeSurface issue={issue} files={files} />}
-      {issue.kind === "design" && <DesignSurface issue={issue} />}
-      {issue.kind === "audit" && <AuditSurface issue={issue} />}
-      {(issue.kind === "content" || issue.kind === "runbook") && <GenericSurface issue={issue} />}
-    </div>
-  );
-}
-
-function CodeSurface({ issue, files }: { issue: Issue; files: string[] }) {
-  const { liveCloneUrl } = useApp();
-  const bid = issue.id.toLowerCase();
-  const dir = liveCloneUrl ? (liveCloneUrl.replace(/\/+$/, "").split("/").pop() || "repo").replace(/\.git$/, "") : "<project>";
-  const cmd = liveCloneUrl
-    ? `git clone ${liveCloneUrl} && cd ${dir} && git checkout sprint0/${bid} && bash .sprint0/focus.sh && code .`
-    : `git checkout sprint0/${bid} && bash .sprint0/focus.sh && code .`;
-  return (
-    <>
-      <div className="card-soft" style={{ padding: 18, marginBottom: 12 }}>
-        <div className="kicker" style={{ marginBottom: 10 }}>
-          Context scope · {files.length} {files.length === 1 ? "file" : "files"}
-        </div>
-        {issue.context_scope.note && (
-          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>{issue.context_scope.note}</div>
-        )}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {files.length === 0 && <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No files scoped yet.</div>}
-          {files.map((f) => (
-            <div
-              key={f}
-              className="mono"
-              style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 8 }}
-            >
-              <span style={{ color: "var(--orange)" }}>●</span>
-              {f}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div
-        className="mono"
-        style={{ background: "var(--ink)", color: "var(--paper)", borderRadius: 12, padding: 16, fontSize: 13, marginBottom: 12, boxShadow: "4px 4px 0 var(--orange)" }}
-      >
-        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginBottom: 8 }}>fetch → focus → open (VSCode; swap `code .` for your editor)</div>
-        <div style={{ color: "var(--orange)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>$ {cmd}</div>
-      </div>
-
-      {issue.api_contract && (
-        <div className="card-soft" style={{ padding: 18 }}>
-          <div className="kicker" style={{ marginBottom: 8 }}>API contract</div>
-          <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--ink-soft)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-            {issue.api_contract}
-          </pre>
-        </div>
-      )}
-    </>
-  );
-}
-
-function DesignSurface({ issue }: { issue: Issue }) {
-  const figma = typeof issue.context.figma_file === "string" ? (issue.context.figma_file as string) : null;
-  return (
-    <>
-      <div className="card-soft" style={{ padding: 18, marginBottom: 12 }}>
-        <div className="kicker" style={{ marginBottom: 8 }}>Design brief</div>
-        <div style={{ fontSize: 14, color: "var(--ink-soft)", lineHeight: 1.5 }}>
-          {issue.context_scope.note || issue.description}
-        </div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div className="card-soft" style={{ padding: 18 }}>
-          <div className="kicker" style={{ marginBottom: 8 }}>Figma</div>
-          {figma ? (
-            <a href={figma} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, color: "var(--info)", textDecoration: "underline", textUnderlineOffset: 3, wordBreak: "break-all" }}>
-              {figma}
-            </a>
-          ) : (
-            <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No Figma file linked yet.</div>
-          )}
-        </div>
-        <div className="card-soft" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div className="kicker">Deliverable</div>
-          <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Attach the frames you ship for this issue.</div>
-          <button className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }}>+ Attach frames</button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function AuditSurface({ issue }: { issue: Issue }) {
-  const pages = Array.isArray(issue.context.target_pages) ? (issue.context.target_pages as string[]) : issue.context_scope.files;
-  const rubric = Array.isArray(issue.context.rubric)
-    ? (issue.context.rubric as string[])
-    : typeof issue.context.rubric === "string"
-      ? [issue.context.rubric as string]
-      : [];
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-      <div className="card-soft" style={{ padding: 18 }}>
-        <div className="kicker" style={{ marginBottom: 10 }}>Target pages</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {pages.length === 0 && <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No pages specified.</div>}
-          {pages.map((p) => (
-            <div key={p} className="mono" style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)" }}>
-              {p}
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="card-soft" style={{ padding: 18 }}>
-        <div className="kicker" style={{ marginBottom: 10 }}>Rubric</div>
-        {rubric.length === 0 ? (
-          <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>{issue.context_scope.note || "Use the standard accessibility + UX rubric."}</div>
-        ) : (
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.6 }}>
-            {rubric.map((r, i) => (
-              <li key={i}>{r}</li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function GenericSurface({ issue }: { issue: Issue }) {
-  return (
-    <div className="card-soft" style={{ padding: 18 }}>
-      <div className="kicker" style={{ marginBottom: 8 }}>{KIND_LABEL[issue.kind]} brief</div>
-      <div style={{ fontSize: 14, color: "var(--ink-soft)", lineHeight: 1.5 }}>
-        {issue.context_scope.note || issue.description}
-      </div>
-      {issue.context_scope.files.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 12 }}>
-          {issue.context_scope.files.map((f) => (
-            <div key={f} className="mono" style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)" }}>
-              {f}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* kind-specific surface (shared component — also used by RatifyPanel + TaskDrawer) */}
+      <KindSurface work={issue} />
     </div>
   );
 }

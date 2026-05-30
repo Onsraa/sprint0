@@ -3,6 +3,7 @@ import { useApp } from "../../app/AppContext";
 import { api, type WorkTask, type TaskStatus } from "../../lib/api";
 import { STATUS_COLUMNS, provenanceTag } from "./workUtils";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, RISK_COLOR } from "../../lib/relayUtils";
+import { KindSurface } from "../KindSurface";
 
 export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClose: () => void; reload: () => void }) {
   const { member, patchTask, roster } = useApp();
@@ -280,6 +281,13 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                     >
                       {detail.description}
                     </div>
+                  </div>
+                )}
+
+                {/* Kind-specific execution surface (shared component — same as dev view + ratify panel) */}
+                {!detail.redacted && (
+                  <div style={{ marginBottom: 20 }}>
+                    <KindSurface work={detail} />
                   </div>
                 )}
 

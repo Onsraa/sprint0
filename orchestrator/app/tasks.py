@@ -14,7 +14,8 @@ def materialize_tasks(plan: PlanJSON, project_id: int, now: str) -> list[Task]:
                 id=i.id, project_id=project_id, title=i.title, description=i.description,
                 discipline=i.discipline, assignee=i.assignee, assigned_by="ai",
                 estimate_days=i.estimate_days, risk=i.risk, depends_on=list(i.depends_on),
-                context_scope=i.context_scope, created_at=now, updated_at=now,
+                context_scope=i.context_scope, kind=i.kind, context=i.context,
+                api_contract=i.api_contract, created_at=now, updated_at=now,
             ))
     return out
 

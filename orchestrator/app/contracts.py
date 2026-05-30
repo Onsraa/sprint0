@@ -413,6 +413,9 @@ class Task(BaseModel):
     scheduled_end: Optional[str] = None
     pinned: bool = False                     # locked dates → reflow treats as fixed, never moves it
     context_scope: ContextScope
+    kind: Optional[Kind] = None              # artifact class (mirrors the Issue) → drives the work surface in the UI
+    context: IssueContext = Field(default_factory=IssueContext)  # kind-specific extras (figma/rubric/screens…)
+    api_contract: Optional[str] = None       # mock payload a backend task produces
     created_at: str
     updated_at: str
 

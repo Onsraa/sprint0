@@ -307,6 +307,9 @@ export interface WorkTask {
   pinned?: boolean;            // locked dates → the reflow engine never moves this task
   gitlab_issue_iid?: number | null;
   context_scope?: ContextScope;
+  kind?: Kind;                          // artifact class → drives the KindSurface in the drawer
+  context?: Record<string, unknown>;    // kind-specific extras (figma/rubric/screens…)
+  api_contract?: string | null;
   created_at?: string;
   updated_at?: string;
 }
