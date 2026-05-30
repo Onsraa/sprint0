@@ -504,6 +504,8 @@ export interface ImpactedTask {
   task_id: string;
   title: string;
   assignee: string | null;
+  old_start: string | null;
+  old_end: string | null;
   scheduled_start: string | null;
   scheduled_end: string | null;
 }

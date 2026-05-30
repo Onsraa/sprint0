@@ -332,10 +332,12 @@ class RescheduleStrategy(BaseModel):
 
 
 class ImpactedTask(BaseModel):
-    """One task touched by a reschedule — the new dates the reflow produced (for the consent card)."""
+    """One task touched by a reschedule — old→new dates the reflow produced (for the consent card)."""
     task_id: str
     title: str = ""
     assignee: Optional[str] = None
+    old_start: Optional[str] = None
+    old_end: Optional[str] = None
     scheduled_start: Optional[str] = None
     scheduled_end: Optional[str] = None
 

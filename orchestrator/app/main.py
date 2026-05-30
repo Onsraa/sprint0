@@ -599,6 +599,10 @@ async def ratify_gate(
             await save_decision(dec.model_dump())
         except Exception:
             pass  # best-effort persistence, mirrors save_project_record at dispatch
+    if relay.all_ratified(state):           # relay fully cleared → ping the plan's assignees + their watchers
+        for a in sorted({i.assignee for e in plan.epics for i in e.issues if i.assignee}):
+            await notify(a, "task_completed", f"{plan.project_name}: all relay gates ratified", ref={"plan_id": plan_id})
+            await notify_watchers(a, "completed", f"{plan.project_name} cleared the relay", ref={"plan_id": plan_id})
     return state
 
 
@@ -988,7 +992,7 @@ async def recompute_schedule(project_id: int, member: DeveloperProfile = Depends
 
 
 # ── Reflow engine: one event-driven, cross-roadmap, minimal-perturbation re-flow path ──
-async def _reflow_for_event(ev: ChangeEvent) -> list[dict]:
+async def _reflow_for_event(ev: ChangeEvent) -> tuple[list[dict], dict]:
     """Incremental, availability-aware, cross-project reflow for a single change event. Recomputes
     only the affected subgraph (minimal perturbation), persists ONLY tasks whose dates moved, returns
     them. A work event marks its task changed (and applies an estimate change); a calendar event marks
@@ -996,7 +1000,7 @@ async def _reflow_for_event(ev: ChangeEvent) -> list[dict]:
     try:
         objs = [Task(**d) for d in await all_tasks()]
         if not objs:
-            return []
+            return [], {}
         if ev.task_id:                                            # work/assignment event on one task
             changed = [ev.task_id]
             if ev.kind == "estimate_change" and "new" in ev.payload:
@@ -1010,7 +1014,7 @@ async def _reflow_for_event(ev: ChangeEvent) -> list[dict]:
         else:
             changed = []
         if not changed:
-            return []
+            return [], {}
         await team.ensure_loaded()
         avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
         prior = {o.id: (o.scheduled_start, o.scheduled_end) for o in objs}
@@ -1019,16 +1023,16 @@ async def _reflow_for_event(ev: ChangeEvent) -> list[dict]:
         moved = [o for o in objs if (o.scheduled_start, o.scheduled_end) != prior[o.id]]
         for o in moved:                                           # only-changed write (not N updates)
             await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
-        return [o.model_dump() for o in moved]
+        return [o.model_dump() for o in moved], prior
     except Exception:
-        return []
+        return [], {}
 
 
 SEMANTIC_KINDS = {"spec_change", "scope_change", "blocked"}  # content changes the date-graph can't judge
 STRATEGIST_IMPACT_THRESHOLD = 3                              # tasks moved → high-impact enough to ask the AI
 
 
-async def _maybe_strategize(ev: ChangeEvent, moved: list[dict]) -> dict | None:
+async def _maybe_strategize(ev: ChangeEvent, moved: list[dict], prior: dict | None = None) -> dict | None:
     """Fire the AI Strategist only when the change is semantic or high-impact (keeps tokens near-zero).
     It sees only the delta; low-impact strategies auto-apply (the reflow already shifted), high-impact
     ones are proposed to the manager + each affected person is notified. Best-effort — never raises."""
@@ -1049,6 +1053,8 @@ async def _maybe_strategize(ev: ChangeEvent, moved: list[dict]) -> dict | None:
             prop = RescheduleProposal(
                 id=f"rsp_{uuid.uuid4().hex[:8]}", project_id=ev.project_id, event=ev, strategy=strategy,
                 impacted=[ImpactedTask(task_id=t.id, title=t.title, assignee=t.assignee,
+                                       old_start=(prior or {}).get(t.id, (None, None))[0],
+                                       old_end=(prior or {}).get(t.id, (None, None))[1],
                                        scheduled_start=t.scheduled_start, scheduled_end=t.scheduled_end)
                           for t in impacted],
                 affected_users=affected, created_at=datetime.now(timezone.utc).isoformat(),
@@ -1091,8 +1097,8 @@ async def post_event(req: EventRequest, member: DeveloperProfile = Depends(auth.
         await save_event(ev.model_dump())
     except Exception:
         pass  # event logging is best-effort; still attempt the reflow
-    moved = await _reflow_for_event(ev)
-    return {"event": ev.model_dump(), "reflowed": moved, "strategy": await _maybe_strategize(ev, moved)}
+    moved, prior = await _reflow_for_event(ev)
+    return {"event": ev.model_dump(), "reflowed": moved, "strategy": await _maybe_strategize(ev, moved, prior)}
 
 
 async def _apply_strategy(prop: dict) -> list[dict]:
@@ -1442,27 +1448,42 @@ class RefactorRequest(BaseModel):
     report: DriftReport
 
 
+def _lead_for_discipline(disc: str) -> str | None:
+    """Who leads a discipline (ratifies its gate): the first developer with that discipline; falls back
+    to the manager for an orphan discipline (e.g. uiux has no dev)."""
+    lead = next((m.username for m in team.all_members() if m.role == "developer" and m.discipline == disc), None)
+    return lead or next((m.username for m in team.all_members() if m.role == "manager"), None)
+
+
 @app.post("/api/graph/refactor")
 async def graph_refactor(req: RefactorRequest, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    """Drift report → a maintenance Task in the work hub / relay (same system as feature work)."""
+    """Drift report → a maintenance Task in the work hub / relay, ASSIGNED to the domain lead + a live
+    `drift_flagged` ping (Code Graph #4 → notifications #5). Same relay system as feature work."""
     if member.role != "manager":
         raise HTTPException(403, "only the manager can schedule a refactor task")
     r = req.report
     now = datetime.now(timezone.utc).isoformat()
     disc = r.domain if r.domain in ("uiux", "backend", "frontend", "qa", "devops") else "backend"
     pri = "urgent" if r.severity == "blocking" else ("high" if r.severity == "drift" else "low")
+    await team.ensure_loaded()
+    lead = _lead_for_discipline(disc)
     task = Task(
         id=f"refactor_{uuid.uuid4().hex[:8]}", project_id=req.project_id,
         title=f"Refactor: {r.drift_from_description or r.violation}"[:120],
         description=f"{r.violation}\n\nFix: {r.suggested_fix}\n\nFiles: {', '.join(r.affected_files)}",
-        discipline=disc, risk="medium", priority=pri, status="planned",
+        discipline=disc, assignee=lead, assigned_by="ai", risk="medium", priority=pri, status="planned",
         context_scope=ContextScope(files=r.affected_files, note="maintenance/refactor (Code Graph drift)"),
         created_at=now, updated_at=now)
     try:
         await save_tasks([task.model_dump()])
+        await _reschedule_project(req.project_id)   # date the refactor into the lead's calendar
     except Exception:
         pass
-    return task.model_dump()
+    if lead:                                         # ring the responsible expert's bell live (System 5)
+        await notify(lead, "drift_flagged", f"Drift in {disc}: {r.violation}"[:120],
+                     body=r.suggested_fix, ref={"task_id": task.id}, actionable=True)
+        await notify_watchers(lead, "drift_flagged", f"Drift flagged in {disc} (@{lead})", ref={"task_id": task.id})
+    return await get_task(task.id) or task.model_dump()
 
 
 # Attribution queue — merges sprint0 can't map to a roster member land here (the human

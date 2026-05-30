@@ -14,6 +14,8 @@ const NOTIF_META: Record<string, { label: string; icon: string }> = {
   reschedule_proposed: { label: "Reschedule", icon: "🔄" },
   reschedule_resolved: { label: "Reschedule done", icon: "✅" },
   task_assigned: { label: "Assigned", icon: "📌" },
+  task_completed: { label: "Completed", icon: "✅" },
+  drift_flagged: { label: "Drift", icon: "🕸" },
 };
 
 // Friendly labels for AI reschedule-strategy actions (shown on the proposal card).
@@ -289,7 +291,12 @@ function NeedCard({
         </div>
         <div style={{ fontWeight: 700, fontSize: 14, marginTop: 4 }}>{p.strategy.impact_summary || p.strategy.rationale}</div>
         <div style={{ fontSize: 12, opacity: .7, marginTop: 6 }}>
-          {p.impacted.length} task(s): {p.impacted.map((t) => t.title).join(", ")}
+          {p.impacted.length} task(s) re-flowed:
+          {p.impacted.map((t) => (
+            <div key={t.task_id} style={{ marginTop: 2 }}>
+              <b>{t.title}</b>: {t.old_start || "—"} → {t.scheduled_start || "—"}
+            </div>
+          ))}
         </div>
         {p.strategy.action === "reassign" && p.strategy.reassign_to && (
           <div style={{ fontSize: 12, marginTop: 4 }}>→ reassign to <b>@{p.strategy.reassign_to}</b></div>
