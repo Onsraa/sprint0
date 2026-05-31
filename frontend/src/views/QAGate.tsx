@@ -35,11 +35,12 @@ const VERDICT_META: Record<string, { label: string; tone: string; icon: string }
   needs_human: { label: "Needs human", tone: "amber",  icon: "eye" },
 };
 
-// Real QAItemResult is { issue_id, title, verdict, note } — it carries no runner/disc
-// (those are presentation-only in the v5 mockup). Map to the local item shape with safe
-// fallbacks so the DiscDot/Avatar markup renders unchanged (both no-op on undefined).
+// Real QAItemResult now carries runner (issue.assignee) + disc (the gate) — stamped by the
+// backend's qa_review. Pass them through so the DiscDot + reject "Route to" pills populate
+// on live runs (falling back to "" / undefined for pre-assignment issues).
 const toLocalItem = (i: QAReport["items"][number]): any => ({
-  issue_id: i.issue_id, title: i.title, verdict: i.verdict, note: i.note, runner: "", disc: undefined,
+  issue_id: i.issue_id, title: i.title, verdict: i.verdict, note: i.note,
+  runner: i.runner ?? "", disc: i.disc ?? undefined,
 });
 
 export function QAGate() {

@@ -40,11 +40,18 @@ const initials = (s: string) => (s || "?").split(/\s+/).map((w) => w[0]).filter(
  *    (trust as a string level, capability_tags, est/by/dep, code/accent, mr_title…)
  *    that don't line up with our strict Zod types — the adapter is the loose seam. ── */
 const LEVEL_NUM: Record<string, number> = { high: 88, medium: 58, low: 28 };
+// real merge → graded strength: record_merge stores only {task_type, score, via}; map the score
+// to the §12 grade ladder so the Passport's strength chip is real (project/date aren't tracked → "—").
+const scoreGrade = (s: number) => (s >= 0.9 ? "retro_validated" : s >= 0.82 ? "prod_survived" : s >= 0.7 ? "shipped" : "proposed");
 const toMockMember = (m: Member): any => ({
   ...m, trust: m.trust_level, gitlab: m.gitlab_username,
   // per-discipline numeric radar for the Passport, derived from the real per-discipline trust levels
   radar: Object.fromEntries(["uiux", "frontend", "backend", "devops", "qa"].map((d) =>
     [d, LEVEL_NUM[(m.trust as Record<string, string> | undefined)?.[d] ?? m.trust_level] ?? 28])),
+  // real merge history → the Passport table shape (empty for fresh accounts → Passport seeds a preview)
+  merges: (m.history ?? []).map((h) => { const r = h as { task_type?: string; score?: number };
+    return { mr: r.task_type ?? "merge", project: "—", grade: scoreGrade(r.score ?? 0),
+      delta: "+" + Number(r.score ?? 0).toFixed(2), date: "—" }; }),
 });
 const toMockTask = (t: WorkTask): any => ({ ...t, est: t.estimate_days ?? 1, by: t.assigned_by === "ai" ? "ai" : t.assigned_by ?? "self", dep: t.depends_on ?? [], project: t.project_id, score: 0, gap_cover: false, capability_tags: (t as { capability_tags?: string[] }).capability_tags ?? [] });
 function toMockProject(p: ProjectSummary): any {

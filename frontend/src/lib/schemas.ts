@@ -256,6 +256,8 @@ export type DispatchPreview = z.infer<typeof DispatchPreview>;
 export const QAItemResult = z.object({
   issue_id: z.string(), title: z.string(),
   verdict: z.enum(["pass", "fail", "needs_human"]), note: z.string(),
+  runner: z.string().nullish(),   // responsible dev (issue.assignee) — reject reroutes here
+  disc: z.string().nullish(),     // gate this item belongs to — drives the QA route pills
 });
 export const QAReport = z.object({ items: z.array(QAItemResult), reopened: z.array(z.number()).optional() });
 export type QAReport = z.infer<typeof QAReport>;

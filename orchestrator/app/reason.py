@@ -207,7 +207,14 @@ async def qa_review(plan: PlanJSON) -> QAReport:
         for e in plan.epics for i in e.issues
     ]
     prompt = "ISSUES:\n" + "\n".join(lines) + "\n\nReturn exactly one QAItemResult per issue (echo its id)."
-    return await generate_qa_report(prompt)
+    report = await generate_qa_report(prompt)
+    # Stamp the responsible runner + gate onto each item (the model only echoes the id). The reject
+    # flow reroutes to `runner`; the QA route pills group by `disc`.
+    owners = {i.id: (i.assignee, i.discipline) for e in plan.epics for i in e.issues}
+    for item in report.items:
+        runner, disc = owners.get(item.issue_id, (None, None))
+        item.runner, item.disc = runner, disc
+    return report
 
 
 async def close_project(record: dict, outcome_notes: str = "") -> dict:

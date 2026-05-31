@@ -426,6 +426,8 @@ class QAItemResult(BaseModel):
     title: str
     verdict: Literal["pass", "fail", "needs_human"]
     note: str = ""
+    runner: Optional[str] = None    # the responsible dev (issue.assignee) — reject reroutes here
+    disc: Optional[Discipline] = None  # the gate this item belongs to — drives the QA route pills
 
 
 class QAReport(BaseModel):
