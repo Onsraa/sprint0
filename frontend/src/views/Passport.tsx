@@ -75,15 +75,15 @@ const GRADE_META: Record<string, { label: string; step: number; proven: boolean;
 
 export function Passport() {
   const { me } = useApp();
-  // Real passport from the signed-in member: radar (per-discipline trust), seniority, load, and merge
-  // history are all adapter-derived from the live member; the scripted seed only backs `joined` (the
-  // one field the backend doesn't track) and previews merges before this account's first real merge.
+  // Real passport from the signed-in member: radar (per-discipline trust), seniority, load, joined, and
+  // merge history are all adapter-derived from the live member; the scripted seed only previews merges
+  // before this account's first real merge (and backs joined for any pre-`joined`-field seeded account).
   const seed = passportFor(me.username);
   const p = {
     trust: me.radar ?? seed.trust,
     seniority: me.seniority ?? seed.seniority,
     load: me.load ?? seed.load,
-    joined: seed.joined,
+    joined: me.joined || seed.joined,
     merges: me.merges && me.merges.length ? me.merges : seed.merges,
   };
   const strongest = TRUST_AXES.reduce((a, b) => (p.trust[b] > p.trust[a] ? b : a), TRUST_AXES[0]);

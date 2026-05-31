@@ -6,6 +6,7 @@
     "email": "onsraa@sprint0.dev",
     "role": "manager",
     "seniority": "senior",
+    "joined": "2023-09",
     "skills_text": "engineering manager — delivery, staffing, architecture review, stakeholder comms"
   },
   "members": [
@@ -17,6 +18,7 @@
       "discipline": "backend",
       "seniority": "senior",
       "load": 100,
+      "joined": "2023-11",
       "trust": { "backend": "high", "devops": "medium" },
       "skills_text": "senior backend engineer — Python, Postgres, Stripe payments, double-entry ledgers, webhooks, idempotency, code review; mentors juniors"
     },
@@ -28,6 +30,7 @@
       "discipline": "devops",
       "seniority": "senior",
       "load": 0,
+      "joined": "2024-01",
       "trust": { "devops": "high", "backend": "high" },
       "skills_text": "senior platform/devops engineer — Docker, Kubernetes, CI/CD, Terraform, observability, secrets, also strong backend"
     },
@@ -39,6 +42,7 @@
       "discipline": "frontend",
       "seniority": "mid",
       "load": 0,
+      "joined": "2024-06",
       "trust": { "frontend": "medium" },
       "skills_text": "frontend engineer — React, TypeScript, Vite, UI state, maps, accessibility"
     },
@@ -50,6 +54,7 @@
       "discipline": "qa",
       "seniority": "mid",
       "load": 0,
+      "joined": "2024-09",
       "trust": { "qa": "medium" },
       "skills_text": "QA engineer — end-to-end testing, acceptance criteria, Playwright, bug triage, release sign-off"
     }

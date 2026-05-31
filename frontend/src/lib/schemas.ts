@@ -272,6 +272,7 @@ export const Member = z.object({
   discipline: Discipline.nullable(), seniority: Seniority, load: z.number(),
   gitlab_user_id: z.number().nullable(), gitlab_username: z.string(), skills_text: z.string(),
   trust: z.record(z.string(), TrustLevel), trust_level: TrustLevel,
+  joined: z.string().nullish(),   // ISO month joined the agency (YYYY-MM) — shown on the Passport
   history: z.array(unknownRecord), promoted: z.boolean().optional(),
 });
 export type Member = z.infer<typeof Member>;

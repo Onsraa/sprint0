@@ -7,6 +7,8 @@ REASON only (RAG via MongoDB MCP + Gemini). Execution is the separate, human-gat
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.agent import (
     generate_architectures, generate_clarification, generate_cv_profile, generate_plan, generate_qa_report,
 )
@@ -260,6 +262,7 @@ async def onboard_developer(cv_text: str) -> dict:
         "gitlab_user_id": gl_user["id"] if gl_user else None,
         "trust_level": "low",
         "trust": {},
+        "joined": datetime.now(timezone.utc).strftime("%Y-%m"),  # a CV hire joins today
         "history": [],
     }
     async with MongoMCP() as m:

@@ -91,6 +91,7 @@ def main() -> int:
             "gitlab_user_id": uid, "skills_text": m["skills_text"], "skill_embedding": v,
             "trust": trust,
             "trust_level": max(trust.values(), key=lambda t: _RANK[t], default="low"),
+            "joined": m.get("joined", ""),
             "history": [],
         })
         print(f"   {m['name']:12} {m.get('role'):9} {str(m.get('discipline') or '-'):8} load={int(m.get('load',0)):3} gitlab_uid={uid}")

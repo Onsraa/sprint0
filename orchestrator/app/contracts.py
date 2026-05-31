@@ -124,6 +124,7 @@ class DeveloperProfile(BaseModel):
     load: int = 0                               # 0-100 capacity used; >=100 → unavailable
     gitlab_user_id: Optional[int] = None        # real GitLab user → native assignee; None = label-only
     trust: dict[str, TrustLevel] = Field(default_factory=dict)  # per-discipline tier (overrides trust_level)
+    joined: Optional[str] = None                # ISO month joined the agency (YYYY-MM); shown on the Passport
 
     @model_validator(mode="after")
     def _default_username(self) -> "DeveloperProfile":
