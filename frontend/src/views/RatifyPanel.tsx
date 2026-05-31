@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
-import type { DecisionCardResponse, Issue, Risk } from "../lib/api";
-import { api } from "../lib/api";
+import type { Issue, Risk } from "../lib/api";
+import { useRelay, useDecisionCard, useRatifyGate } from "../features/relay/useRelay";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
 import { KindSurface } from "./KindSurface";
 
@@ -12,19 +12,21 @@ import { KindSurface } from "./KindSurface";
 
 const RISKS: Risk[] = ["low", "medium", "high"];
 
-const SIGNAL_COLOR: Record<string, string> = { green: "var(--positive)", orange: "var(--orange)", grey: "var(--line-strong)" };
+const SIGNAL_COLOR: Record<string, string> = { green: "var(--green)", orange: "var(--amber)", grey: "var(--border-strong)" };
 
 /** A scoped file is "existing" if it's already in the target repo's module manifest, else "new". */
 const fileStatus = (file: string, manifest: string[]): "existing" | "new" =>
   manifest.includes(file) ? "existing" : "new";
 
 export function RatifyPanel() {
-  const { discipline, activeGate, plan, planId, relay, setRelay, setView, featureProjectId, projects } = useApp();
+  const { discipline, activeGate, plan, planId, setView, featureProjectId, projects } = useApp();
 
   // The gate being ratified. A lead ratifies their own discipline; a manager
-  // opens an orphan gate from the queue, which sets `activeGate`. Fall back to
-  // the caller's own discipline when no gate was explicitly focused.
+  // opens an orphan gate from the queue, which sets `activeGate`.
   const target = activeGate ?? discipline;
+  const { data: relay } = useRelay(planId);
+  const { data: card } = useDecisionCard(planId, target); // System 2 — cached query (best-effort)
+  const ratifyGate = useRatifyGate(planId ?? "");
 
   const slice = useMemo(
     () => (target ? planIssues(plan?.epics).filter((i) => i.discipline === target) : []),
@@ -37,18 +39,7 @@ export function RatifyPanel() {
   const [reasoning, setReasoning] = useState("");
   const [busy, setBusy] = useState<"approve" | "changes" | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [card, setCard] = useState<DecisionCardResponse | null>(null);
   const [deviated, setDeviated] = useState(false);
-
-  // Decision Card (System 2): the two-pass adversarial AI evaluation for this gate (best-effort).
-  useEffect(() => {
-    setCard(null);
-    setDeviated(false);
-    if (!planId || !target) return;
-    let cancelled = false;
-    api.decisionCard(planId, target).then((c) => !cancelled && setCard(c)).catch(() => {});
-    return () => { cancelled = true; };
-  }, [planId, target]);
 
   if (!target || !plan || !planId) {
     return (
@@ -81,14 +72,15 @@ export function RatifyPanel() {
     setBusy(approve ? "approve" : "changes");
     setErr(null);
     try {
-      const payload = slice.map(editOf);
-      const next = await api.ratify(planId, target, {
-        edits: payload, note, approve, reasoning,
-        ai_recommendation: card?.card?.recommendation ?? "",
-        ai_confidence: card?.card?.confidence ?? null,
-        deviated, deviation_reason: deviated ? reasoning : "",
+      await ratifyGate.mutateAsync({
+        discipline: target,
+        body: {
+          edits: slice.map(editOf), note, approve, reasoning,
+          ai_recommendation: card?.card?.recommendation ?? "",
+          ai_confidence: card?.card?.confidence ?? null,
+          deviated, deviation_reason: deviated ? reasoning : "",
+        },
       });
-      setRelay(next);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

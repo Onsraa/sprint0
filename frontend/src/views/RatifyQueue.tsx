@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useApp } from "../app/AppContext";
 import { api } from "../lib/api";
 import type { QueueItem } from "../lib/api";
+import { qk } from "../lib/query";
 import { DISCIPLINE_LABEL, DISCIPLINE_COLOR, statusStyle } from "../lib/relayUtils";
 
 // Cross-project ratify queue: every relay gate currently awaiting the
@@ -10,7 +12,8 @@ import { DISCIPLINE_LABEL, DISCIPLINE_COLOR, statusStyle } from "../lib/relayUti
 // gate — the fix for a lead landing on an empty RatifyPanel after login.
 
 export function RatifyQueue() {
-  const { setPlan, setPlanId, setRelay, setActiveGate, setView } = useApp();
+  const { setPlan, setPlanId, setActiveGate, setView } = useApp();
+  const qc = useQueryClient();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -47,7 +50,7 @@ export function RatifyQueue() {
       ]);
       setPlan(plan);
       setPlanId(item.plan_id);
-      setRelay(relay);
+      qc.setQueryData(qk.relay(item.plan_id), relay); // seed the relay query cache (no flash)
       setActiveGate(item.discipline);
       setView("ratify");
     } catch (e) {

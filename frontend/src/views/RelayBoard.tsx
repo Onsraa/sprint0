@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../app/AppContext";
-import { api } from "../lib/api";
 import type { Discipline, FlagIntegrationResult, Gate, IntegrationCandidate, IntegrationSignal } from "../lib/api";
+import { useRelay, useFlagIntegration } from "../features/relay/useRelay";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, statusStyle } from "../lib/relayUtils";
 
 /* The ratification relay: {uiux ∥ backend ∥ devops} → frontend → qa.
@@ -13,7 +13,8 @@ const ROW_2: Discipline[] = ["frontend"];
 const ROW_3: Discipline[] = ["qa"];
 
 export function RelayBoard() {
-  const { relay, plan, discipline, setView } = useApp();
+  const { plan, planId, discipline, setView } = useApp();
+  const { data: relay } = useRelay(planId);
   const mine = discipline;
 
   if (!relay || !plan) {
@@ -85,7 +86,9 @@ export function RelayBoard() {
 /* The integration gate (B+C+D): a consumer dev reports their API producer failing → the qa gate
    blocks and the producer is pinged; anyone can mark it back ok. Authority is enforced server-side. */
 function IntegrationPanel() {
-  const { relay, plan, planId, member, setRelay } = useApp();
+  const { plan, planId, member } = useApp();
+  const { data: relay } = useRelay(planId);
+  const flag = useFlagIntegration(planId ?? "");
   const [reporterId, setReporterId] = useState("");
   const [note, setNote] = useState("");
   const [candidates, setCandidates] = useState<IntegrationCandidate[] | null>(null);
@@ -112,8 +115,7 @@ function IntegrationPanel() {
 
   const applyResult = (res: FlagIntegrationResult) => {
     if ("gates" in res) {
-      setRelay(res);
-      setCandidates(null);
+      setCandidates(null);  // relay cache is updated inside the mutation hook
       setReporterId("");
       setNote("");
     } else {
@@ -121,11 +123,11 @@ function IntegrationPanel() {
     }
   };
 
-  const run = async (body: Parameters<typeof api.flagIntegration>[1]) => {
+  const run = async (body: Parameters<typeof flag.mutateAsync>[0]) => {
     setBusy(true);
     setErr(null);
     try {
-      applyResult(await api.flagIntegration(planId, body));
+      applyResult(await flag.mutateAsync(body));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

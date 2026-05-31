@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useApp } from "../app/AppContext";
 import { api } from "../lib/api";
 import type { RelaySummary } from "../lib/api";
+import { qk } from "../lib/query";
 import { DISCIPLINE_LABEL, DISCIPLINE_COLOR, statusStyle } from "../lib/relayUtils";
 
 export function RelayPortfolio() {
-  const { setPlan, setPlanId, setRelay, setView } = useApp();
+  const { setPlan, setPlanId, setView } = useApp();
+  const qc = useQueryClient();
   const [relays, setRelays] = useState<RelaySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -33,7 +36,7 @@ export function RelayPortfolio() {
       const [plan, relay] = await Promise.all([api.getPlan(r.plan_id), api.getRelay(r.plan_id)]);
       setPlan(plan);
       setPlanId(r.plan_id);
-      setRelay(relay);
+      qc.setQueryData(qk.relay(r.plan_id), relay); // seed the relay query cache (no flash)
       setView("relay");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
