@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useApp } from "../../app/AppContext";
+import { patchTaskInCache } from "../../features/work/useWork";
 import { api, type WorkTask, type TaskStatus } from "../../lib/api";
 import { STATUS_COLUMNS, provenanceTag } from "./workUtils";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, RISK_COLOR } from "../../lib/relayUtils";
 import { KindSurface } from "../KindSurface";
 
 export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClose: () => void; reload: () => void }) {
-  const { member, patchTask, roster } = useApp();
+  const { member, roster } = useApp();
+  const qc = useQueryClient();
   const me = member?.username;
   const isManager = member?.role === "manager";
 
@@ -39,7 +42,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
       const updated = await fn();
       setDetail(updated);
       // Update the board behind in place — no cache clear, no blank.
-      patchTask(updated.id, { status: updated.status, assignee: updated.assignee, assigned_by: updated.assigned_by });
+      patchTaskInCache(qc, updated.id, { status: updated.status, assignee: updated.assignee, assigned_by: updated.assigned_by });
       if (reschedules) reload(); // assignment changed → re-pack the calendar (silent SWR refetch)
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : String(e));
@@ -61,7 +64,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
     try {
       const updated = await api.pinTask(taskId, !detail.pinned);
       setDetail(updated);
-      patchTask(updated.id, { pinned: updated.pinned }); // board/timeline reflect the lock instantly
+      patchTaskInCache(qc, updated.id, { pinned: updated.pinned }); // board/timeline reflect the lock instantly
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : String(e));
       refetch();
