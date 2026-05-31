@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApp } from "../../app/AppContext";
+import { useMe } from "../../features/auth/useAuth";
+import { useRoster } from "../../features/roster/useRoster";
 import { useUI } from "../../lib/store";
 import { qk } from "../../lib/query";
 import { type TaskStatus, type WorkTask, type RescheduleStrategy } from "../../lib/api";
@@ -15,7 +16,8 @@ import { WorkEventControl } from "./WorkEventControl";
 type Mode = "board" | "list" | "timeline";
 
 export function WorkHub() {
-  const { role, roster } = useApp();           // role + roster stay on the bridge (not the task cache)
+  const { role } = useMe();
+  const roster = useRoster();
   const qc = useQueryClient();
   const [scope, setScope] = useState("me");
   const [mode, setMode] = useState<Mode>("board");

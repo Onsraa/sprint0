@@ -16,6 +16,12 @@ export function useWork(scope: string) {
   });
 }
 
+/** Invalidate every work scope (after a dispatch / reflow) — replaces AppContext.invalidateTasks. */
+export function useInvalidateWork() {
+  const qc = useQueryClient();
+  return () => qc.invalidateQueries({ queryKey: WORK });
+}
+
 /** Optimistic in-place patch of one task across EVERY cached scope (no refetch, no blank). */
 export function patchTaskInCache(qc: QueryClient, taskId: string, patch: Partial<WorkTask>) {
   qc.getQueriesData<WorkTask[]>({ queryKey: WORK }).forEach(([key, tasks]) => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApp } from "../app/AppContext";
+import { useUI } from "../lib/store";
+import { useView } from "../features/nav/nav";
 import { api } from "../lib/api";
 import type { InboxNeed, NotificationItem, QueueItem, RescheduleProposal } from "../lib/api";
 import { qk } from "../lib/query";
@@ -35,7 +36,10 @@ const KIND_META: Record<string, { icon: string }> = {
 };
 
 export function InboxPage() {
-  const { setActiveGate, setView, setPlan, setPlanId } = useApp();
+  const setActiveGate = useUI((s) => s.setActiveGate);
+  const setPlan = useUI((s) => s.setPlan);
+  const setPlanId = useUI((s) => s.setPlanId);
+  const { setView } = useView();
   const { data: inbox } = useInbox();
   const qc = useQueryClient();
   const [opening, setOpening] = useState<string | null>(null);

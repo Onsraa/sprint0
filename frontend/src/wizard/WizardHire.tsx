@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { useApp } from "../app/AppContext";
+import { useUI } from "../lib/store";
 import { Mascot } from "../components/Mascot";
 import { Icon } from "../lib/icon";
 import { api } from "../lib/api";
@@ -28,7 +28,7 @@ const HireForm = z
 type HireForm = z.infer<typeof HireForm>;
 
 export function WizardHire() {
-  const { setWizardOpen } = useApp();
+  const setWizardOpen = useUI((s) => s.setWizardOpen);
   const [result, setResult] = useState<Member | null>(null);
   const { register, handleSubmit, watch, setValue, formState } = useForm<HireForm>({
     resolver: zodResolver(HireForm),

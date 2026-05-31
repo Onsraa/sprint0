@@ -3,7 +3,9 @@ import type { Dispatch, SetStateAction } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useApp } from "../app/AppContext";
+import { useUI } from "../lib/store";
+import { useRefreshProjects } from "../features/projects/useProjects";
+import { useInvalidateWork } from "../features/work/useWork";
 import { Disclosure } from "../components/Disclosure";
 import { Mascot } from "../components/Mascot";
 import { api, draft } from "../lib/api";
@@ -63,20 +65,18 @@ const WizardStateZ = z.object({
 });
 
 export function WizardBrief() {
-  const {
-    setWizardOpen,
-    setWizardKind,
-    featureProjectId,
-    setFeatureProjectId,
-    plan,
-    setPlan,
-    planId,
-    setPlanId,
-    relay,
-    setRelay,
-    setLiveProjectId,
-    setLiveCloneUrl,
-  } = useApp();
+  const setWizardOpen = useUI((s) => s.setWizardOpen);
+  const setWizardKind = useUI((s) => s.setWizardKind);
+  const featureProjectId = useUI((s) => s.featureProjectId);
+  const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
+  const plan = useUI((s) => s.plan);
+  const setPlan = useUI((s) => s.setPlan);
+  const planId = useUI((s) => s.planId);
+  const setPlanId = useUI((s) => s.setPlanId);
+  const setLiveProjectId = useUI((s) => s.setLiveProjectId);
+  const setLiveCloneUrl = useUI((s) => s.setLiveCloneUrl);
+  // Relay is wizard-local during planning; the ratify surfaces refetch it via useRelay(planId).
+  const [relay, setRelay] = useState<RelayState | null>(null);
 
   const isFeature = featureProjectId != null;
   const [step, setStep] = useState(0);
@@ -788,8 +788,8 @@ function StepPlan({
   featureProjectId: number | null;
   plan: PlanJSON | null;
   relay: RelayState | null;
-  setPlan: Dispatch<SetStateAction<PlanJSON | null>>;
-  setPlanId: Dispatch<SetStateAction<string | null>>;
+  setPlan: (plan: PlanJSON | null) => void;
+  setPlanId: (id: string | null) => void;
   setRelay: Dispatch<SetStateAction<RelayState | null>>;
   next: () => void;
 }) {
@@ -1151,12 +1151,13 @@ function StepDispatch({
 }: {
   planId: string | null;
   setRelay: Dispatch<SetStateAction<RelayState | null>>;
-  setLiveProjectId: Dispatch<SetStateAction<number | null>>;
-  setLiveCloneUrl: Dispatch<SetStateAction<string | null>>;
+  setLiveProjectId: (id: number | null) => void;
+  setLiveCloneUrl: (url: string | null) => void;
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { refreshProjects, invalidateTasks } = useApp();
+  const refreshProjects = useRefreshProjects();
+  const invalidateTasks = useInvalidateWork();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<DispatchResult | null>(null);

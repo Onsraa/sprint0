@@ -1,10 +1,9 @@
-/* sprint0 — route tree (TanStack Router, code-based). The root renders <AppProvider><AppShellNew/></,
- * so every panel still gets useApp() via the bridge; children render into the shell's <Outlet/>.
- * Each `View` string maps 1:1 to a path segment (/${view}), which keeps the AppContext view↔URL
- * bridge trivial. Role-gating is the existing AppContext effect (redirects an invalid view home). */
+/* sprint0 — route tree (TanStack Router, code-based). The root renders <AppShellNew/>; children
+ * render into the shell's <Outlet/>. Each `View` string maps 1:1 to a path segment (/${view}). State
+ * is sourced from TanStack Query / Zustand / the router directly (no AppContext) — see features/nav
+ * (useView + useRoleGate), features/auth (useMe), lib/store (useUI). */
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import type { FC } from "react";
-import { AppProvider } from "./AppContext";
 import { AppShellNew } from "./AppShellNew";
 
 import { InboxPage } from "../views/InboxPage";
@@ -23,11 +22,7 @@ import { QAGate } from "../views/QAGate";
 import { DevToday, DevIssue, DevPassport } from "../views/dev/DevViews";
 
 const rootRoute = createRootRoute({
-  component: () => (
-    <AppProvider>
-      <AppShellNew />
-    </AppProvider>
-  ),
+  component: () => <AppShellNew />,
 });
 
 /** path (= `/${view}`) → the existing panel component. */

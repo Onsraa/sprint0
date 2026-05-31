@@ -3,7 +3,7 @@
    audit shows the rubric; content/runbook fall through to a plain brief. Shared by the dev
    active-issue view, the ratify panel, and the task drawer so the same slice renders the
    same way wherever it's opened. Tolerates both the full Issue and the thinner Task shape. */
-import { useApp } from "../app/AppContext";
+import { useUI } from "../lib/store";
 import type { ContextScope, Kind } from "../lib/api";
 import { KIND_LABEL } from "../lib/relayUtils";
 
@@ -27,7 +27,7 @@ export function KindSurface({ work }: { work: KindWork }) {
 }
 
 function CodeSurface({ work }: { work: KindWork }) {
-  const { liveCloneUrl } = useApp();
+  const liveCloneUrl = useUI((s) => s.liveCloneUrl);
   const scope = work.context_scope ?? EMPTY_SCOPE;
   const files = scope.files ?? [];
   const bid = work.id.toLowerCase();

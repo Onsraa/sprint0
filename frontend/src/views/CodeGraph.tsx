@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { useApp } from "../app/AppContext";
+import { useProjects } from "../features/projects/useProjects";
 import { api } from "../lib/api";
 import type { DriftReport, GovernanceRule, GraphNode } from "../lib/api";
 
 const inp: React.CSSProperties = { padding: "7px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 13 };
 
 export function CodeGraph() {
-  const { projects } = useApp();
+  const { projects } = useProjects();
   const [summary, setSummary] = useState<{ nodes: number; edges: number } | null>(null);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [rules, setRules] = useState<GovernanceRule[]>([]);

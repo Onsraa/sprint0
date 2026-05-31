@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
-import { useApp } from "../app/AppContext";
+import { useMe } from "../features/auth/useAuth";
+import { useUI } from "../lib/store";
+import { useView } from "../features/nav/nav";
+import { useProjects } from "../features/projects/useProjects";
 import type { Issue, Risk } from "../lib/api";
 import { useRelay, useDecisionCard, useRatifyGate } from "../features/relay/useRelay";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
@@ -19,7 +22,13 @@ const fileStatus = (file: string, manifest: string[]): "existing" | "new" =>
   manifest.includes(file) ? "existing" : "new";
 
 export function RatifyPanel() {
-  const { discipline, activeGate, plan, planId, setView, featureProjectId, projects } = useApp();
+  const { discipline } = useMe();
+  const activeGate = useUI((s) => s.activeGate);
+  const plan = useUI((s) => s.plan);
+  const planId = useUI((s) => s.planId);
+  const featureProjectId = useUI((s) => s.featureProjectId);
+  const { setView } = useView();
+  const { projects } = useProjects();
 
   // The gate being ratified. A lead ratifies their own discipline; a manager
   // opens an orphan gate from the queue, which sets `activeGate`.

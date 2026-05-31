@@ -1,8 +1,10 @@
 /* sprint0 — app shell (TanStack Router). Persistent chrome: role-gated nav rail (Link-based) +
  * topbar + the routed <Outlet/>. Login/session gating + the wizard modal live here. Styling is still
  * the current tokens — P3 re-skins this to the Linear design. */
-import { Link, Outlet } from "@tanstack/react-router";
-import { useApp } from "./AppContext";
+import { Link, Outlet, useNavigate } from "@tanstack/react-router";
+import { useMe, useLogout } from "../features/auth/useAuth";
+import { useUI } from "../lib/store";
+import { useView, useRoleGate } from "../features/nav/nav";
 import type { Role } from "./types";
 import type { Member } from "../lib/api";
 import { Icon, type IconName } from "../lib/icon";
@@ -14,8 +16,11 @@ import { BellPanel } from "../features/notify/BellPanel";
 import { useNotificationsWS } from "../features/notify/useNotifications";
 
 export function AppShellNew() {
-  const { member, authLoading, wizardOpen, wizardKind } = useApp();
+  const { member, authLoading, role } = useMe();
+  const wizardOpen = useUI((s) => s.wizardOpen);
+  const wizardKind = useUI((s) => s.wizardKind);
   useNotificationsWS(member?.username); // live notifications WS → invalidates the inbox query
+  useRoleGate(member ? role : null); // redirect a persona off a route it can't see (no-op logged out)
 
   if (authLoading) return <SessionLoading />;
   if (!member) return <Login />;
@@ -111,7 +116,14 @@ function initialsOf(name: string): string {
 }
 
 function Sidebar() {
-  const { member, role, setWizardOpen, setWizardKind, setFeatureProjectId, logout } = useApp();
+  const { member, role } = useMe();
+  const setWizardOpen = useUI((s) => s.setWizardOpen);
+  const setWizardKind = useUI((s) => s.setWizardKind);
+  const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
+  const resetSession = useUI((s) => s.resetSession);
+  const doLogout = useLogout();
+  const navigate = useNavigate();
+  const logout = () => { doLogout(); resetSession(); navigate({ to: "/" as "/" }); };
   const sections = navFor(role);
   const isManager = role === "manager";
 
@@ -167,7 +179,8 @@ function Sidebar() {
 }
 
 function TopBar() {
-  const { member, role, view } = useApp();
+  const { member, role } = useMe();
+  const { view } = useView();
   const titles: Record<string, string> = {
     work: "My Work", dashboard: "Projects", team: "Team", relay: "Ratification relay", relays: "Active relays",
     today: "Today", issue: "Active issue", passport: "My Passport", ratify: "Ratify", queue: "Ratify queue",

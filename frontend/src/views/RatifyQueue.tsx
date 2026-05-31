@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApp } from "../app/AppContext";
+import { useUI } from "../lib/store";
+import { useView } from "../features/nav/nav";
 import { api } from "../lib/api";
 import type { QueueItem } from "../lib/api";
 import { qk } from "../lib/query";
@@ -12,7 +13,10 @@ import { DISCIPLINE_LABEL, DISCIPLINE_COLOR, statusStyle } from "../lib/relayUti
 // gate — the fix for a lead landing on an empty RatifyPanel after login.
 
 export function RatifyQueue() {
-  const { setPlan, setPlanId, setActiveGate, setView } = useApp();
+  const setPlan = useUI((s) => s.setPlan);
+  const setPlanId = useUI((s) => s.setPlanId);
+  const setActiveGate = useUI((s) => s.setActiveGate);
+  const { setView } = useView();
   const qc = useQueryClient();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(true);

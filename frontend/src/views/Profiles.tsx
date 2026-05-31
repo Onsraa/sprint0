@@ -2,7 +2,7 @@
  * with free-text capabilities, and an unknown tag becomes a `proposed` profile the manager confirms
  * before it can shape a lane. This panel is the confirm gate — the bound that keeps the lane set
  * small while the taxonomy grows. Reads GET /api/profiles via TanStack Query. */
-import { useApp } from "../app/AppContext";
+import { useMe } from "../features/auth/useAuth";
 import { useProfiles, useConfirmProfile } from "../features/profiles/useProfiles";
 import { Icon } from "../lib/icon";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
@@ -16,7 +16,7 @@ const STATUS_CHIP: Record<ProfileStatus, { label: string; bg: string; fg: string
 };
 
 export function Profiles() {
-  const { role } = useApp();
+  const { role } = useMe();
   const { data, isLoading, error } = useProfiles();
   const confirm = useConfirmProfile();
   const canConfirm = role === "manager";

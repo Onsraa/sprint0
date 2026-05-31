@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { useApp } from "../app/AppContext";
+import { useMe } from "../features/auth/useAuth";
+import { useUI } from "../lib/store";
+import { useView } from "../features/nav/nav";
 import type { Discipline, FlagIntegrationResult, Gate, IntegrationCandidate, IntegrationSignal } from "../lib/api";
 import { useRelay, useFlagIntegration } from "../features/relay/useRelay";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, statusStyle } from "../lib/relayUtils";
@@ -13,7 +15,10 @@ const ROW_2: Discipline[] = ["frontend"];
 const ROW_3: Discipline[] = ["qa"];
 
 export function RelayBoard() {
-  const { plan, planId, discipline, setView } = useApp();
+  const { discipline } = useMe();
+  const plan = useUI((s) => s.plan);
+  const planId = useUI((s) => s.planId);
+  const { setView } = useView();
   const { data: relay } = useRelay(planId);
   const mine = discipline;
 
@@ -86,7 +91,9 @@ export function RelayBoard() {
 /* The integration gate (B+C+D): a consumer dev reports their API producer failing → the qa gate
    blocks and the producer is pinged; anyone can mark it back ok. Authority is enforced server-side. */
 function IntegrationPanel() {
-  const { plan, planId, member } = useApp();
+  const { member } = useMe();
+  const plan = useUI((s) => s.plan);
+  const planId = useUI((s) => s.planId);
   const { data: relay } = useRelay(planId);
   const flag = useFlagIntegration(planId ?? "");
   const [reporterId, setReporterId] = useState("");

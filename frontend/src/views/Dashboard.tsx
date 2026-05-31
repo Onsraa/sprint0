@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApp } from "../app/AppContext";
+import { useMe } from "../features/auth/useAuth";
+import { useProjects, useRefreshProjects } from "../features/projects/useProjects";
+import { useRoster } from "../features/roster/useRoster";
+import { useUI } from "../lib/store";
 import { api, type Member, type ProjectSummary } from "../lib/api";
 import { qk } from "../lib/query";
 import { planIssues } from "../lib/relayUtils";
@@ -26,7 +29,14 @@ const fmtDate = (s?: string) => {
 };
 
 export function Dashboard() {
-  const { projects, refreshProjects, role, setWizardOpen, setWizardKind, setFeatureProjectId, liveProjectId, roster } = useApp();
+  const { projects } = useProjects();
+  const refreshProjects = useRefreshProjects();
+  const { role } = useMe();
+  const roster = useRoster();
+  const setWizardOpen = useUI((s) => s.setWizardOpen);
+  const setWizardKind = useUI((s) => s.setWizardKind);
+  const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
+  const liveProjectId = useUI((s) => s.liveProjectId);
   const qc = useQueryClient();
   const isManager = role === "manager";
   const [filter, setFilter] = useState<"all" | "active" | "shipped">("all");

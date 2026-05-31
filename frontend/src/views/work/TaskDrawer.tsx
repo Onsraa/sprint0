@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApp } from "../../app/AppContext";
+import { useMe } from "../../features/auth/useAuth";
+import { useRoster } from "../../features/roster/useRoster";
 import { patchTaskInCache } from "../../features/work/useWork";
 import { api, type WorkTask, type TaskStatus } from "../../lib/api";
 import { STATUS_COLUMNS, provenanceTag } from "./workUtils";
@@ -8,7 +9,8 @@ import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, RISK_COLOR } from "../../lib/relayU
 import { KindSurface } from "../KindSurface";
 
 export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClose: () => void; reload: () => void }) {
-  const { member, roster } = useApp();
+  const { member } = useMe();
+  const roster = useRoster();
   const qc = useQueryClient();
   const me = member?.username;
   const isManager = member?.role === "manager";

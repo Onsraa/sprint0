@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useApp } from "../app/AppContext";
+import { useUI } from "../lib/store";
 import type { QAItemResult, QAReport, QAVerdict } from "../lib/api";
 import { api } from "../lib/api";
 
@@ -13,7 +13,7 @@ const VERDICT: Record<QAVerdict, { label: string; fg: string; bg: string; icon: 
 };
 
 export function QAGate() {
-  const { liveProjectId } = useApp();
+  const liveProjectId = useUI((s) => s.liveProjectId);
   const [report, setReport] = useState<QAReport | null>(null);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);

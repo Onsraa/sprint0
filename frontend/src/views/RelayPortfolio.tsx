@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApp } from "../app/AppContext";
+import { useUI } from "../lib/store";
+import { useView } from "../features/nav/nav";
 import { api } from "../lib/api";
 import type { RelaySummary } from "../lib/api";
 import { qk } from "../lib/query";
 import { DISCIPLINE_LABEL, DISCIPLINE_COLOR, statusStyle } from "../lib/relayUtils";
 
 export function RelayPortfolio() {
-  const { setPlan, setPlanId, setView } = useApp();
+  const setPlan = useUI((s) => s.setPlan);
+  const setPlanId = useUI((s) => s.setPlanId);
+  const { setView } = useView();
   const qc = useQueryClient();
   const [relays, setRelays] = useState<RelaySummary[]>([]);
   const [loading, setLoading] = useState(true);

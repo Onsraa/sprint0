@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { useApp } from "../app/AppContext";
+import { useNavigate } from "@tanstack/react-router";
+import { useLogin } from "../features/auth/useAuth";
+import { ROLE_HOME, memberToRole } from "../features/nav/nav";
 import { api } from "../lib/api";
 import type { Member } from "../lib/api";
 import { Mascot, Sprint0Logo } from "../components/Mascot";
@@ -16,7 +18,8 @@ const TRUST_COLOR: Record<string, string> = {
 };
 
 export function Login() {
-  const { login } = useApp();
+  const login = useLogin();
+  const navigate = useNavigate();
   const [members, setMembers] = useState<Member[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -43,7 +46,8 @@ export function Login() {
     setBusy(username);
     setErr(null);
     try {
-      await login(username.trim());
+      const res = await login.mutateAsync(username.trim());
+      navigate({ to: `/${ROLE_HOME[memberToRole(res.member)]}` as "/" });
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

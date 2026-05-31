@@ -6,7 +6,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { useNavigate } from "@tanstack/react-router";
 import { useUI } from "../../lib/store";
-import { useApp } from "../../app/AppContext";
+import { useMe } from "../../features/auth/useAuth";
 import { Icon, type IconName } from "../../lib/icon";
 
 type Cmd = { id: string; label: string; icon: IconName; run: () => void };
@@ -16,7 +16,10 @@ export function CommandPalette() {
   const togglePalette = useUI((s) => s.togglePalette);
   const closePalette = useUI((s) => s.closePalette);
   const navigate = useNavigate();
-  const { role, setWizardOpen, setWizardKind, setFeatureProjectId } = useApp();
+  const { role } = useMe();
+  const setWizardOpen = useUI((s) => s.setWizardOpen);
+  const setWizardKind = useUI((s) => s.setWizardKind);
+  const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

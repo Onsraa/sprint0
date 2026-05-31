@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { useApp } from "../../app/AppContext";
+import { useMe } from "../../features/auth/useAuth";
+import { useUI } from "../../lib/store";
+import { useView } from "../../features/nav/nav";
 import type { Discipline, Member, MyIssue, TrustLevel } from "../../lib/api";
 import { api } from "../../lib/api";
 import { DISCIPLINE_LABEL, KIND_LABEL, RISK_COLOR } from "../../lib/relayUtils";
@@ -60,7 +62,9 @@ function useMyIssues(): { issues: MyIssue[]; loading: boolean; err: string | nul
    DEVELOPER · TODAY
    ============================================================ */
 export function DevToday() {
-  const { member, setView, setActiveIssue } = useApp();
+  const { member } = useMe();
+  const { setView } = useView();
+  const setActiveIssue = useUI((s) => s.setActiveIssue);
   const { issues, loading, err } = useMyIssues();
   const m = member as Member;
   const tier = tierFor(m.trust_level);
@@ -235,7 +239,7 @@ export function DevToday() {
    DEVELOPER · ACTIVE ISSUE
    ============================================================ */
 export function DevIssue() {
-  const { activeIssue } = useApp();
+  const activeIssue = useUI((s) => s.activeIssue);
   const { issues, loading, err } = useMyIssues();
 
   if (loading) return <Loading label="loading your issue…" />;
@@ -306,7 +310,7 @@ function ActiveIssuePanel({ mine }: { mine: MyIssue }) {
 const RADAR_DISCIPLINES: Discipline[] = ["uiux", "frontend", "backend", "devops", "qa"];
 
 export function DevPassport() {
-  const { member } = useApp();
+  const { member } = useMe();
   const m = member as Member;
 
   // Per-discipline trust → 0-100 radar axes (falls back to overall trust_level).

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { useApp } from "../app/AppContext";
+import { useMe } from "../features/auth/useAuth";
+import { useUI } from "../lib/store";
 import { api, type AccessGrant, type Discipline, type Member, type TrustLevel } from "../lib/api";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
 
@@ -27,7 +28,9 @@ type AccessState = { i_can_see: AccessGrant[]; can_see_me: AccessGrant[]; pendin
 const EMPTY_ACCESS: AccessState = { i_can_see: [], can_see_me: [], pending_in: [] };
 
 export function TeamView() {
-  const { role, member, setWizardOpen, setWizardKind } = useApp();
+  const { role, member } = useMe();
+  const setWizardOpen = useUI((s) => s.setWizardOpen);
+  const setWizardKind = useUI((s) => s.setWizardKind);
   const isManager = role === "manager";
   const me = member?.username ?? null;
   const [members, setMembers] = useState<Member[]>([]);
