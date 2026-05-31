@@ -37,6 +37,7 @@ export function CommandPalette() {
         { id: "relay", label: "Go to Relay", icon: "relay", run: go("/relays") },
         { id: "ratify", label: "Go to Ratify queue", icon: "ratify", run: go("/queue") },
         { id: "team", label: "Go to Team", icon: "team", run: go("/team") },
+        { id: "profiles", label: "Go to Profiles", icon: "profiles", run: go("/profiles") },
         { id: "merges", label: "Go to Merges", icon: "merges", run: go("/attributions") },
         { id: "codegraph", label: "Go to Code graph", icon: "codegraph", run: go("/codegraph") },
         { id: "portfolio", label: "Go to Portfolio", icon: "portfolio", run: go("/portfolio") },

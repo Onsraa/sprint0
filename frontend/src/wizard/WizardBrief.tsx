@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { useApp } from "../app/AppContext";
 import { Disclosure } from "../components/Disclosure";
 import { Mascot } from "../components/Mascot";
@@ -14,6 +17,8 @@ import type {
   TechStack,
   WizardDraft,
 } from "../lib/api";
+import type { DispatchPreview } from "../lib/schemas";
+import { Icon } from "../lib/icon";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
 import { StaffingGap } from "../views/StaffingGap";
 
@@ -46,6 +51,17 @@ interface WizardState {
 
 type SetState = Dispatch<SetStateAction<WizardState>>;
 
+// RHF/Zod schema for the wizard's form state. Server-returned fields (spec/arch) stay loose; the
+// user-entered fields (clarify answers, chosen stack, trust dial) carry the real constraints.
+const WizardStateZ = z.object({
+  briefId: z.string().nullable(),
+  spec: z.any().nullable(),
+  answers: z.record(z.string(), z.string()),
+  arch: z.array(z.any()),
+  chosenStack: z.record(z.string(), z.string()).nullable(),
+  dial: z.number().min(0).max(100),
+});
+
 export function WizardBrief() {
   const {
     setWizardOpen,
@@ -64,14 +80,25 @@ export function WizardBrief() {
 
   const isFeature = featureProjectId != null;
   const [step, setStep] = useState(0);
-  const [state, setState] = useState<WizardState>({
-    briefId: null,
-    spec: null,
-    answers: {},
-    arch: [],
-    chosenStack: null,
-    dial: 70,
+  // Form state lives in React Hook Form (Zod-validated via WizardStateZ). The wizard advances with
+  // imperative per-step API calls rather than one handleSubmit, so RHF is used as the validated
+  // store: `state` mirrors watch(); `setState` shims setValue per key — this keeps the useState-
+  // shaped API every step component already uses, and keeps plain controlled inputs focused (the
+  // inputs read from watch(), so no RHF field remounts on change).
+  const form = useForm<WizardState>({
+    resolver: zodResolver(WizardStateZ),
+    defaultValues: { briefId: null, spec: null, answers: {}, arch: [], chosenStack: null, dial: 70 },
   });
+  const state = form.watch();
+  const setState = useCallback<SetState>(
+    (updater) => {
+      const nextVal = typeof updater === "function" ? updater(form.getValues()) : updater;
+      (Object.keys(nextVal) as (keyof WizardState)[]).forEach((k) =>
+        form.setValue(k, nextVal[k] as never, { shouldDirty: true }),
+      );
+    },
+    [form],
+  );
   // A draft saved from a previous (closed) session — offered as Resume on Step 0.
   const [offer, setOffer] = useState<WizardDraft | null>(() => (featureProjectId == null ? draft.get() : null));
   const [resuming, setResuming] = useState(false);
@@ -1134,6 +1161,12 @@ function StepDispatch({
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<DispatchResult | null>(null);
   const [steps, setSteps] = useState<{ step: number; of: number; message: string }[]>([]);
+  // Dry-run the irreversible GitLab creation: what it makes, who it invites, free-tier cap, relay state.
+  const [preview, setPreview] = useState<DispatchPreview | null>(null);
+  useEffect(() => {
+    if (!planId) return;
+    api.dispatchPreview(planId).then(setPreview).catch(() => setPreview(null));
+  }, [planId]);
 
   const dispatch = async (mode: "copilot" | "autonomous") => {
     if (!planId) return;
@@ -1240,6 +1273,33 @@ function StepDispatch({
           Copilot dispatches once every gate is cleared. Autonomous force-passes the relay, then scaffolds.
         </div>
       </div>
+      {!busy && preview && (
+        <div className="card-soft" style={{ padding: 16, width: 460, maxWidth: "92%", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="kicker">Dry run · what dispatch creates</span>
+            {preview.is_delta && <span className="chip" style={{ fontSize: 9 }}>delta</span>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+            <PreviewStat n={preview.creates.project} label={preview.is_delta ? "extends" : "project"} />
+            <PreviewStat n={preview.creates.issues} label="issues" />
+            <PreviewStat n={preview.invite_count} label={`of ${preview.free_tier_cap} seats`} warn={preview.exceeds_cap} />
+          </div>
+          {preview.member_invites.length > 0 && (
+            <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", wordBreak: "break-word" }}>
+              invites: {preview.member_invites.map((m) => "@" + m).join(" · ")}
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--ink-soft)" }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: preview.relay_cleared ? "var(--positive)" : "var(--warn)", flexShrink: 0 }} />
+            {preview.relay_cleared ? "Relay cleared — copilot can dispatch now." : "Relay not cleared — copilot will block; autonomous force-passes it."}
+          </div>
+          {preview.exceeds_cap && (
+            <div className="mono" style={{ fontSize: 11, color: "var(--red)", display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon name="warn" size={13} /> {preview.invite_count} invites exceed the {preview.free_tier_cap}-seat free-tier cap.
+            </div>
+          )}
+        </div>
+      )}
       {busy && steps.length > 0 && (
         <div className="card-soft" style={{ padding: 16, width: 420, maxWidth: "90%", display: "flex", flexDirection: "column", gap: 8 }}>
           {steps.map((s, i) => (
@@ -1268,6 +1328,15 @@ function StepDispatch({
 }
 
 /* ── small shared bits ── */
+function PreviewStat({ n, label, warn }: { n: number; label: string; warn?: boolean }) {
+  return (
+    <div style={{ textAlign: "center", padding: "8px 4px", background: "var(--cream)", borderRadius: 8 }}>
+      <div className="display" style={{ fontSize: 22, color: warn ? "var(--red)" : "var(--ink)" }}>{n}</div>
+      <div className="kicker" style={{ marginTop: 2, fontSize: 9 }}>{label}</div>
+    </div>
+  );
+}
+
 function Loading({ label }: { label: string }) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>

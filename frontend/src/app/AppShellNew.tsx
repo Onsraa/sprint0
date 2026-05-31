@@ -63,6 +63,7 @@ function navFor(role: Role): NavSection[] {
         { to: "/relays", label: "Relay", icon: "relay" },
         { to: "/queue", label: "Ratify", icon: "ratify" },
         { to: "/team", label: "Team", icon: "team" },
+        { to: "/profiles", label: "Profiles", icon: "profiles" },
         { to: "/attributions", label: "Merges", icon: "merges" },
         { to: "/codegraph", label: "Code graph", icon: "codegraph" },
       ]},
@@ -170,7 +171,7 @@ function TopBar() {
   const titles: Record<string, string> = {
     work: "My Work", dashboard: "Projects", team: "Team", relay: "Ratification relay", relays: "Active relays",
     today: "Today", issue: "Active issue", passport: "My Passport", ratify: "Ratify", queue: "Ratify queue",
-    attributions: "Merge attribution", portfolio: "Decision Portfolio", codegraph: "Code Graph", qa: "QA gate", inbox: "Inbox",
+    attributions: "Merge attribution", portfolio: "Decision Portfolio", codegraph: "Code Graph", profiles: "Capability profiles", qa: "QA gate", inbox: "Inbox",
   };
   const isManager = role === "manager";
   const m = member as Member;

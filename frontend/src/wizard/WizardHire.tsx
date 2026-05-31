@@ -1,12 +1,18 @@
 import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { toast } from "sonner";
 import { useApp } from "../app/AppContext";
 import { Mascot } from "../components/Mascot";
+import { Icon } from "../lib/icon";
 import { api } from "../lib/api";
 import type { Member } from "../lib/api";
 
 /* sprint0 — Hire wizard, wired to the real gateway: drop/paste a CV → POST /api/developers
    (Gemini parses it, links the GitLab user, seeds a low-trust passport in Mongo) → the new
-   member joins the roster (login + assignment pool). The junior added live in the demo. */
+   member joins the roster (login + assignment pool). The junior added live in the demo.
+   Form state is React Hook Form + a Zod resolver (file XOR a ≥20-char paste). */
 
 const DEMO_JUNIOR_CV = `Jamie Lee — Junior Developer
 1 year of experience, bootcamp graduate (2025).
@@ -16,28 +22,32 @@ Keen to grow into UI/UX and frontend work. No production backend or DevOps exper
 
 const INFO = { background: "var(--info)", color: "var(--paper)", borderColor: "var(--info)" };
 
+const HireForm = z
+  .object({ text: z.string(), file: z.instanceof(File).nullable() })
+  .refine((v) => !!v.file || v.text.trim().length > 20, { message: "Paste a CV (20+ chars) or choose a file", path: ["text"] });
+type HireForm = z.infer<typeof HireForm>;
+
 export function WizardHire() {
   const { setWizardOpen } = useApp();
-  const [text, setText] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Member | null>(null);
+  const { register, handleSubmit, watch, setValue, formState } = useForm<HireForm>({
+    resolver: zodResolver(HireForm),
+    mode: "onChange",
+    defaultValues: { text: "", file: null },
+  });
+  const file = watch("file");
+  const { isSubmitting, isValid } = formState;
 
   const close = () => setWizardOpen(false);
-  const canSubmit = !busy && (!!file || text.trim().length > 20);
 
-  const onboard = async () => {
-    setBusy(true);
-    setError(null);
+  // Single submit: Zod gate already passed, so just POST and show the result (errors → toast).
+  const onboard = handleSubmit(async (v) => {
     try {
-      setResult(await api.addDeveloper(file ? { file } : { text }));
+      setResult(await api.addDeveloper(v.file ? { file: v.file } : { text: v.text }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+      toast.error(e instanceof Error ? e.message : "Onboarding failed");
     }
-  };
+  });
 
   return (
     <div
@@ -56,7 +66,7 @@ export function WizardHire() {
               <div style={{ fontWeight: 800, fontSize: 16 }}>Cold-start passport</div>
             </div>
           </div>
-          <button onClick={close} style={{ width: 32, height: 32, borderRadius: 8, background: "var(--cream-deep)", display: "grid", placeItems: "center", fontSize: 18, fontWeight: 700 }}>×</button>
+          <button onClick={close} style={{ width: 32, height: 32, borderRadius: 8, background: "var(--cream-deep)", display: "grid", placeItems: "center" }}><Icon name="close" size={18} /></button>
         </div>
 
         <div style={{ flex: 1, overflow: "auto", padding: 32 }}>
@@ -72,22 +82,21 @@ export function WizardHire() {
                 className="card-soft"
                 style={{ padding: 20, border: `2px dashed ${file ? "var(--positive)" : "var(--ink-faint)"}`, borderRadius: 16, textAlign: "center", cursor: "pointer", background: "var(--paper)" }}
               >
-                <input type="file" accept=".pdf,.txt,.md" style={{ display: "none" }} onChange={(e) => { setFile(e.target.files?.[0] ?? null); setText(""); }} />
-                <div style={{ fontSize: 28 }}>📄</div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{file ? file.name : "Choose a CV file (PDF / text)"}</div>
+                <input type="file" accept=".pdf,.txt,.md" style={{ display: "none" }}
+                  onChange={(e) => { setValue("file", e.target.files?.[0] ?? null, { shouldValidate: true }); setValue("text", "", { shouldValidate: true }); }} />
+                <div style={{ color: file ? "var(--positive)" : "var(--ink-mute)", display: "grid", placeItems: "center" }}><Icon name={file ? "doc" : "upload"} size={26} /></div>
+                <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6 }}>{file ? file.name : "Choose a CV file (PDF / text)"}</div>
               </label>
               <div style={{ textAlign: "center", fontSize: 12, color: "var(--ink-mute)" }}>— or paste the CV —</div>
               <textarea
-                value={text}
-                onChange={(e) => { setText(e.target.value); setFile(null); }}
+                {...register("text", { onChange: () => { if (watch("file")) setValue("file", null); } })}
                 placeholder="Paste CV text…"
                 rows={6}
                 style={{ width: "100%", padding: 12, borderRadius: 12, border: "1.5px solid var(--line-strong)", fontFamily: "var(--font-mono)", fontSize: 13, resize: "vertical" }}
               />
-              <button onClick={() => { setText(DEMO_JUNIOR_CV); setFile(null); }} className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }}>
+              <button onClick={() => { setValue("text", DEMO_JUNIOR_CV, { shouldValidate: true }); setValue("file", null, { shouldValidate: true }); }} className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }}>
                 use the demo junior CV
               </button>
-              {error && <div style={{ color: "var(--negative, #C0392B)", fontSize: 13 }}>⚠ {error}</div>}
             </div>
           )}
         </div>
@@ -96,8 +105,8 @@ export function WizardHire() {
           {result ? (
             <button onClick={close} className="btn btn-sm btn-primary">Done →</button>
           ) : (
-            <button onClick={onboard} disabled={!canSubmit} className="btn btn-sm" style={{ ...INFO, border: "2px solid var(--info)", borderRadius: 999, padding: "9px 16px", fontWeight: 700, opacity: canSubmit ? 1 : 0.5 }}>
-              {busy ? "Onboarding…" : "Onboard →"}
+            <button onClick={onboard} disabled={isSubmitting || !isValid} className="btn btn-sm" style={{ ...INFO, border: "2px solid var(--info)", borderRadius: 999, padding: "9px 16px", fontWeight: 700, opacity: isSubmitting || !isValid ? 0.5 : 1 }}>
+              {isSubmitting ? "Onboarding…" : "Onboard →"}
             </button>
           )}
         </div>

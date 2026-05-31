@@ -16,6 +16,7 @@ import { RatifyPanel } from "../views/RatifyPanel";
 import { RatifyQueue } from "../views/RatifyQueue";
 import { RelayPortfolio } from "../views/RelayPortfolio";
 import { Portfolio } from "../views/Portfolio";
+import { Profiles } from "../views/Profiles";
 import { Attributions } from "../views/Attributions";
 import { CodeGraph } from "../views/CodeGraph";
 import { QAGate } from "../views/QAGate";
@@ -41,6 +42,7 @@ const PANELS: { path: string; component: FC }[] = [
   { path: "/ratify", component: RatifyPanel },
   { path: "/attributions", component: Attributions },
   { path: "/codegraph", component: CodeGraph },
+  { path: "/profiles", component: Profiles },
   { path: "/portfolio", component: Portfolio },
   { path: "/qa", component: QAGate },
   { path: "/today", component: DevToday },

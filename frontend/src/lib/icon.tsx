@@ -6,7 +6,8 @@ import {
   Briefcase, BookMarked, Search, Plus, Settings, Bell, ChevronDown, ChevronRight,
   ChevronLeft, MoreHorizontal, GripVertical, X, ArrowRight, Command, Calendar,
   Filter, ArrowUpDown, List, GanttChart, Mail, Lock, Eye, LogOut, Gauge, Link2,
-  Circle, Flag, Zap, Clock, Check, Share2, Boxes, AlertTriangle, type LucideIcon,
+  Circle, Flag, Zap, Clock, Check, Share2, Boxes, AlertTriangle, Upload, FileText,
+  type LucideIcon,
 } from "lucide-react";
 
 /** Semantic name -> Lucide component. */
@@ -54,6 +55,8 @@ const REGISTRY = {
   clock: Clock,
   check: Check,
   warn: AlertTriangle,
+  upload: Upload,
+  doc: FileText,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof REGISTRY;
