@@ -39,7 +39,13 @@ const initials = (s: string) => (s || "?").split(/\s+/).map((w) => w[0]).filter(
  *    Returns are intentionally `any`: the copied mockup panels read mock field names
  *    (trust as a string level, capability_tags, est/by/dep, code/accent, mr_title…)
  *    that don't line up with our strict Zod types — the adapter is the loose seam. ── */
-const toMockMember = (m: Member): any => ({ ...m, trust: m.trust_level, gitlab: m.gitlab_username });
+const LEVEL_NUM: Record<string, number> = { high: 88, medium: 58, low: 28 };
+const toMockMember = (m: Member): any => ({
+  ...m, trust: m.trust_level, gitlab: m.gitlab_username,
+  // per-discipline numeric radar for the Passport, derived from the real per-discipline trust levels
+  radar: Object.fromEntries(["uiux", "frontend", "backend", "devops", "qa"].map((d) =>
+    [d, LEVEL_NUM[(m.trust as Record<string, string> | undefined)?.[d] ?? m.trust_level] ?? 28])),
+});
 const toMockTask = (t: WorkTask): any => ({ ...t, est: t.estimate_days ?? 1, by: t.assigned_by === "ai" ? "ai" : t.assigned_by ?? "self", dep: t.depends_on ?? [], project: t.project_id, score: 0, gap_cover: false, capability_tags: (t as { capability_tags?: string[] }).capability_tags ?? [] });
 function toMockProject(p: ProjectSummary): any {
   const issues = (p.plan?.epics ?? []).reduce((n, e) => n + (e.issues?.length ?? 0), 0);
@@ -112,6 +118,7 @@ export function useApp() {
   const tasks = tasksRaw.map(toMockTask);
   const { projects: projectsRaw } = useProjects();
   const projects = projectsRaw.map(toMockProject);
+  const liveProjectId = useUI((s) => s.liveProjectId);
   const { data: queue = [] } = useQuery({ queryKey: qk.myQueue(), queryFn: () => api.myQueue().then((r) => r.items) });
   const drafts = useUI((s) => s.drafts);
   const addDraft = useUI((s) => s.addDraft);
@@ -120,7 +127,7 @@ export function useApp() {
   const { data: decisions = [] } = useQuery({ queryKey: qk.decisions(), queryFn: () => api.myDecisions().then((r) => r.decisions) });
   const invDec = () => qc.invalidateQueries({ queryKey: qk.decisions() });
   const setVisibility = (id: string, v: "personal" | "team") => { api.setDecisionVisibility(id, v).then(invDec); };
-  const editReasoning = (_id: string, _r: string) => { /* TODO(reconcile): PATCH /api/decisions/{id} reasoning */ };
+  const editReasoning = (id: string, r: string) => { api.patchDecision(id, { reasoning: r }).then(invDec); };
   const deprecate = (id: string) => { api.deprecateDecision(id, "").then(invDec); };
   const removeDecision = (id: string) => { api.deleteDecision(id).then(invDec); };
 
@@ -150,7 +157,12 @@ export function useApp() {
   // code-graph drift
   const { data: driftRaw } = useQuery({ queryKey: ["drift"], queryFn: () => api.checkDrift().then((r) => r.reports), staleTime: 60_000 });
   const drift = (driftRaw ?? []).map((d, i) => ({ ...d, id: `dr${i}`, title: d.drift_from_description || d.violation, detail: d.violation || d.suggested_fix, paths: d.affected_files ?? [], scheduled: false }));
-  const scheduleRefactor = (_id: string) => { /* TODO(reconcile): POST /api/graph/refactor needs project_id + the report */ };
+  const scheduleRefactor = (id: string) => {
+    const idx = parseInt(id.replace("dr", ""), 10);
+    const report = (driftRaw ?? [])[idx];
+    const pid = liveProjectId ?? projectsRaw[0]?.project_id;
+    if (report && pid != null) api.createRefactorTask(pid, report as never).then(() => qc.invalidateQueries({ queryKey: ["drift"] }));
+  };
 
   return {
     me, role, chrome, view, setView, switchPersona, members,

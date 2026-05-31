@@ -323,6 +323,15 @@ async function jdelete<T>(path: string): Promise<T> {
   return unwrap<T>(await fetch(BASE + path, { method: "DELETE", headers: authHeaders() }));
 }
 
+async function jpatch<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: "PATCH",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return unwrap<T>(res);
+}
+
 async function fpost<T>(path: string, form: FormData): Promise<T> {
   return unwrap<T>(await fetch(BASE + path, { method: "POST", headers: authHeaders(), body: form }));
 }
@@ -361,6 +370,9 @@ export const api = {
   },
   deleteDecision(id: string): Promise<{ deleted: string }> {
     return jdelete(`/api/decisions/${id}`);
+  },
+  patchDecision(id: string, body: { reasoning: string }): Promise<Decision> {
+    return jpatch(`/api/decisions/${id}`, body);
   },
   myQueue(): Promise<{ username: string; count: number; items: QueueItem[] }> {
     return jget("/api/me/queue");

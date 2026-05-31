@@ -75,7 +75,16 @@ const GRADE_META: Record<string, { label: string; step: number; proven: boolean;
 
 export function Passport() {
   const { me } = useApp();
-  const p = passportFor(me.username);
+  // Real passport from the signed-in member (numeric radar derived in the adapter from per-discipline
+  // trust levels); the scripted seed only fills gaps the backend doesn't supply (joined date, history).
+  const seed = passportFor(me.username);
+  const p = {
+    trust: me.radar ?? seed.trust,
+    seniority: me.seniority ?? seed.seniority,
+    load: me.load ?? seed.load,
+    joined: seed.joined,
+    merges: me.history && me.history.length ? me.history : seed.merges,
+  };
   const strongest = TRUST_AXES.reduce((a, b) => (p.trust[b] > p.trust[a] ? b : a), TRUST_AXES[0]);
 
   return (

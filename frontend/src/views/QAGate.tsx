@@ -2,18 +2,22 @@
    manager's "mark ok"). Run the acceptance checklist (pass / fail / needs-human per
    item), reject a failing item → reroute to the responsible runner, and the consumer
    side of the failing-API flow (report a failing dependency → it blocks the qa gate
-   → pings the producer). Reads QA_RUN; mutates locally.
+   → pings the producer).
 
-   Ported pixel-1:1 from the v5 mockup (app/QAGate.jsx). Data source: useApp() for
-   members + pushNotif/setToast; the acceptance run is a local seed (TODO below). */
+   Ported pixel-1:1 from the v5 mockup (app/QAGate.jsx). Data source: REAL backend —
+   api.qaRun(projectId) drives the checklist; api.rejectIssue reopens+reroutes. The
+   scripted QA_RUN/QA_PRODUCERS below are fallback seeds only (before a run is fired). */
 import { useState } from "react";
 import { useApp } from "../app/useApp";
+import { useUI } from "../lib/store";
+import { api, type QAReport } from "../lib/api";
+import { toast } from "sonner";
 import { Icon } from "../lib/icon";
 import { Avatar, Badge, Button, DiscDot } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 
-// TODO(reconcile): real qaRun via api.qaRun(projectId) — the orchestrator swaps this
-// scripted seed for the live acceptance run (POST /api/projects/{id}/qa/run).
+// Fallback seed shown only before a real run has been triggered. The primary path
+// replaces these items with the live api.qaRun(projectId) result.
 const QA_RUN: any = {
   project: "Harbor Logistics", plan: "plan_HARB_42",
   items: [
@@ -31,41 +35,93 @@ const VERDICT_META: Record<string, { label: string; tone: string; icon: string }
   needs_human: { label: "Needs human", tone: "amber",  icon: "eye" },
 };
 
+// Real QAItemResult is { issue_id, title, verdict, note } — it carries no runner/disc
+// (those are presentation-only in the v5 mockup). Map to the local item shape with safe
+// fallbacks so the DiscDot/Avatar markup renders unchanged (both no-op on undefined).
+const toLocalItem = (i: QAReport["items"][number]): any => ({
+  issue_id: i.issue_id, title: i.title, verdict: i.verdict, note: i.note, runner: "", disc: undefined,
+});
+
 export function QAGate() {
-  const { pushNotif, setToast, members } = useApp();
+  const { members, projects } = useApp();
+  const liveProjectId = useUI((s) => s.liveProjectId);
   const byUser = (u: string) => members.find((m: any) => m.username === u);
-  const [items, setItems] = useState<any[]>(() => QA_RUN.items.map((i: any) => ({ ...i })));
-  const [, setRan] = useState(true);
+
+  const [projectId, setProjectId] = useState<number | null>(liveProjectId ?? projects[0]?.project_id ?? null);
+  const [ran, setRan] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [items, setItems] = useState<any[]>([]);
   const [rejecting, setRejecting] = useState<string | null>(null); // issue_id being rejected
   const [flagging, setFlagging] = useState(false);
   const [blocks, setBlocks] = useState<any[]>([]); // failing-dep flags holding the gate
 
-  const pass = items.filter(i => i.verdict === "pass").length;
-  const total = items.length;
-  const gateBlocked = blocks.length > 0 || items.some(i => i.verdict === "fail" && !i.rerouted);
+  const project = projects.find((p: any) => p.project_id === projectId);
+  // Before a run, fall back to the scripted seed so the strip/checklist still render.
+  const display = ran ? items : QA_RUN.items;
 
-  const reroute = (issue_id: string, to_runner: string, comment: string) => {
-    setItems(is => is.map(i => i.issue_id === issue_id ? { ...i, rerouted: true, to: to_runner, comment } : i));
-    setRejecting(null);
-    pushNotif({ id: "qa_" + Date.now(), kind: "blocked", title: `${issue_id} reopened → @${to_runner}`,
-      body: `QA reject · ${comment || "see acceptance note"}`, who: "elena", time: "now" });
+  const pass = display.filter((i: any) => i.verdict === "pass").length;
+  const total = display.length;
+  const gateBlocked = blocks.length > 0 || display.some((i: any) => i.verdict === "fail" && !i.rerouted);
+
+  const runAcceptance = async () => {
+    if (projectId == null) { toast.error("Pick a project to run acceptance on."); return; }
+    setRunning(true);
+    try {
+      const report = await api.qaRun(projectId);
+      setItems(report.items.map(toLocalItem));
+      setRan(true);
+      setRejecting(null);
+      toast.success("Acceptance run complete", {
+        description: `${report.items.filter((i) => i.verdict === "pass").length}/${report.items.length} checks pass`,
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Acceptance run failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const reroute = async (issue_id: string, to_runner: string, comment: string) => {
+    const iid = Number(issue_id);
+    if (!Number.isFinite(iid) || projectId == null) { toast.error("Can't reject this item (no numeric issue / project)."); return; }
+    try {
+      await api.rejectIssue(projectId, iid, { comment, to_runner: to_runner || undefined });
+      setItems(is => is.map(i => i.issue_id === issue_id ? { ...i, rerouted: true, to: to_runner, comment } : i));
+      setRejecting(null);
+      toast.success(`${issue_id} reopened → @${to_runner}`, { description: comment || "see acceptance note" });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Reject failed");
+    }
   };
   const addFlag = (c: any) => {
     setBlocks(b => [...b, { ...c, reporter: "HARB-300" }]);
     setFlagging(false);
-    pushNotif({ id: "intg_" + Date.now(), kind: "blocked", title: `Failing dependency → @${c.assignee}`,
-      body: `${c.api_contract} reported failing · qa gate blocked`, who: "elena", time: "now" });
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <ViewChrome breadcrumb={["Harbor Logistics", "QA gate"]}>
+      <ViewChrome breadcrumb={[project?.name ?? "QA", "QA gate"]}>
         <Badge tone={gateBlocked ? "red" : "green"}>{gateBlocked ? "gate blocked" : "gate open"}</Badge>
-        <Badge tone="outline" mono>{QA_RUN.plan}</Badge>
+        <Badge tone="outline" mono>{ran ? `${total} checks` : QA_RUN.plan}</Badge>
       </ViewChrome>
 
       <div style={{ flex: 1, overflow: "auto" }}>
         <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 28px 56px" }}>
+          {/* project picker */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+            <span className="kicker" style={{ fontSize: 10 }}>Project</span>
+            {projects.length === 0 ? (
+              <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>No projects yet.</span>
+            ) : projects.map((p: any) => (
+              <button key={p.project_id} onClick={() => { setProjectId(p.project_id); setRan(false); setItems([]); setRejecting(null); }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 28, padding: "0 11px", borderRadius: "var(--r-pill)",
+                  border: `0.5px solid ${projectId === p.project_id ? "var(--text-primary)" : "var(--border)"}`,
+                  background: projectId === p.project_id ? "var(--bg-active)" : "var(--bg-elevated)", fontSize: 12, fontWeight: 500 }}>
+                {p.name}
+              </button>
+            ))}
+          </div>
+
           {/* header */}
           <div style={{ display: "flex", alignItems: "flex-end", gap: 16, marginBottom: 20 }}>
             <div style={{ flex: 1 }}>
@@ -74,8 +130,19 @@ export function QAGate() {
                 The <b style={{ color: "var(--text-primary)" }}>accept</b> gate — stage <span className="mono" style={{ color: "var(--text-secondary)" }}>build ∥ → integrate → accept</span>. Reject a failing check to reroute it to the runner.
               </p>
             </div>
-            <Button variant="secondary" size="md" icon="ratify" onClick={() => { setRan(true); setToast({ kind: "ratify", title: "Acceptance run complete", body: `${pass}/${total} checks pass`, who: "ai", time: "now" }); }}>Re-run acceptance</Button>
+            <Button variant="secondary" size="md" icon="ratify" disabled={running || projectId == null} onClick={runAcceptance}>{running ? "Running…" : ran ? "Re-run acceptance" : "Run acceptance"}</Button>
           </div>
+
+          {!ran ? (
+            /* empty state — no real run yet (the seed strip/checklist below stays as a preview) */
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderRadius: "var(--r-lg)",
+              border: "0.5px solid var(--border)", background: "var(--bg-secondary)", marginBottom: 20 }}>
+              <Icon name="ratify" size={14} style={{ color: "var(--text-tertiary)" }} />
+              <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>
+                {running ? "Running the acceptance checklist…" : "Run acceptance to score this project's checklist against the real backend."}
+              </span>
+            </div>
+          ) : null}
 
           {/* score */}
           <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: "var(--r-lg)",
@@ -84,7 +151,7 @@ export function QAGate() {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 500 }}>acceptance checks pass</div>
               <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
-                {items.map(i => (
+                {display.map((i: any) => (
                   <span key={i.issue_id} style={{ flex: 1, height: 5, borderRadius: 3,
                     background: i.rerouted ? "var(--text-quaternary)" : `var(--${VERDICT_META[i.verdict].tone === "green" ? "green" : VERDICT_META[i.verdict].tone === "red" ? "red" : "amber"})` }} />
                 ))}
@@ -95,7 +162,12 @@ export function QAGate() {
           {/* checklist */}
           <div className="kicker" style={{ marginBottom: 10 }}>Acceptance checklist</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
-            {items.map(i => (
+            {ran && display.length === 0 ? (
+              <div style={{ padding: "13px 14px", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)",
+                background: "var(--bg-elevated)", fontSize: 12.5, color: "var(--text-tertiary)" }}>
+                No acceptance checks for this project.
+              </div>
+            ) : display.map((i: any) => (
               <AcceptanceItem key={i.issue_id} item={i} byUser={byUser} members={members}
                 rejecting={rejecting === i.issue_id}
                 onToggleReject={() => setRejecting(r => r === i.issue_id ? null : i.issue_id)}
