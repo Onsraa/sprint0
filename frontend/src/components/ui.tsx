@@ -181,6 +181,52 @@ export function SectionHeader({ open = true, onToggle, glyph, label, count, righ
   );
 }
 
+/* ---- Status circle — task/issue status as a Linear-style ring/dot glyph ---- */
+const STATUS_META: Record<string, { color: string; kind: string }> = {
+  planned: { color: "var(--text-quaternary)", kind: "ring" },
+  in_progress: { color: "var(--amber)", kind: "half" },
+  in_review: { color: "var(--blue)", kind: "dashed" },
+  done: { color: "var(--green)", kind: "check" },
+  blocked: { color: "var(--red)", kind: "blocked" },
+};
+export function StatusIcon({ status = "planned", size = 14 }: { status?: string; size?: number }) {
+  const m = STATUS_META[status] || STATUS_META.planned;
+  const c = m.color;
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" style={{ flexShrink: 0 }} aria-hidden="true">
+      {m.kind === "ring" && <circle cx="7" cy="7" r="5" fill="none" stroke={c} strokeWidth="1.5" strokeDasharray="1.5 1.5" />}
+      {m.kind === "dashed" && <circle cx="7" cy="7" r="5" fill="none" stroke={c} strokeWidth="1.5" />}
+      {m.kind === "half" && (<>
+        <circle cx="7" cy="7" r="5" fill="none" stroke={c} strokeWidth="1.5" />
+        <path d="M7 7 L7 2.2 A4.8 4.8 0 0 1 11.8 7 Z" fill={c} />
+      </>)}
+      {m.kind === "check" && (<>
+        <circle cx="7" cy="7" r="6" fill={c} />
+        <path d="M4.4 7.2 6.2 9l3.3-3.6" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </>)}
+      {m.kind === "blocked" && (<>
+        <circle cx="7" cy="7" r="6" fill={c} />
+        <path d="M7 4v3.4M7 9.6v.05" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
+      </>)}
+    </svg>
+  );
+}
+
+export const PRIORITY_META: Record<string, { label: string; color: string }> = {
+  urgent: { label: "Urgent", color: "var(--red)" },
+  high: { label: "High", color: "var(--amber)" },
+  normal: { label: "Normal", color: "var(--text-quaternary)" },
+  low: { label: "Low", color: "var(--text-quaternary)" },
+};
+
+export function CapTag({ tag }: { tag: string }) {
+  return (
+    <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 17, padding: "0 6px",
+      borderRadius: "var(--r-xs)", background: "var(--bg-secondary)", color: "var(--text-tertiary)",
+      fontSize: 10, fontWeight: 500, whiteSpace: "nowrap" }}>{tag}</span>
+  );
+}
+
 export function Tooltip({ label, kbd, children }: { label: ReactNode; kbd?: string[]; children?: ReactNode }) {
   const [show, setShow] = useState(false);
   return (
