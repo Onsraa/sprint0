@@ -49,6 +49,10 @@ interface UIState {
   activeDev: string | null;
   setActiveDev: (id: string | null) => void;
 
+  /** Trust Dial (0–100) — global auto-pass sensitivity, surfaced in Relay/Settings. */
+  dial: number;
+  setDial: (d: number) => void;
+
   /** Clear all session-scoped UI on logout. */
   resetSession: () => void;
 }
@@ -102,6 +106,8 @@ export const useUI = create<UIState>((set) => ({
   setActiveIssue: (activeIssue) => set({ activeIssue }),
   activeDev: null,
   setActiveDev: (activeDev) => set({ activeDev }),
+  dial: 55,
+  setDial: (dial) => set({ dial }),
 
   resetSession: () => set(SESSION_DEFAULTS),
 }));

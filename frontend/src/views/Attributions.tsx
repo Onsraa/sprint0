@@ -1,115 +1,96 @@
-import { useEffect, useState } from "react";
-import { api, type Attribution, type Member } from "../lib/api";
-
-/* Merge-attribution queue (R3): merges sprint0 couldn't map to a roster member land here —
-   the human fallback in the attribution chain. The manager picks who earned the merge
-   (AI pre-fills a fuzzy-matched suggestion); resolving grows that member's passport. */
+/* sprint0 — Merge attribution (§8). Map GitLab merges to the right roster member
+   so credit + trust update automatically; ambiguous ones prompt a member pick.
+   Ported 1:1 from v4 mockup app/Merges.jsx; mock constants swapped for the useApp() adapter
+   (attributions/resolveAttribution from the store, MEMBERS→members, byUser→members.find). */
+import { useState } from "react";
+import { Button, Avatar, Badge, DiscDot, DISC } from "../components/ui";
+import { Icon } from "../lib/icon";
+import { ViewChrome } from "../components/ViewChrome";
+import { useApp } from "../app/useApp";
 
 export function Attributions() {
-  const [items, setItems] = useState<Attribution[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [picks, setPicks] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([api.attributions(), api.developers()])
-      .then(([atts, devs]) => {
-        if (cancelled) return;
-        setItems(atts);
-        setMembers(devs);
-        setErr(null);
-      })
-      .catch((e) => !cancelled && setErr(e instanceof Error ? e.message : String(e)))
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const pickFor = (a: Attribution) => picks[a.id] ?? a.suggested ?? members[0]?.username ?? "";
-
-  const resolve = async (a: Attribution) => {
-    const username = pickFor(a);
-    if (!username) return;
-    setBusy(a.id);
-    setErr(null);
-    try {
-      await api.resolveAttribution(a.id, { username });
-      setItems((xs) => xs.filter((x) => x.id !== a.id));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const count = items.length;
-
+  const { attributions, resolveAttribution, members } = useApp();
+  const byUser = (u: string) => members.find((m: any) => m.username === u);
+  const open = (attributions as any[]).filter(a => !a.resolved);
+  const resolved = (attributions as any[]).filter(a => a.resolved);
   return (
-    <div style={{ maxWidth: 920, margin: "0 auto" }}>
-      <div className="kicker">Merges</div>
-      <div className="display" style={{ fontSize: 28, marginTop: 4 }}>
-        {count === 0 ? "Attribution queue" : `${count} merge${count === 1 ? "" : "s"} awaiting attribution`}
-      </div>
-      <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
-        Merges sprint0 couldn't map to a roster member. Assign the runner who earned it — their passport grows.
-      </div>
-
-      {err && <div className="card-soft mono" style={{ marginTop: 16, padding: 12, color: "var(--text-primary)", fontSize: 12 }}>{err}</div>}
-
-      <div style={{ marginTop: 16 }}>
-        {loading ? (
-          <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--text-secondary)" }}>Loading…</div>
-        ) : count === 0 ? (
-          <div className="card-soft" style={{ padding: 24, textAlign: "center", border: "1px dashed var(--border-strong)" }}>
-            <div className="display" style={{ fontSize: 18 }}>No merges awaiting attribution.</div>
-            <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 6 }}>
-              When a merge can't be matched to a roster member, it shows up here for your call.
-            </div>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <ViewChrome breadcrumb={["Team", "Merges"]}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{open.length} unresolved</span>
+      </ViewChrome>
+      <div style={{ flex: 1, overflow: "auto" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto", padding: "22px 24px 40px" }}>
+          <div style={{ marginBottom: 18 }}>
+            <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.3px", margin: 0 }}>Merge attribution</h1>
+            <p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: "5px 0 0", lineHeight: 1.5 }}>
+              GitLab merges mapped to roster members — credit and trust update on resolve.
+            </p>
           </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {items.map((a) => (
-              <div key={a.id} className="card-soft" style={{ padding: 16, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span className="mono" style={{ fontWeight: 700 }}>@{a.gitlab_username}</span>
-                    <span className="chip chip-soft" style={{ fontSize: 10 }}>{a.task_type}</span>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>score {a.score.toFixed(2)}</span>
-                  </div>
-                  {a.suggested && (
-                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
-                      AI suggests: <b>{a.suggested}</b>
-                    </div>
-                  )}
-                </div>
-                <select
-                  value={pickFor(a)}
-                  onChange={(e) => setPicks((p) => ({ ...p, [a.id]: e.target.value }))}
-                  style={{ padding: "8px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 13, background: "var(--bg-elevated)", fontFamily: "inherit" }}
-                >
-                  {members.map((m) => (
-                    <option key={m.username} value={m.username}>
-                      {m.name} ({m.username})
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => resolve(a)}
-                  disabled={busy != null || !pickFor(a)}
-                  className="btn btn-primary btn-sm"
-                  style={{ opacity: busy != null ? 0.5 : 1 }}
-                >
-                  {busy === a.id ? "Attributing…" : "Attribute →"}
-                </button>
+
+          {open.length > 0 && (
+            <>
+              <div className="kicker" style={{ marginBottom: 10 }}>Needs a call · {open.length}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
+                {open.map(a => <AttrRow key={a.id} a={a} members={members} byUser={byUser} onResolve={resolveAttribution} />)}
               </div>
-            ))}
+            </>
+          )}
+
+          <div className="kicker" style={{ marginBottom: 10 }}>Resolved · {resolved.length}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {resolved.map(a => <AttrRow key={a.id} a={a} members={members} byUser={byUser} onResolve={resolveAttribution} />)}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AttrRow({ a, members, byUser, onResolve }: { a: any; members: any[]; byUser: (u: string) => any; onResolve: (id: string, username: string) => void }) {
+  const [picking, setPicking] = useState(false);
+  const resolvedM = a.resolved ? byUser(a.resolved) : null;
+  const noCandidate = a.candidates.length === 0;
+  return (
+    <div style={{ border: `0.5px solid ${a.ambiguous ? "var(--text-primary)" : "var(--border)"}`, borderRadius: "var(--r-lg)",
+      background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px" }}>
+        <span style={{ width: 30, height: 30, borderRadius: "var(--r-md)", display: "grid", placeItems: "center", background: "var(--bg-secondary)", color: "var(--text-tertiary)", flexShrink: 0 }}>
+          <Icon name="gitlab" size={16} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.mr_title}</div>
+          <div className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", marginTop: 2 }}>{a.project} · gitlab:@{a.gitlab_author}</div>
+        </div>
+        {a.resolved ? (
+          <>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Avatar name={resolvedM.name} size={20} />
+              <span style={{ fontSize: 12.5, fontWeight: 500 }}>{resolvedM.name.split(" ")[0]}</span>
+            </span>
+            {a.trust_delta && <Badge tone="green">trust {a.trust_delta}</Badge>}
+          </>
+        ) : noCandidate ? (
+          <Button variant="secondary" size="sm" icon="link" onClick={() => setPicking(p => !p)}>Link GitLab id</Button>
+        ) : (
+          <Button variant="primary" size="sm" icon="team" onClick={() => setPicking(p => !p)}>Resolve · {a.candidates.length}</Button>
         )}
       </div>
+      {picking && !a.resolved && (
+        <div style={{ borderTop: "0.5px solid var(--border-subtle)", padding: 12, background: "var(--bg-base)" }}>
+          <div className="kicker" style={{ marginBottom: 8 }}>{noCandidate ? "Pick a member to link this GitLab id" : "Which member made this merge?"}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {(noCandidate ? members.filter((m: any) => m.role !== "manager") : a.candidates.map(byUser)).map((m: any) => (
+              <button key={m.username} onClick={() => { onResolve(a.id, m.username); setPicking(false); }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 32, padding: "0 11px 0 5px", borderRadius: "var(--r-pill)",
+                  background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", boxShadow: "var(--shadow-1)" }}>
+                <Avatar name={m.name} size={20} />
+                <span style={{ fontSize: 12.5, fontWeight: 500 }}>{m.name}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "var(--text-quaternary)" }}><DiscDot d={m.discipline} size={6} />{DISC[m.discipline]?.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

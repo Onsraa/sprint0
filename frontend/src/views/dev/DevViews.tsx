@@ -299,7 +299,7 @@ function ActiveIssuePanel({ mine }: { mine: MyIssue }) {
       </div>
 
       {/* kind-specific surface (shared component — also used by RatifyPanel + TaskDrawer) */}
-      <KindSurface work={issue} />
+      <KindSurface work={issue as never} />
     </div>
   );
 }

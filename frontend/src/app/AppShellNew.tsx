@@ -1,33 +1,67 @@
-/* sprint0 × Linear — app shell. A 244px nav rail on the warm-grey canvas, then the content as a
- * floating white pane (rounded, hairline). Auth/session gating + the wizard modal + ⌘K live here.
- * Ported from the design system's Shell.jsx; wired to our real router/auth/roster. */
+/* sprint0 × Linear — app shell (ported from the v4 design Shell.jsx). 244px role-gated nav rail with
+ * the persona switcher, then the content as a floating white pane. Wired to the useApp() adapter; auth
+ * gates the Landing (logged out) vs the shell (logged in). The wizard + ⌘K palette mount here. */
 import { useState } from "react";
-import { Link, Outlet, useNavigate } from "@tanstack/react-router";
-import { useMe, useLogout } from "../features/auth/useAuth";
+import { Outlet } from "@tanstack/react-router";
+import { useApp } from "./useApp";
+import { useMe } from "../features/auth/useAuth";
 import { useUI } from "../lib/store";
 import { useRoleGate } from "../features/nav/nav";
-import type { Role } from "./types";
-import { Icon, type IconName } from "../lib/icon";
-import { Login } from "../views/Login";
-import { Wizard } from "../wizard/Wizard";
-import { Sprint0Logo } from "../components/Mascot";
+import { Icon } from "../lib/icon";
 import { Avatar, Kbd } from "../components/ui";
+import { FullLogo } from "../lib/icon";
+import { Landing } from "../views/Landing";
+import { Wizard } from "../wizard/Wizard";
 import { CommandPalette } from "../features/palette/CommandPalette";
 import { useNotificationsWS } from "../features/notify/useNotifications";
+
+/* The demo roster shown in the persona switcher (the 5 real seeded accounts). */
+export const DEMO_PERSONAS = [
+  { username: "Onsraa", name: "Teddy", role: "manager", discipline: null },
+  { username: "sprint0-se", name: "Jean Gabriel", role: "developer", discipline: "backend" },
+  { username: "sprint0-sse", name: "Tony Stark", role: "developer", discipline: "devops" },
+  { username: "sprint0-fe", name: "Sam Dupont", role: "developer", discipline: "frontend" },
+  { username: "sprint0-qa", name: "Pascal Alice", role: "qa", discipline: "qa" },
+];
+
+/* nav items carry a `roles` allowlist + capability flags — per-role chrome. */
+const NAV = [
+  { section: null as string | null, items: [
+    { id: "inbox", label: "Inbox", icon: "inbox", kbd: ["G", "I"], roles: ["manager", "developer", "qa"] },
+    { id: "mywork", label: "My Work", icon: "board", kbd: ["G", "W"], roles: ["manager", "developer", "qa"] },
+    { id: "projects", label: "Projects", icon: "projects", kbd: ["G", "P"], roles: ["manager"] },
+  ] },
+  { section: "Team", items: [
+    { id: "relay", label: "Relay", icon: "relay", kbd: ["G", "R"], roles: ["manager"] },
+    { id: "relay", label: "Ratify your slice", icon: "ratify", kbd: ["G", "R"], roles: ["developer"] },
+    { id: "qagate", label: "QA gate", icon: "qa", kbd: ["G", "Q"], roles: ["qa"] },
+    { id: "ratify", label: "Ratify", icon: "ratify", kbd: ["G", "T"], roles: ["manager"] },
+    { id: "team", label: "Team", icon: "team", roles: ["manager"] },
+    { id: "profiles", label: "Profiles", icon: "passport", roles: ["manager"] },
+    { id: "codegraph", label: "Code Graph", icon: "merges", roles: ["manager"] },
+    { id: "merges", label: "Merges", icon: "link", roles: ["manager"] },
+  ] },
+  { section: "You", items: [
+    { id: "passport", label: "Passport", icon: "passport", roles: ["developer", "qa"] },
+    { id: "portfolio", label: "Portfolio", icon: "portfolio", roles: ["manager", "developer", "qa"] },
+    { id: "settings", label: "Settings", icon: "settings", roles: ["manager"] },
+  ] },
+] as const;
 
 export function AppShellNew() {
   const { member, authLoading, role } = useMe();
   const wizardOpen = useUI((s) => s.wizardOpen);
   const wizardKind = useUI((s) => s.wizardKind);
+  const togglePalette = useUI((s) => s.togglePalette);
   useNotificationsWS(member?.username);
   useRoleGate(member ? role : null);
 
   if (authLoading) return <SessionLoading />;
-  if (!member) return <Login />;
+  if (!member) return <Landing />;
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "var(--bg-app)" }}>
-      <Sidebar />
+      <Sidebar onPalette={togglePalette} />
       <div style={{ flex: 1, minWidth: 0, padding: "8px 8px 8px 0" }}>
         <div className="pane">
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
@@ -49,106 +83,70 @@ function SessionLoading() {
   );
 }
 
-interface NavItemT { to: string; label: string; icon: IconName }
-interface NavSection { title?: string; items: NavItemT[] }
-
-function navFor(role: Role): NavSection[] {
-  const common: NavSection = { items: [
-    { to: "/inbox", label: "Inbox", icon: "inbox" },
-    { to: "/work", label: "My Work", icon: "board" },
-    { to: "/dashboard", label: "Projects", icon: "projects" },
-  ]};
-  if (role === "manager") {
-    return [
-      common,
-      { title: "Team", items: [
-        { to: "/relays", label: "Relay", icon: "relay" },
-        { to: "/queue", label: "Ratify", icon: "ratify" },
-        { to: "/team", label: "Team", icon: "team" },
-        { to: "/profiles", label: "Profiles", icon: "profiles" },
-        { to: "/codegraph", label: "Code Graph", icon: "codegraph" },
-        { to: "/attributions", label: "Merges", icon: "merges" },
-      ]},
-      { title: "You", items: [{ to: "/portfolio", label: "Portfolio", icon: "portfolio" }] },
-    ];
-  }
-  if (role === "qa") {
-    return [
-      { items: [
-        { to: "/inbox", label: "Inbox", icon: "inbox" },
-        { to: "/work", label: "My Work", icon: "board" },
-        { to: "/qa", label: "QA gate", icon: "qa" },
-      ]},
-      { title: "You", items: [
-        { to: "/portfolio", label: "Portfolio", icon: "portfolio" },
-        { to: "/passport", label: "Passport", icon: "passport" },
-      ]},
-    ];
-  }
-  return [
-    { items: [
-      { to: "/inbox", label: "Inbox", icon: "inbox" },
-      { to: "/work", label: "My Work", icon: "board" },
-      { to: "/queue", label: "Ratify", icon: "ratify" },
-    ]},
-    { title: "You", items: [
-      { to: "/portfolio", label: "Portfolio", icon: "portfolio" },
-      { to: "/passport", label: "Passport", icon: "passport" },
-    ]},
-  ];
-}
-
-const ROLE_LABEL: Record<Role, string> = {
-  manager: "manager", uiux: "uiux", backend: "backend", frontend: "frontend", qa: "qa",
-};
-
-function Sidebar() {
-  const { member, role } = useMe();
-  const isManager = role === "manager";
-  const setWizardOpen = useUI((s) => s.setWizardOpen);
-  const setWizardKind = useUI((s) => s.setWizardKind);
-  const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
-  const togglePalette = useUI((s) => s.togglePalette);
-  const sections = navFor(role);
-
+function Sidebar({ onPalette }: { onPalette: () => void }) {
+  const { view, setView, role, chrome } = useApp();
   return (
     <aside style={{ width: "var(--nav-w)", flexShrink: 0, height: "100vh", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4 }}>
       <Workspace />
-      <SearchTrigger onClick={togglePalette} />
-      {isManager && (
-        <button onClick={() => { setFeatureProjectId(null); setWizardKind("brief"); setWizardOpen(true); }}
-          style={{ display: "flex", alignItems: "center", gap: 8, height: 32, margin: "2px 0", padding: "0 10px",
-            borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", fontSize: 13, fontWeight: 500 }}>
+      <SearchTrigger onClick={onPalette} />
+      {chrome.canDispatch && (
+        <button onClick={() => setView("wizard")} style={{ display: "flex", alignItems: "center", gap: 8, height: 32, margin: "2px 0", padding: "0 10px", borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", fontSize: 13, fontWeight: 500 }}>
           <Icon name="plus" size={15} /> New from brief
         </button>
       )}
       <nav style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 4 }}>
-        {sections.map((grp, gi) => (
-          <div key={gi} style={{ marginTop: grp.title ? 12 : 0 }}>
-            {grp.title && (
-              <div style={{ height: 24, display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11, fontWeight: 500, color: "var(--text-quaternary)", letterSpacing: "0.02em" }}>{grp.title}</div>
-            )}
-            {grp.items.map((it) => <NavItem key={it.to} item={it} />)}
-          </div>
-        ))}
+        {NAV.map((grp, gi) => {
+          const items = grp.items.filter((it) => (it.roles as readonly string[]).includes(role));
+          if (!items.length) return null;
+          return (
+            <div key={gi} style={{ marginTop: grp.section ? 12 : 0 }}>
+              {grp.section && (
+                <div style={{ height: 24, display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11, fontWeight: 500, color: "var(--text-quaternary)", letterSpacing: "0.02em" }}>{grp.section}</div>
+              )}
+              {items.map((it) => <NavItem key={it.label} item={it} active={view === it.id} onClick={() => setView(it.id)} />)}
+            </div>
+          );
+        })}
       </nav>
       <div style={{ flex: 1 }} />
-      <SidebarFooter name={member?.name ?? ""} role={role} />
+      <SidebarFooter />
     </aside>
   );
 }
 
 function Workspace() {
+  const { me, switchPersona } = useApp();
+  const [open, setOpen] = useState(false);
   const [h, setH] = useState(false);
   return (
-    <button onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", width: "100%",
-        background: h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
-      <Sprint0Logo size={17} />
-      <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· Studio</span>
-      <div style={{ flex: 1 }} />
-      <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
-    </button>
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen((o) => !o)} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+        style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", width: "100%", background: open || h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
+        <FullLogo size={17} />
+        <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· Studio</span>
+        <div style={{ flex: 1 }} />
+        <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+          <div style={{ position: "absolute", top: 40, left: 0, width: 256, zIndex: 61, background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-3)", padding: 6, animation: "s0-pop-in var(--t-reg) var(--ease-out) both" }}>
+            <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)", padding: "6px 8px 4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Switch persona · demo</div>
+            {DEMO_PERSONAS.map((p) => (
+              <button key={p.username} onClick={() => { switchPersona(p.username); setOpen(false); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: p.username === me.username ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>
+                <Avatar name={p.name} size={26} tone={p.role === "manager" ? "ink" : undefined} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
+                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
+                </div>
+                {p.username === me.username && <Icon name="check" size={15} style={{ color: "var(--text-primary)" }} />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -156,8 +154,7 @@ function SearchTrigger({ onClick }: { onClick: () => void }) {
   const [h, setH] = useState(false);
   return (
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 8px", borderRadius: "var(--r-md)",
-        background: h ? "var(--bg-hover)" : "transparent", color: "var(--text-tertiary)", transition: "background var(--t-quick)" }}>
+      style={{ display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 8px", borderRadius: "var(--r-md)", background: h ? "var(--bg-hover)" : "transparent", color: "var(--text-tertiary)", transition: "background var(--t-quick)" }}>
       <Icon name="search" size={15} />
       <span style={{ fontSize: 13, fontWeight: 500 }}>Search</span>
       <div style={{ flex: 1 }} />
@@ -166,45 +163,36 @@ function SearchTrigger({ onClick }: { onClick: () => void }) {
   );
 }
 
-const navItemBase: React.CSSProperties = {
-  position: "relative", display: "flex", alignItems: "center", gap: 9, width: "100%", height: 28,
-  padding: "0 10px", borderRadius: "var(--r-md)", textAlign: "left",
-  color: "var(--text-secondary)", fontSize: 13, fontWeight: 500, letterSpacing: "-0.1px",
-  transition: "background var(--t-quick), color var(--t-quick)",
-};
-function NavItem({ item }: { item: NavItemT }) {
+function NavItem({ item, active, onClick }: { item: { id: string; label: string; icon: string; kbd?: readonly string[] }; active: boolean; onClick: () => void }) {
   const [h, setH] = useState(false);
   return (
-    <Link to={item.to} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ ...navItemBase, background: h ? "var(--bg-hover)" : "transparent" }}
-      activeProps={{ style: { ...navItemBase, background: "var(--bg-active)", color: "var(--text-primary)" } }}>
-      <Icon name={item.icon} size={16} style={{ color: "var(--text-tertiary)" }} />
-      <span>{item.label}</span>
-    </Link>
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ position: "relative", display: "flex", alignItems: "center", gap: 9, width: "100%", height: 28, padding: "0 10px", borderRadius: "var(--r-md)", textAlign: "left",
+        background: active ? "var(--bg-active)" : h ? "var(--bg-hover)" : "transparent", color: active ? "var(--text-primary)" : "var(--text-secondary)", transition: "background var(--t-quick), color var(--t-quick)" }}>
+      <Icon name={item.icon as never} size={16} style={{ color: active ? "var(--text-secondary)" : "var(--text-tertiary)" }} />
+      <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: "-0.1px" }}>{item.label}</span>
+      <div style={{ flex: 1 }} />
+      {h && item.kbd && <span style={{ display: "inline-flex", gap: 2 }}>{item.kbd.map((k, i) => <Kbd key={i}>{k}</Kbd>)}</span>}
+    </button>
   );
 }
 
-function SidebarFooter({ name, role }: { name: string; role: Role }) {
-  const navigate = useNavigate();
-  const resetSession = useUI((s) => s.resetSession);
-  const doLogout = useLogout();
-  const [h, setH] = useState(false);
-  const logout = () => { doLogout(); resetSession(); navigate({ to: "/" as "/" }); };
+function SidebarFooter() {
+  const { me, role } = useApp();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, height: 28, padding: "0 10px" }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)" }} />
         <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>MCP · online</span>
       </div>
-      <button onClick={logout} title="Log out" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-        style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", background: h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
-        <Avatar name={name} size={22} tone={role === "manager" ? "ink" : undefined} />
+      <button style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)" }}>
+        <Avatar name={me.name ?? "?"} size={22} tone={role === "manager" ? "ink" : undefined} />
         <div style={{ textAlign: "left", lineHeight: 1.2 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)" }}>{name}</div>
-          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{ROLE_LABEL[role]}</div>
+          <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)" }}>{me.name}</div>
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{role}{me.discipline ? " · " + me.discipline : ""}</div>
         </div>
         <div style={{ flex: 1 }} />
-        <Icon name="logout" size={15} style={{ color: "var(--text-quaternary)" }} />
+        <Icon name="more" size={16} style={{ color: "var(--text-quaternary)" }} />
       </button>
     </div>
   );

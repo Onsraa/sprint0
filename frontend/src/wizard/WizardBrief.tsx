@@ -1,1392 +1,438 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { useUI } from "../lib/store";
-import { useRefreshProjects } from "../features/projects/useProjects";
-import { useInvalidateWork } from "../features/work/useWork";
-import { Disclosure } from "../components/Disclosure";
-import { Mascot } from "../components/Mascot";
-import { api, draft } from "../lib/api";
-import type {
-  AmbiguityCard,
-  ArchitectureCard,
-  ClarifiedSpec,
-  DispatchResult,
-  PlanJSON,
-  RelayState,
-  TechStack,
-  WizardDraft,
-} from "../lib/api";
-import type { DispatchPreview } from "../lib/schemas";
-import { Icon } from "../lib/icon";
-import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, planIssues, RISK_COLOR, statusStyle } from "../lib/relayUtils";
-import { StaffingGap } from "../views/StaffingGap";
+/* sprint0 — Brief-intake Wizard (§3). The product's front door: brief → clarify →
+   architecture → plan → dispatch. Steps map 1:1 to endpoints. Grounded on agency
+   memory (§2b), surfaces the staffing gap (§7), and ends in a dispatch dry-run
+   preview (§13) — nothing is created in GitLab until the relay clears (create-late).
 
-/* sprint0 — Brief Wizard, wired to the real gateway.
-   Drop → Clarify → Architecture → Plan draft → Trust → Dispatch.
-   In feature mode (featureProjectId set) it adds a feature to a live project. */
+   Ported pixel-1:1 from the v4 mockup (app/Wizard.jsx). Only the data source changes:
+   setView/setToast/members come from useApp; the scripted spec/architectures/plan/
+   preview are local constants. TODO(reconcile): the orchestrator wires the real
+   brief→clarify→architecture→plan→dispatch flow into these props. */
+import { Fragment, useState } from "react";
+import { useApp } from "../app/useApp";
+import { Icon, ZeroMark, FullLogo } from "../lib/icon";
+import { Button, Avatar, Badge, DiscDot, DISC, CapTag } from "../components/ui";
+
+/* ───────── scripted spec/architectures/plan/preview (mockup data2.jsx) ─────────
+   TODO(reconcile): real brief→plan flow is wired by the orchestrator; markup reads these verbatim. */
+const WIZARD_BRIEF = `Build a tenant portal for a freight client. They need: a saved-search experience over shipments, shareable read-only views with expiring links, a live map with thousands of vehicle pins, and CSV export of any filtered view. Must scaffold a real GitLab project. Tight 8-week window.`;
+
+const WIZARD_SPEC = {
+  features: [
+    { id: "f1", title: "Saved searches over shipments", lane: "frontend" },
+    { id: "f2", title: "Shareable read-only views, expiring links", lane: "backend" },
+    { id: "f3", title: "Live map, thousands of vehicle pins", lane: "frontend" },
+    { id: "f4", title: "CSV export of any filtered view", lane: "backend" },
+    { id: "f5", title: "Scaffold a real GitLab project", lane: "devops" },
+  ],
+  ambiguities: [
+    { id: "a1", question: "Expiring links — what default TTL?", options: ["24 hours", "7 days", "Configurable per share"] },
+    { id: "a2", question: "Map — realtime pin updates or polled?", options: ["WebSocket realtime", "Poll every 15s", "Manual refresh"] },
+    { id: "a3", question: "CSV export — synchronous or queued?", options: ["Sync (small sets)", "Queued + signed URL", "Both, by size"] },
+  ],
+  reuse: [
+    { tag: "scoped-tokens", from: "Harbor Logistics", who: "rajiv", grade: "retro_validated" },
+    { tag: "map-clustering", from: "Harbor Logistics", who: "talia", grade: "prod_survived" },
+    { tag: "csv-export", from: "Ledger Pay", who: "rajiv", grade: "shipped" },
+  ],
+};
+const WIZARD_ARCHITECTURES = [
+  { id: "arch1", stack: ["Next.js", "FastAPI", "Postgres", "Fly.io"], rationale: "Mirrors Harbor Logistics — maximal reuse of scoped-tokens + map-clustering modules.", tradeoffs: "Two languages to maintain; FastAPI team is at high load.", grounded: ["scoped-tokens", "map-clustering"], recommended: true },
+  { id: "arch2", stack: ["Remix", "Go", "Postgres", "AWS"], rationale: "Single fast binary backend; strong for CSV streaming at scale.", tradeoffs: "No prior Go map-clustering reuse — rebuild the pin layer.", grounded: ["csv-export"] },
+  { id: "arch3", stack: ["SvelteKit", "Node", "SQLite→Postgres"], rationale: "Lightest footprint, fastest cold start for a small portal.", tradeoffs: "SQLite won't hold thousands of live pins; migration risk mid-build.", grounded: [] },
+];
+const DISPATCH_PREVIEW = {
+  project_name: "Freight Tenant Portal",
+  creates: { project: 1, issues: 18 },
+  member_invites: [
+    { username: "rajiv", discipline: "backend" }, { username: "priya", discipline: "backend" },
+    { username: "talia", discipline: "frontend" }, { username: "noah", discipline: "frontend" },
+    { username: "dario", discipline: "devops" }, { username: "elena", discipline: "qa" },
+  ],
+  invite_count: 6, free_tier_cap: 5, exceeds_cap: true, relay_cleared: false, is_delta: false,
+};
+const STAFFING = {
+  plan_HARB_42: {
+    coverage: {
+      per_discipline: [
+        { discipline: "uiux", covered: false, devs: [] as string[], note: "orphan gap" },
+        { discipline: "backend", covered: true, devs: ["rajiv", "priya"], note: "rajiv at 91% load" },
+        { discipline: "frontend", covered: true, devs: ["talia", "noah"], note: "" },
+        { discipline: "qa", covered: true, devs: ["elena"], note: "" },
+        { discipline: "devops", covered: true, devs: ["dario"], note: "" },
+      ],
+      gaps: ["uiux"],
+      stretch_candidates: [
+        { username: "talia", load: 78, trust: "high", score: 0.74, why: "frontend senior · strongest design-adjacent skill cosine" },
+        { username: "noah", load: 54, trust: "medium", score: 0.61, why: "frontend mid · has headroom, weaker on tokens" },
+        { username: "mira", load: 62, trust: "high", score: 0.55, why: "manager covering — temporary, not sustainable" },
+      ],
+    },
+  },
+};
+
+/* §12 graded references — local presentation map (mockup data2.jsx GRADE_META). */
+const GRADE_META: Record<string, { label: string; step: number; proven: boolean; hint: string }> = {
+  proposed: { label: "Proposed", step: 1, proven: false, hint: "not yet proven" },
+  shipped: { label: "Shipped", step: 2, proven: false, hint: "merged, not battle-tested" },
+  prod_survived: { label: "Prod-survived", step: 3, proven: true, hint: "survived in production" },
+  retro_validated: { label: "Retro-validated", step: 4, proven: true, hint: "confirmed in retro" },
+};
+/* panel-local: compact grade chip used by the grounding strip. */
+function GradeChip({ grade, showLabel = true }: { grade: string; showLabel?: boolean }) {
+  const m = GRADE_META[grade];
+  if (!m) return null;
+  return (
+    <Badge tone={m.proven ? "ink" : "outline"} mono>
+      {m.proven && <Icon name="check" size={10} />}
+      {showLabel ? m.label : m.label.split("-")[0]}
+    </Badge>
+  );
+}
 
 const STEPS = [
-  { id: "drop", label: "Drop" },
-  { id: "clarify", label: "Clarify" },
-  { id: "arch", label: "Architecture" },
-  { id: "plan", label: "Plan" },
-  { id: "staffing", label: "Staffing" },
-  { id: "trust", label: "Trust" },
-  { id: "dispatch", label: "Dispatch" },
+  { id: "brief", label: "Brief", sub: "Paste or drop" },
+  { id: "clarify", label: "Clarify", sub: "Resolve ambiguities" },
+  { id: "arch", label: "Architecture", sub: "Pick a stack" },
+  { id: "plan", label: "Plan", sub: "Draft relay" },
+  { id: "review", label: "Review", sub: "Dispatch preview" },
 ];
 
-const STEP_STAFFING = 4;
-const STEP_TRUST = 5;
-const STEP_DISPATCH = 6;
-
-interface WizardState {
-  briefId: string | null;
-  spec: ClarifiedSpec | null;
-  answers: Record<string, string>;
-  arch: ArchitectureCard[];
-  chosenStack: TechStack | null;
-  dial: number;
-}
-
-type SetState = Dispatch<SetStateAction<WizardState>>;
-
-// RHF/Zod schema for the wizard's form state. Server-returned fields (spec/arch) stay loose; the
-// user-entered fields (clarify answers, chosen stack, trust dial) carry the real constraints.
-const WizardStateZ = z.object({
-  briefId: z.string().nullable(),
-  spec: z.any().nullable(),
-  answers: z.record(z.string(), z.string()),
-  arch: z.array(z.any()),
-  chosenStack: z.record(z.string(), z.string()).nullable(),
-  dial: z.number().min(0).max(100),
-});
-
 export function WizardBrief() {
-  const setWizardOpen = useUI((s) => s.setWizardOpen);
-  const setWizardKind = useUI((s) => s.setWizardKind);
-  const featureProjectId = useUI((s) => s.featureProjectId);
-  const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
-  const plan = useUI((s) => s.plan);
-  const setPlan = useUI((s) => s.setPlan);
-  const planId = useUI((s) => s.planId);
-  const setPlanId = useUI((s) => s.setPlanId);
-  const setLiveProjectId = useUI((s) => s.setLiveProjectId);
-  const setLiveCloneUrl = useUI((s) => s.setLiveCloneUrl);
-  // Relay is wizard-local during planning; the ratify surfaces refetch it via useRelay(planId).
-  const [relay, setRelay] = useState<RelayState | null>(null);
-
-  const isFeature = featureProjectId != null;
+  const { setView, setToast } = useApp();
   const [step, setStep] = useState(0);
-  // Form state lives in React Hook Form (Zod-validated via WizardStateZ). The wizard advances with
-  // imperative per-step API calls rather than one handleSubmit, so RHF is used as the validated
-  // store: `state` mirrors watch(); `setState` shims setValue per key — this keeps the useState-
-  // shaped API every step component already uses, and keeps plain controlled inputs focused (the
-  // inputs read from watch(), so no RHF field remounts on change).
-  const form = useForm<WizardState>({
-    resolver: zodResolver(WizardStateZ),
-    defaultValues: { briefId: null, spec: null, answers: {}, arch: [], chosenStack: null, dial: 70 },
-  });
-  const state = form.watch();
-  const setState = useCallback<SetState>(
-    (updater) => {
-      const nextVal = typeof updater === "function" ? updater(form.getValues()) : updater;
-      (Object.keys(nextVal) as (keyof WizardState)[]).forEach((k) =>
-        form.setValue(k, nextVal[k] as never, { shouldDirty: true }),
-      );
-    },
-    [form],
-  );
-  // A draft saved from a previous (closed) session — offered as Resume on Step 0.
-  const [offer, setOffer] = useState<WizardDraft | null>(() => (featureProjectId == null ? draft.get() : null));
-  const [resuming, setResuming] = useState(false);
-  // Leaving the Clarify step resolves the answered ambiguities (footer Continue is the sole advance).
-  const [advancing, setAdvancing] = useState(false);
-  const [advanceErr, setAdvanceErr] = useState<string | null>(null);
-  const [done, setDone] = useState(false); // dispatched → stop persisting a draft
+  const [brief, setBrief] = useState(WIZARD_BRIEF);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [arch, setArch] = useState("arch1");
+  const [mode, setMode] = useState("supervised");
+  const [dispatched, setDispatched] = useState(false);
 
-  // Persist progress so closing never loses work. Skips an untouched wizard and a finished one.
-  // Gate on briefId/isFeature only — a stale context planId from a prior dispatch must not count.
-  const persistDraft = () => {
-    if (done || (!state.briefId && !isFeature)) return;
-    draft.set({
-      briefId: state.briefId,
-      planId,
-      step,
-      isFeature,
-      featureProjectId,
-      chosenStack: state.chosenStack,
-      dial: state.dial,
-      projectName: plan?.project_name ?? state.spec?.goal ?? (isFeature ? `Feature · #${featureProjectId}` : "Untitled brief"),
-      savedAt: Date.now(),
-    });
-  };
-  // Save on every step / key-state change (and on close, below).
-  useEffect(() => {
-    persistDraft();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, state.briefId, state.chosenStack, state.dial, planId, isFeature, featureProjectId]);
-
-  const close = () => {
-    persistDraft();
-    setFeatureProjectId(null);
-    setWizardOpen(false);
-  };
   const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
-  const prev = () => setStep((s) => Math.max(s - 1, 0));
-
-  // Footer Continue advances; leaving Clarify it first resolves the answered ambiguities.
-  const advanceFrom = async (s: number) => {
-    if (s === 1 && state.briefId && Object.keys(state.answers).length > 0) {
-      setAdvancing(true);
-      setAdvanceErr(null);
-      try {
-        const spec = await api.resolveClarify(state.briefId, state.answers);
-        setState((p) => ({ ...p, spec }));
-      } catch (e) {
-        setAdvanceErr(e instanceof Error ? e.message : String(e));
-        setAdvancing(false);
-        return;
-      }
-      setAdvancing(false);
-    }
-    next();
-  };
-
-  // Resume a saved draft: refetch the cached spec/architectures (no Gemini re-run) and the
-  // plan/relay if a reload wiped context, then jump to the saved step.
-  const doResume = async (d: WizardDraft) => {
-    setOffer(null);
-    setResuming(true);
-    if (d.isFeature) setFeatureProjectId(d.featureProjectId);
-    let spec: ClarifiedSpec | null = null;
-    let arch: ArchitectureCard[] = [];
-    if (d.briefId) {
-      try {
-        spec = await api.getSpec(d.briefId);
-      } catch {
-        /* not clarified yet */
-      }
-      try {
-        arch = (await api.getArchitectures(d.briefId)).cards;
-      } catch {
-        /* not proposed yet */
-      }
-    }
-    setState({ briefId: d.briefId, spec, answers: {}, arch, chosenStack: d.chosenStack, dial: d.dial });
-    if (d.planId) {
-      // Reload the plan/relay if a reload wiped context; otherwise keep what's already live.
-      if (!plan) {
-        try {
-          const [p, r] = await Promise.all([api.getPlan(d.planId), api.getRelay(d.planId)]);
-          setPlan(p);
-          setPlanId(d.planId);
-          setRelay(r);
-        } catch {
-          /* plan expired server-side */
-        }
-      } else if (planId == null) {
-        setPlanId(d.planId);
-      }
-    } else {
-      // Draft predates planning → drop any stale plan left in context from a prior project.
-      setPlan(null);
-      setPlanId(null);
-      setRelay(null);
-    }
-    setStep(d.step);
-    setResuming(false);
-  };
-
-  // Discard the draft and start clean (also clears any stale plan left in context).
-  const startFresh = () => {
-    draft.clear();
-    setOffer(null);
-    setPlan(null);
-    setPlanId(null);
-    setRelay(null);
-    setState({ briefId: null, spec: null, answers: {}, arch: [], chosenStack: null, dial: 70 });
-    setStep(0);
-  };
-
-  // Feature mode enters at the plan step; don't stomp a resume that landed deeper.
-  const firstStep = isFeature ? 3 : 0;
-  useEffect(() => {
-    if (isFeature) setStep((s) => (s < 3 ? 3 : s));
-  }, [isFeature]);
+  const back = () => setStep((s) => Math.max(s - 1, 0));
+  const canNext = step === 0 ? brief.trim().length > 20
+    : step === 1 ? Object.keys(answers).length === WIZARD_SPEC.ambiguities.length
+    : true;
 
   return (
-    <div
-      onClick={close}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(26,20,16,0.5)",
-        backdropFilter: "blur(6px)",
-        zIndex: 100,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-        animation: "pop-in 240ms",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "100%",
-          maxWidth: 1100,
-          height: "calc(100vh - 48px)",
-          maxHeight: 820,
-          background: "var(--bg-app)",
-          borderRadius: 24,
-          border: "2px solid var(--text-primary)",
-          boxShadow: "10px 10px 0 var(--text-primary)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            padding: "18px 24px",
-            borderBottom: "1.5px solid var(--border)",
-            background: "var(--bg-elevated)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Mascot size={36} expression={step === 1 ? "focused" : step === STEP_DISPATCH ? "cheer" : "happy"} />
-            <div>
-              <div className="kicker">{isFeature ? "Add a feature" : "New project"}</div>
-              <div style={{ fontWeight: 800, fontSize: 16 }}>sprint0 is on it</div>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            {STEPS.map((s, i) => (
-              <button
-                key={s.id}
-                onClick={() => i >= firstStep && i <= step && setStep(i)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "6px 12px",
-                  borderRadius: 999,
-                  background: i === step ? "var(--ink-fill)" : i < step ? "var(--bg-secondary)" : "transparent",
-                  color: i === step ? "var(--bg-elevated)" : i < step ? "var(--text-primary)" : "var(--text-tertiary)",
-                  fontWeight: 700,
-                  fontSize: 13,
-                  opacity: i > step || i < firstStep ? 0.45 : 1,
-                  cursor: i >= firstStep && i <= step ? "pointer" : "default",
-                  transition: "all 200ms",
-                }}
-              >
-                <span
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: "50%",
-                    background: i === step ? "var(--bg-elevated)" : i < step ? "var(--ink-fill)" : "var(--bg-secondary)",
-                    color: i === step ? "var(--ink-fill)" : "var(--bg-elevated)",
-                    display: "grid",
-                    placeItems: "center",
-                    fontSize: 11,
-                    fontWeight: 800,
-                  }}
-                >
-                  {i < step ? "✓" : i + 1}
-                </span>
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Body */}
-        <div style={{ flex: 1, overflow: "auto", padding: 32, display: "flex", flexDirection: "column" }}>
-          {step === 0 &&
-            (offer ? (
-              <ResumeOffer draft={offer} busy={resuming} onResume={() => doResume(offer)} onDiscard={startFresh} />
-            ) : (
-              <StepDrop
-                setState={setState}
-                next={next}
-                onReset={() => {
-                  setPlan(null);
-                  setPlanId(null);
-                  setRelay(null);
-                }}
-              />
-            ))}
-          {step === 1 && <StepClarify state={state} setState={setState} />}
-          {step === 2 && <StepArchitecture state={state} setState={setState} />}
-          {step === 3 && (
-            <StepPlan
-              state={state}
-              isFeature={isFeature}
-              featureProjectId={featureProjectId}
-              plan={plan}
-              relay={relay}
-              setPlan={setPlan}
-              setPlanId={setPlanId}
-              setRelay={setRelay}
-              next={next}
-            />
-          )}
-          {step === STEP_STAFFING && (
-            <StaffingGap planId={planId} onOnboard={() => setWizardKind("hire")} next={next} />
-          )}
-          {step === STEP_TRUST && <StepTrust state={state} setState={setState} planId={planId} relay={relay} setRelay={setRelay} />}
-          {step === STEP_DISPATCH && (
-            <StepDispatch planId={planId} setRelay={setRelay} setLiveProjectId={setLiveProjectId} setLiveCloneUrl={setLiveCloneUrl} onClose={close} onDone={() => setDone(true)} />
-          )}
-        </div>
-
-        {/* Footer nav (dispatch step has its own controls) */}
-        {step !== STEP_DISPATCH && (
-          <div
-            style={{
-              padding: "16px 24px",
-              borderTop: "1.5px solid var(--border)",
-              background: "var(--bg-elevated)",
-              display: "flex",
-              justifyContent: "space-between",
-            }}
-          >
-            <button
-              onClick={prev}
-              disabled={step <= firstStep}
-              className="btn btn-ghost btn-sm"
-              style={{ opacity: step <= firstStep ? 0.4 : 1 }}
-            >
-              ← Back
-            </button>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              {advanceErr && <span className="mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{advanceErr}</span>}
-              <button onClick={close} className="btn btn-ghost btn-sm">
-                Save &amp; close
-              </button>
-              <StepNext step={step} state={state} planId={planId} busy={advancing} onNext={() => advanceFrom(step)} />
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* The sole advance control. Gates each step on its completion; for Clarify the click
-   also resolves the answers (via onNext → advanceFrom), showing "Saving…" while it runs. */
-function StepNext({ step, state, planId, busy, onNext }: { step: number; state: WizardState; planId: string | null; busy: boolean; onNext: () => void }) {
-  // Steps with their own primary action inside the body (Drop, Plan, Staffing): hide footer Continue.
-  if (step === 0 || step === 3 || step === STEP_STAFFING) return null;
-  const clarifyIncomplete =
-    step === 1 &&
-    (!state.spec || state.spec.ambiguities.some((a) => !((state.answers[a.id] ?? "").trim() || (a.resolution ?? "").trim())));
-  const disabled = busy || clarifyIncomplete || (step === 2 && !state.chosenStack) || (step === STEP_TRUST && !planId);
-  return (
-    <button onClick={onNext} className="btn btn-primary btn-sm" disabled={disabled} style={{ opacity: disabled ? 0.5 : 1 }}>
-      {busy ? "Saving…" : step === STEP_TRUST ? "To dispatch →" : "Continue →"}
-    </button>
-  );
-}
-
-/* ============================================================
-   RESUME — offered on Step 0 when a saved draft exists
-   ============================================================ */
-function ResumeOffer({ draft: d, busy, onResume, onDiscard }: { draft: WizardDraft; busy: boolean; onResume: () => void; onDiscard: () => void }) {
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22 }}>
-      <Mascot size={64} expression="happy" />
-      <div style={{ textAlign: "center" }}>
-        <div className="kicker">Welcome back</div>
-        <div className="display" style={{ fontSize: 32, margin: "6px 0 8px" }}>
-          Pick up where you left off?
-        </div>
-        <div style={{ fontSize: 15, color: "var(--text-secondary)" }}>
-          <b>{d.projectName}</b> · {STEPS[d.step]?.label ?? "in progress"} (step {d.step + 1}/{STEPS.length})
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 12 }}>
-        <button onClick={onResume} disabled={busy} className="btn btn-primary" style={{ opacity: busy ? 0.5 : 1 }}>
-          {busy ? "Restoring…" : "Resume →"}
-        </button>
-        <button onClick={onDiscard} disabled={busy} className="btn btn-ghost">
-          Start fresh
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   STEP 0 — DROP (upload text or file → /api/briefs)
-   ============================================================ */
-function StepDrop({ setState, next, onReset }: { setState: SetState; next: () => void; onReset: () => void }) {
-  const [drag, setDrag] = useState(false);
-  const [text, setText] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const submit = async () => {
-    if (!file && !text.trim()) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const { brief_id } = await api.createBrief(file ? { file } : { text });
-      onReset(); // a brand-new brief — drop any stale plan from a prior project
-      setState((s) => ({ ...s, briefId: brief_id }));
-      next();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22 }}>
-      <div style={{ textAlign: "center" }}>
-        <div className="display" style={{ fontSize: 44, marginBottom: 10 }}>
-          Drop the brief.
-        </div>
-        <div style={{ fontSize: 16, color: "var(--text-secondary)" }}>Upload a file, or paste the brief text below.</div>
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "var(--bg-app)" }}>
+      {/* top chrome */}
+      <div style={{ height: 52, flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "0 18px" }}>
+        <FullLogo size={17} />
+        <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· New project from brief</span>
+        <div style={{ flex: 1 }} />
+        <Button variant="ghost" size="sm" icon="close" onClick={() => setView("projects")}>Cancel</Button>
       </div>
 
-      <input
-        ref={fileRef}
-        type="file"
-        style={{ display: "none" }}
-        onChange={(e) => {
-          const f = e.target.files?.[0] ?? null;
-          setFile(f);
-        }}
-      />
-
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDrag(true);
-        }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDrag(false);
-          const f = e.dataTransfer.files?.[0];
-          if (f) setFile(f);
-        }}
-        onClick={() => fileRef.current?.click()}
-        style={{
-          width: "100%",
-          maxWidth: 640,
-          border: `3px dashed ${drag ? "var(--ink-fill)" : file ? "var(--green)" : "var(--text-quaternary)"}`,
-          borderRadius: 24,
-          padding: 28,
-          background: drag ? "var(--bg-hover)" : file ? "rgba(47,138,78,0.06)" : "var(--bg-elevated)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 12,
-          cursor: "pointer",
-          transition: "all 200ms",
-        }}
-      >
-        <div style={{ fontSize: 34, color: file ? "var(--green)" : "var(--text-tertiary)" }}>{file ? "📄" : "⬇"}</div>
-        <div style={{ fontWeight: 700, fontSize: 16 }}>{file ? file.name : "Drag a file or click to browse"}</div>
-        <div style={{ color: "var(--text-tertiary)", fontSize: 12 }}>PDF · txt · md</div>
-      </div>
-
-      <div style={{ width: "100%", maxWidth: 640 }}>
-        <div className="kicker" style={{ marginBottom: 6 }}>
-          …or paste text
-        </div>
-        <textarea
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            if (e.target.value) setFile(null);
-          }}
-          rows={4}
-          placeholder="Real-estate listings + agent CRM. iPad-friendly. ~200 agents. 8 weeks."
-          style={{
-            width: "100%",
-            padding: "12px 14px",
-            border: "1.5px solid var(--border-strong)",
-            borderRadius: 12,
-            fontSize: 14,
-            background: "var(--bg-elevated)",
-            outline: "none",
-            fontFamily: "inherit",
-            resize: "vertical",
-          }}
-        />
-      </div>
-
-      {err && <div style={{ color: "var(--text-primary)", fontSize: 13, fontFamily: "var(--font-mono)" }}>{err}</div>}
-
-      <button onClick={submit} className="btn btn-primary" disabled={busy || (!file && !text.trim())} style={{ opacity: busy || (!file && !text.trim()) ? 0.5 : 1 }}>
-        {busy ? "Reading…" : "Read it →"}
-      </button>
-    </div>
-  );
-}
-
-/* ============================================================
-   STEP 1 — CLARIFY (ambiguity cards + reuse + extracted spec)
-   ============================================================ */
-function StepClarify({ state, setState }: { state: WizardState; setState: SetState }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const ranFor = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!state.briefId || state.spec || ranFor.current === state.briefId) return;
-    ranFor.current = state.briefId;
-    setBusy(true);
-    api
-      .clarify(state.briefId, null)
-      .then((spec) => setState((s) => ({ ...s, spec })))
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
-      .finally(() => setBusy(false));
-  }, [state.briefId, state.spec, setState]);
-
-  const setAnswer = (id: string, val: string) => setState((s) => ({ ...s, answers: { ...s.answers, [id]: val } }));
-
-  if (busy && !state.spec) return <Loading label="gemini · reading the brief…" />;
-  if (!state.spec) return <ErrBox err={err} />;
-
-  const spec = state.spec;
-
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28 }}>
-      {/* Left: extracted spec + reuse */}
-      <div>
-        <div className="kicker">What sprint0 read</div>
-        <div className="display" style={{ fontSize: 26, margin: "6px 0 16px" }}>
-          The spec.
-        </div>
-        <div className="card-soft" style={{ padding: 16, marginBottom: 12 }}>
-          <Field label="goal">{spec.goal}</Field>
-          {spec.users.length > 0 && <ChipRow label="users" items={spec.users} />}
-          {spec.must_haves.length > 0 && <ChipRow label="must-haves" items={spec.must_haves} />}
-          {spec.constraints.length > 0 && <ChipRow label="constraints" items={spec.constraints} />}
-        </div>
-
-        {spec.reuse.length > 0 && (
-          <div className="card-soft" style={{ padding: 16 }}>
-            <div className="kicker" style={{ marginBottom: 8 }}>
-              Reuse from memory
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {spec.reuse.map((r, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                  <span
-                    className="chip"
-                    style={{
-                      fontSize: 10,
-                      padding: "2px 8px",
-                      background: r.action === "drop" ? "var(--bg-secondary)" : "var(--bg-secondary)",
-                      borderColor: r.action === "drop" ? "var(--border-strong)" : "var(--ink-fill)",
-                      color: r.action === "drop" ? "var(--text-tertiary)" : "var(--text-primary)",
-                    }}
-                  >
-                    {r.action}
-                  </span>
-                  <b>{r.feature}</b>
-                  <span style={{ color: "var(--text-tertiary)" }}>← {r.from_project}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Right: ambiguity clarification cards */}
-      <div>
-        <div className="kicker">Needs a decision</div>
-        <div className="display" style={{ fontSize: 26, margin: "6px 0 16px" }}>
-          {spec.ambiguities.length} {spec.ambiguities.length === 1 ? "question" : "questions"}.
-        </div>
-        {spec.ambiguities.length === 0 ? (
-          <div className="card-soft" style={{ padding: 20, color: "var(--text-secondary)", fontSize: 14 }}>
-            Nothing ambiguous — the brief was clear. Continue to architecture.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {spec.ambiguities.map((amb) => (
-              <ClarifyCard key={amb.id} amb={amb} answer={state.answers[amb.id] ?? amb.resolution ?? ""} onAnswer={(v) => setAnswer(amb.id, v)} />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ClarifyCard({ amb, answer, onAnswer }: { amb: AmbiguityCard; answer: string; onAnswer: (v: string) => void }) {
-  const onPreset = amb.options.includes(answer);
-  return (
-    <div className="card-soft" style={{ padding: 14 }}>
-      <div className="mono" style={{ fontSize: 10, color: "var(--ink-fill)", fontWeight: 800, textTransform: "uppercase" }}>
-        {amb.feature}
-      </div>
-      <div style={{ fontWeight: 700, fontSize: 14, margin: "6px 0 10px" }}>{amb.question}</div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-        {amb.options.map((opt) => (
-          <button
-            key={opt}
-            onClick={() => onAnswer(opt)}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 700,
-              border: answer === opt ? "1.5px solid var(--ink-fill)" : "1.5px solid var(--border-strong)",
-              background: answer === opt ? "var(--bg-secondary)" : "var(--bg-app)",
-              color: answer === opt ? "var(--text-primary)" : "var(--text-secondary)",
-            }}
-          >
-            {opt}
-          </button>
-        ))}
-      </div>
-      <input
-        value={onPreset ? "" : answer}
-        onChange={(e) => onAnswer(e.target.value)}
-        placeholder="…or specify your own"
-        style={{
-          width: "100%",
-          padding: "7px 10px",
-          border: "1.5px solid var(--border-strong)",
-          borderRadius: 8,
-          fontSize: 12,
-          background: "var(--bg-elevated)",
-          outline: "none",
-          fontFamily: "inherit",
-        }}
-      />
-    </div>
-  );
-}
-
-/* ============================================================
-   STEP 2 — ARCHITECTURE CARDS (pick one → locks the stack)
-   ============================================================ */
-function StepArchitecture({ state, setState }: { state: WizardState; setState: SetState }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [picked, setPicked] = useState<string | null>(null);
-  const ranFor = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!state.briefId || state.arch.length > 0 || ranFor.current === state.briefId) return;
-    ranFor.current = state.briefId;
-    setBusy(true);
-    api
-      .architectures(state.briefId, null)
-      .then((res) => setState((s) => ({ ...s, arch: res.cards })))
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
-      .finally(() => setBusy(false));
-  }, [state.briefId, state.arch.length, setState]);
-
-  if (busy && state.arch.length === 0) return <Loading label="gemini · proposing architectures…" />;
-  if (state.arch.length === 0) return <ErrBox err={err} />;
-
-  const pick = (card: ArchitectureCard) => {
-    setPicked(card.name);
-    setState((s) => ({ ...s, chosenStack: card.tech_stack }));
-  };
-
-  return (
-    <div>
-      <div className="kicker">Architecture options</div>
-      <div className="display" style={{ fontSize: 28, marginTop: 4, marginBottom: 18 }}>
-        Pick a stack. {state.arch.length} grounded options.
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(state.arch.length, 3)}, 1fr)`, gap: 14 }}>
-        {state.arch.map((card) => {
-          const active = picked === card.name;
-          return (
-            <div
-              key={card.name}
-              role="button"
-              tabIndex={0}
-              onClick={() => pick(card)}
-              className="card-soft card-hover"
-              style={{
-                padding: 18,
-                textAlign: "left",
-                cursor: "pointer",
-                borderWidth: active ? 2 : 1,
-                borderColor: active ? "var(--ink-fill)" : "var(--border-strong)",
-                background: active ? "var(--bg-hover)" : "var(--bg-elevated)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div className="display" style={{ fontSize: 18 }}>
-                  {card.name}
-                </div>
-                {active && <span className="chip chip-orange" style={{ fontSize: 10, padding: "2px 8px" }}>chosen</span>}
-              </div>
-              <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.45 }}>{card.summary}</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
-                {Object.entries(card.tech_stack).map(([k, v]) => (
-                  <span key={k} className="chip" style={{ fontSize: 10, padding: "2px 8px" }}>
-                    <span style={{ color: "var(--text-tertiary)" }}>{k}:</span> {v}
-                  </span>
-                ))}
-              </div>
-              {card.grounded_on.length > 0 && (
-                <div className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>
-                  ↻ {card.grounded_on.join(" · ")}
-                </div>
-              )}
-              {/* Defer the rationale — expanding must not pick the card. */}
-              <div onClick={(e) => e.stopPropagation()}>
-                <Disclosure summary="Why this?">
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 8 }}>
-                    <b>Why:</b> {card.rationale}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--green)", fontWeight: 700 }}>{card.fit_to_constraints}</div>
-                </Disclosure>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ marginTop: 14, fontSize: 12, color: "var(--text-tertiary)" }}>
-        {picked ? `Locked: ${picked} — Continue below.` : "Choose a stack to continue."}
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   STEP 3 — PLAN DRAFT (epics/issues board + relay DAG preview)
-   ============================================================ */
-function StepPlan({
-  state,
-  isFeature,
-  featureProjectId,
-  plan,
-  relay,
-  setPlan,
-  setPlanId,
-  setRelay,
-  next,
-}: {
-  state: WizardState;
-  isFeature: boolean;
-  featureProjectId: number | null;
-  plan: PlanJSON | null;
-  relay: RelayState | null;
-  setPlan: (plan: PlanJSON | null) => void;
-  setPlanId: (id: string | null) => void;
-  setRelay: Dispatch<SetStateAction<RelayState | null>>;
-  next: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [featureText, setFeatureText] = useState("");
-  const ran = useRef(false);
-
-  // Non-feature: auto-draft from brief + chosen stack.
-  useEffect(() => {
-    if (isFeature || plan || ran.current || !state.briefId) return;
-    ran.current = true;
-    setBusy(true);
-    api
-      .plan(state.briefId, { constraints: null, chosen_stack: state.chosenStack })
-      .then((res) => {
-        setPlan(res.plan);
-        setPlanId(res.plan_id);
-        setRelay(res.relay);
-      })
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
-      .finally(() => setBusy(false));
-  }, [isFeature, plan, state.briefId, state.chosenStack, setPlan, setPlanId, setRelay]);
-
-  const draftFeature = async () => {
-    if (featureProjectId == null || !featureText.trim()) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await api.addFeature(featureProjectId, { text: featureText });
-      setPlan(res.plan);
-      setPlanId(res.plan_id);
-      setRelay(res.relay);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Feature mode: ask for the feature text first.
-  if (isFeature && !plan) {
-    return (
-      <div style={{ maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16, justifyContent: "center", flex: 1 }}>
-        <div>
-          <div className="kicker">Mid-prod feature</div>
-          <div className="display" style={{ fontSize: 30, marginTop: 4 }}>
-            What should sprint0 add?
-          </div>
-          <div style={{ fontSize: 14, color: "var(--text-secondary)", marginTop: 6 }}>
-            Grounded on the live project (#{featureProjectId}). Produces a delta plan + its own relay.
-          </div>
-        </div>
-        <textarea
-          value={featureText}
-          onChange={(e) => setFeatureText(e.target.value)}
-          rows={4}
-          placeholder="Add saved-search alerts: agents subscribe to a filter and get notified on new matching listings."
-          style={{
-            padding: "12px 14px",
-            border: "1.5px solid var(--border-strong)",
-            borderRadius: 12,
-            fontSize: 14,
-            background: "var(--bg-elevated)",
-            outline: "none",
-            fontFamily: "inherit",
-            resize: "vertical",
-          }}
-        />
-        {err && <div style={{ color: "var(--text-primary)", fontSize: 13, fontFamily: "var(--font-mono)" }}>{err}</div>}
-        <button onClick={draftFeature} className="btn btn-primary" disabled={busy || !featureText.trim()} style={{ alignSelf: "flex-start", opacity: busy || !featureText.trim() ? 0.5 : 1 }}>
-          {busy ? "Drafting…" : "Draft delta plan →"}
-        </button>
-      </div>
-    );
-  }
-
-  if (busy && !plan) return <Loading label="gemini · drafting the plan…" />;
-  if (!plan) return <ErrBox err={err} />;
-
-  const issues = planIssues(plan.epics);
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
-        <div>
-          <div className="kicker">Plan draft</div>
-          <div className="display" style={{ fontSize: 26, marginTop: 4 }}>
-            {plan.epics.length} epics · {issues.length} issues · {plan.timeline_weeks}w
-          </div>
-        </div>
-        {plan.grounded_on.length > 0 && (
-          <div className="mono" style={{ fontSize: 11, color: "var(--green)" }}>↻ {plan.grounded_on.join(" · ")}</div>
-        )}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 18 }}>
-        {/* Epic / issue board */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {plan.epics.map((epic) => (
-            <div key={epic.id} className="card-soft" style={{ padding: 14 }}>
-              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 10 }}>{epic.title}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {epic.issues.map((issue) => (
-                  <div
-                    key={issue.id}
-                    style={{
-                      padding: "8px 10px",
-                      background: "var(--bg-app)",
-                      borderRadius: 8,
-                      borderLeft: `3px solid ${DISCIPLINE_COLOR[issue.discipline]}`,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
-                      {issue.id}
-                    </span>
-                    <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{issue.title}</span>
-                    {issue.stretch_flag && (
-                      <span title={issue.stretch_flag} style={{ color: "var(--amber)", fontSize: 12, fontWeight: 800 }}>⚠</span>
-                    )}
-                    <span style={{ fontSize: 10, fontWeight: 700, color: RISK_COLOR[issue.risk] }}>{issue.risk}</span>
-                    <span className="chip" style={{ fontSize: 9, padding: "1px 7px" }}>{DISCIPLINE_LABEL[issue.discipline]}</span>
-                    <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{issue.estimate_days}d</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Relay DAG preview */}
-        <div>
-          <div className="kicker" style={{ marginBottom: 10 }}>
-            Enters the relay
-          </div>
-          {relay && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {relay.gates.map((g) => {
-                const st = statusStyle(g.status);
-                return (
-                  <div
-                    key={g.discipline}
-                    className="card-soft"
-                    style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}
-                  >
-                    <span style={{ width: 10, height: 10, borderRadius: 3, background: DISCIPLINE_COLOR[g.discipline], border: "1.5px solid var(--text-primary)" }} />
-                    <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{DISCIPLINE_LABEL[g.discipline]}</span>
-                    <span className="chip" style={{ fontSize: 10, padding: "2px 8px", background: st.bg, color: st.fg, borderColor: st.border }}>
-                      {st.label}
-                    </span>
-                  </div>
-                );
-              })}
-              <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
-                baton: {relay.baton.map((d) => DISCIPLINE_LABEL[d]).join(", ") || "—"}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 18 }}>
-        <button onClick={next} className="btn btn-primary btn-sm">
-          Check staffing →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   STEP 4 — TRUST DIAL (0–100 → /relay/auto)
-   ============================================================ */
-function StepTrust({
-  state,
-  setState,
-  planId,
-  relay,
-  setRelay,
-}: {
-  state: WizardState;
-  setState: SetState;
-  planId: string | null;
-  relay: RelayState | null;
-  setRelay: Dispatch<SetStateAction<RelayState | null>>;
-}) {
-  const dial = state.dial;
-  const setDial = (v: number) => setState((s) => ({ ...s, dial: v }));
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const debounce = useRef<number | null>(null);
-
-  const level = dial < 25 ? "Advisor" : dial < 55 ? "Co-pilot" : dial < 85 ? "Navigator" : "Autonomous";
-  const presets: [string, number][] = [
-    ["Advisor", 10],
-    ["Co-pilot", 40],
-    ["Navigator", 70],
-    ["Autonomous", 95],
-  ];
-
-  // Debounced call to /relay/auto on dial change.
-  const apply = (v: number) => {
-    setDial(v);
-    if (!planId) return;
-    if (debounce.current) window.clearTimeout(debounce.current);
-    debounce.current = window.setTimeout(() => {
-      setBusy(true);
-      setErr(null);
-      api
-        .relayAuto(planId, v)
-        .then((r) => setRelay(r))
-        .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
-        .finally(() => setBusy(false));
-    }, 350);
-  };
-
-  // Run once on mount with the default dial.
-  const ran = useRef(false);
-  useEffect(() => {
-    if (ran.current || !planId) return;
-    ran.current = true;
-    apply(dial);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planId]);
-
-  const autoCount = relay?.gates.filter((g) => g.status === "auto_passed").length ?? 0;
-  const humanCount = relay ? relay.gates.length - autoCount : 0;
-
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, height: "100%" }}>
-      <div>
-        <div className="kicker">Trust dial</div>
-        <div className="display" style={{ fontSize: 28, marginTop: 4, marginBottom: 24 }}>
-          How much auto-passes?
-        </div>
-
-        <div style={{ padding: 20, background: "var(--bg-elevated)", borderRadius: 16, border: "1.5px solid var(--border-strong)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
-            <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 700 }}>
-              {level.toUpperCase()}
-            </div>
-            <div className="display" style={{ fontSize: 28, color: "var(--ink-fill)" }}>
-              {dial}%
-            </div>
-          </div>
-
-          <div style={{ position: "relative", padding: "12px 0" }}>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={dial}
-              onChange={(e) => apply(parseInt(e.target.value))}
-              className="trust-slider"
-              style={{ width: "100%", height: 16, appearance: "none", background: "transparent", position: "relative", zIndex: 2 }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                top: "50%",
-                transform: "translateY(-50%)",
-                height: 16,
-                borderRadius: 999,
-                background: "var(--bg-secondary)",
-                border: "2px solid var(--text-primary)",
-                pointerEvents: "none",
-                overflow: "hidden",
-              }}
-            >
-              <div style={{ height: "100%", width: `${dial}%`, background: "var(--ink-fill)" }} />
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 14 }}>
-            {presets.map(([n, v]) => (
-              <button
-                key={n}
-                onClick={() => apply(v)}
-                style={{
-                  padding: "8px 4px",
-                  borderRadius: 8,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  background: level === n ? "var(--bg-secondary)" : "var(--bg-app)",
-                  color: level === n ? "var(--text-primary)" : "var(--text-secondary)",
-                  border: level === n ? "1.5px solid var(--ink-fill)" : "1.5px solid var(--border)",
-                }}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ marginTop: 18, padding: 14, background: "var(--bg-app)", borderRadius: 10, display: "flex", gap: 10, alignItems: "center" }}>
-            <Mascot size={40} expression={level === "Autonomous" ? "cheer" : level === "Navigator" ? "working" : "happy"} />
-            <div style={{ fontSize: 13 }}>
-              <b>{level}.</b> {busy ? "recomputing gates…" : `${autoCount} gate${autoCount === 1 ? "" : "s"} auto-pass, ${humanCount} need a human.`}
-            </div>
-          </div>
-          {err && <div style={{ color: "var(--text-primary)", fontSize: 12, marginTop: 10, fontFamily: "var(--font-mono)" }}>{err}</div>}
-        </div>
-      </div>
-
-      <div>
-        <div className="kicker">Gate disposition</div>
-        <div className="display" style={{ fontSize: 28, marginTop: 4, marginBottom: 24 }}>
-          Who clears at {dial}.
-        </div>
-        <div className="card-soft" style={{ padding: 18 }}>
-          {relay?.gates.map((g, i, arr) => {
-            const auto = g.status === "auto_passed";
+      <div style={{ flex: 1, minHeight: 0, padding: "0 8px 8px", display: "flex", gap: 8 }}>
+        {/* stepper rail */}
+        <div style={{ width: 230, flexShrink: 0, padding: "20px 14px" }}>
+          {STEPS.map((s, i) => {
+            const done = i < step, cur = i === step;
             return (
-              <div
-                key={g.discipline}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 0",
-                  borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : "none",
-                }}
-              >
-                <span style={{ width: 10, height: 10, borderRadius: 3, background: DISCIPLINE_COLOR[g.discipline], border: "1.5px solid var(--text-primary)" }} />
-                <div style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{DISCIPLINE_LABEL[g.discipline]}</div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 800,
-                    fontFamily: "var(--font-mono)",
-                    color: auto ? "var(--blue)" : "var(--amber)",
-                  }}
-                >
-                  {auto ? "AUTO" : "HUMAN"}
+              <div key={s.id} style={{ display: "flex", gap: 11, marginBottom: 4 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <span style={{ width: 24, height: 24, borderRadius: "50%", display: "grid", placeItems: "center", flexShrink: 0,
+                    background: done ? "var(--text-primary)" : cur ? "var(--bg-elevated)" : "transparent",
+                    border: `0.5px solid ${cur ? "var(--text-primary)" : done ? "var(--text-primary)" : "var(--border-strong)"}`,
+                    color: done ? "#fff" : cur ? "var(--text-primary)" : "var(--text-quaternary)",
+                    fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 600 }}>
+                    {done ? <Icon name="check" size={13} /> : i + 1}
+                  </span>
+                  {i < STEPS.length - 1 && <span style={{ width: 1, flex: 1, minHeight: 26, background: done ? "var(--text-primary)" : "var(--border)" }} />}
+                </div>
+                <div style={{ paddingTop: 2 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: cur || done ? "var(--text-primary)" : "var(--text-quaternary)" }}>{s.label}</div>
+                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{s.sub}</div>
                 </div>
               </div>
             );
           })}
         </div>
-      </div>
-    </div>
-  );
-}
 
-/* ============================================================
-   STEP 5 — DISPATCH (/dispatch → real GitLab result)
-   ============================================================ */
-function StepDispatch({
-  planId,
-  setRelay,
-  setLiveProjectId,
-  setLiveCloneUrl,
-  onClose,
-  onDone,
-}: {
-  planId: string | null;
-  setRelay: Dispatch<SetStateAction<RelayState | null>>;
-  setLiveProjectId: (id: number | null) => void;
-  setLiveCloneUrl: (url: string | null) => void;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const refreshProjects = useRefreshProjects();
-  const invalidateTasks = useInvalidateWork();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [result, setResult] = useState<DispatchResult | null>(null);
-  const [steps, setSteps] = useState<{ step: number; of: number; message: string }[]>([]);
-  // Dry-run the irreversible GitLab creation: what it makes, who it invites, free-tier cap, relay state.
-  const [preview, setPreview] = useState<DispatchPreview | null>(null);
-  useEffect(() => {
-    if (!planId) return;
-    api.dispatchPreview(planId).then(setPreview).catch(() => setPreview(null));
-  }, [planId]);
-
-  const dispatch = async (mode: "copilot" | "autonomous") => {
-    if (!planId) return;
-    setBusy(true);
-    setErr(null);
-    setSteps([]);
-    // Cosmetic scaffold-progress stream (unauthenticated WS; canned step sequence).
-    let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket(api.planEventsUrl(planId));
-      ws.onmessage = (ev) => {
-        try {
-          setSteps((s) => [...s, JSON.parse(ev.data)]);
-        } catch {
-          /* ignore malformed frame */
-        }
-      };
-    } catch {
-      /* progress stream is optional */
-    }
-    try {
-      // Autonomous force-passes any remaining gates server-side; refresh relay after.
-      const res = await api.dispatch(planId, mode);
-      setResult(res);
-      setLiveProjectId(res.project_id);
-      setLiveCloneUrl(res.clone_url || (res.web_url ? res.web_url + ".git" : null));
-      draft.clear(); // shipped → the saved draft is spent
-      onDone();
-      refreshProjects(); // the new project now appears on the manager Dashboard
-      invalidateTasks(); // the dispatched project's Tasks now appear in the Work hub
-      try {
-        setRelay(await api.relay(planId));
-      } catch {
-        /* relay refresh is best-effort */
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      ws?.close();
-      setBusy(false);
-    }
-  };
-
-  if (result) {
-    const stats: [string, string | number][] = [
-      ["issues created", result.issues_created],
-      ["context branches", result.context_branches ?? "—"],
-      ["QA issue", result.qa_issue_iid != null ? `#${result.qa_issue_iid}` : "—"],
-      ["default branch", result.default_branch],
-    ];
-    return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div className="kicker">Dispatched</div>
-            <div className="display" style={{ fontSize: 30, marginTop: 4 }}>
-              Live on GitLab.
+        {/* main pane */}
+        <div className="pane" style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: 1, overflow: "auto", padding: "32px 0" }}>
+            <div style={{ maxWidth: 660, margin: "0 auto", padding: "0 32px" }}>
+              {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
+              {step === 1 && <StepClarify answers={answers} setAnswers={setAnswers} />}
+              {step === 2 && <StepArch arch={arch} setArch={setArch} />}
+              {step === 3 && <StepPlan arch={arch} />}
+              {step === 4 && <StepReview mode={mode} setMode={setMode} dispatched={dispatched}
+                onDispatch={() => { setDispatched(true); setToast({ title: "Dispatched to GitLab", body: DISPATCH_PREVIEW.project_name + " · supervised" }); }} />}
             </div>
           </div>
-          <Mascot size={72} expression="cheer" />
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-          {stats.map(([l, v]) => (
-            <div key={l} className="card-soft" style={{ padding: 16 }}>
-              <div className="display" style={{ fontSize: 28, color: "var(--ink-fill)" }}>
-                {v}
-              </div>
-              <div className="kicker" style={{ marginTop: 4 }}>
-                {l}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="card-soft" style={{ padding: 18, display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div className="kicker">Project {result.project_id}</div>
-            <a href={result.web_url} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, color: "var(--blue)", textDecoration: "underline", textUnderlineOffset: 3, wordBreak: "break-all" }}>
-              {result.web_url}
-            </a>
+          {/* footer nav */}
+          <div style={{ borderTop: "0.5px solid var(--border-subtle)", padding: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <Button variant="ghost" size="md" icon="chevronLeft" onClick={step === 0 ? () => setView("projects") : back}>{step === 0 ? "Cancel" : "Back"}</Button>
+            <div style={{ flex: 1 }} />
+            <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>step {step + 1} / {STEPS.length}</span>
+            {step < STEPS.length - 1
+              ? <Button variant="primary" size="md" iconRight="arrowRight" disabled={!canNext} style={{ opacity: canNext ? 1 : 0.45 }} onClick={next}>
+                  {step === 0 ? "Clarify spec" : step === 1 ? "Generate architectures" : step === 2 ? "Generate plan" : "Review & dispatch"}
+                </Button>
+              : <Button variant="primary" size="md" icon="gitlab" disabled={dispatched} onClick={() => { /* handled in StepReview */ }} style={{ opacity: dispatched ? 0.5 : 1 }}>{dispatched ? "Dispatched" : "Done"}</Button>}
           </div>
-          <button onClick={onClose} className="btn btn-primary btn-sm">
-            Done
-          </button>
         </div>
-        {result.persist_warning && (
-          <div style={{ fontSize: 11, color: "var(--amber)", fontFamily: "var(--font-mono)" }}>
-            persist warning: {result.persist_warning}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22 }}>
-      <Mascot size={88} expression={busy ? "working" : "happy"} className={busy ? "wiggle" : undefined} />
-      <div style={{ textAlign: "center" }}>
-        <div className="display" style={{ fontSize: 32, marginBottom: 8 }}>
-          {busy ? "Scaffolding GitLab…" : "Ready to dispatch."}
-        </div>
-        <div style={{ fontSize: 15, color: "var(--text-secondary)", maxWidth: 460 }}>
-          Copilot dispatches once every gate is cleared. Autonomous force-passes the relay, then scaffolds.
-        </div>
-      </div>
-      {!busy && preview && (
-        <div className="card-soft" style={{ padding: 16, width: 460, maxWidth: "92%", display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span className="kicker">Dry run · what dispatch creates</span>
-            {preview.is_delta && <span className="chip" style={{ fontSize: 9 }}>delta</span>}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-            <PreviewStat n={preview.creates.project} label={preview.is_delta ? "extends" : "project"} />
-            <PreviewStat n={preview.creates.issues} label="issues" />
-            <PreviewStat n={preview.invite_count} label={`of ${preview.free_tier_cap} seats`} warn={preview.exceeds_cap} />
-          </div>
-          {preview.member_invites.length > 0 && (
-            <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", wordBreak: "break-word" }}>
-              invites: {preview.member_invites.map((m) => "@" + m).join(" · ")}
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-secondary)" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: preview.relay_cleared ? "var(--green)" : "var(--amber)", flexShrink: 0 }} />
-            {preview.relay_cleared ? "Relay cleared — copilot can dispatch now." : "Relay not cleared — copilot will block; autonomous force-passes it."}
-          </div>
-          {preview.exceeds_cap && (
-            <div className="mono" style={{ fontSize: 11, color: "var(--red)", display: "flex", alignItems: "center", gap: 6 }}>
-              <Icon name="warn" size={13} /> {preview.invite_count} invites exceed the {preview.free_tier_cap}-seat free-tier cap.
-            </div>
-          )}
-        </div>
-      )}
-      {busy && steps.length > 0 && (
-        <div className="card-soft" style={{ padding: 16, width: 420, maxWidth: "90%", display: "flex", flexDirection: "column", gap: 8 }}>
-          {steps.map((s, i) => (
-            <div key={i} className="mono" style={{ fontSize: 12, color: i === steps.length - 1 ? "var(--text-primary)" : "var(--text-tertiary)", display: "flex", gap: 8 }}>
-              <span style={{ color: "var(--ink-fill)", fontWeight: 700 }}>{s.step}/{s.of}</span>
-              {s.message}
-            </div>
-          ))}
-        </div>
-      )}
-      {err && (
-        <div className="card-soft" style={{ padding: 14, borderColor: "var(--ink-fill)", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 12, maxWidth: 560 }}>
-          {err}
-        </div>
-      )}
-      <div style={{ display: "flex", gap: 12 }}>
-        <button onClick={() => dispatch("copilot")} disabled={busy} className="btn btn-primary" style={{ opacity: busy ? 0.5 : 1 }}>
-          {busy ? "Working…" : "Dispatch (copilot) →"}
-        </button>
-        <button onClick={() => dispatch("autonomous")} disabled={busy} className="btn btn-dark" style={{ opacity: busy ? 0.5 : 1 }}>
-          Autonomous ⚡
-        </button>
       </div>
     </div>
   );
 }
 
-/* ── small shared bits ── */
-function PreviewStat({ n, label, warn }: { n: number; label: string; warn?: boolean }) {
+function GroundingStrip() {
   return (
-    <div style={{ textAlign: "center", padding: "8px 4px", background: "var(--bg-app)", borderRadius: 8 }}>
-      <div className="display" style={{ fontSize: 22, color: warn ? "var(--red)" : "var(--text-primary)" }}>{n}</div>
-      <div className="kicker" style={{ marginTop: 2, fontSize: 9 }}>{label}</div>
-    </div>
-  );
-}
-
-function Loading({ label }: { label: string }) {
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
-      <div style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid var(--ink-fill)", borderTopColor: "transparent", animation: "spin-slow 0.8s linear infinite" }} />
-      <div className="mono" style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
-        {label}
+    <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", padding: 14, background: "var(--bg-secondary)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <ZeroMark size={15} />
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>Grounded on agency memory</span>
+        <span className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)" }}>§reuse</span>
       </div>
-    </div>
-  );
-}
-
-function ErrBox({ err }: { err: string | null }) {
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
-      <Mascot size={64} expression="surprised" />
-      <div className="display" style={{ fontSize: 22 }}>
-        Something tripped.
-      </div>
-      <div className="mono" style={{ fontSize: 12, color: "var(--text-primary)", maxWidth: 520, textAlign: "center" }}>
-        {err ?? "No data returned."}
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "6px 0" }}>
-      <div className="mono" style={{ fontSize: 10, color: "var(--ink-fill)", fontWeight: 800, textTransform: "uppercase", minWidth: 80 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>{children}</div>
-    </div>
-  );
-}
-
-function ChipRow({ label, items }: { label: string; items: string[] }) {
-  return (
-    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "6px 0", borderTop: "1px solid var(--border)" }}>
-      <div className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 800, textTransform: "uppercase", minWidth: 80, paddingTop: 4 }}>
-        {label}
-      </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {items.map((it, i) => (
-          <span key={i} className="chip" style={{ fontSize: 11, padding: "3px 9px" }}>
-            {it}
-          </span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        {WIZARD_SPEC.reuse.map((r) => (
+          <div key={r.tag} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <CapTag tag={r.tag} />
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)", flex: 1 }}>
+              @{r.who} made this call on <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{r.from}</b>
+            </span>
+            <GradeChip grade={r.grade} showLabel={false} />
+          </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function StepBrief({ brief, setBrief }: { brief: string; setBrief: (v: string) => void }) {
+  return (
+    <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
+      <WizHead title="Drop the client brief" sub="Paste the text or drop a PDF. The AI extracts a spec and proposes reuse before you commit anything." />
+      <div className="kicker" style={{ marginBottom: 8 }}>Brief</div>
+      <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={8}
+        style={{ width: "100%", padding: "14px 16px", fontSize: 14, lineHeight: 1.6, resize: "vertical",
+          background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)",
+          outline: "none", color: "var(--text-primary)", boxShadow: "var(--shadow-inset)", fontFamily: "var(--font-ui)", marginBottom: 12 }} />
+      <button style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", height: 64,
+        border: "1.2px dashed var(--border-strong)", borderRadius: "var(--r-lg)", color: "var(--text-tertiary)",
+        fontSize: 13, fontWeight: 500, background: "var(--bg-base)" }}>
+        <Icon name="inbox" size={16} /> Drop a PDF, or click to browse
+      </button>
+    </div>
+  );
+}
+
+function StepClarify({ answers, setAnswers }: {
+  answers: Record<string, string>; setAnswers: (fn: (ans: Record<string, string>) => Record<string, string>) => void;
+}) {
+  return (
+    <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
+      <WizHead title="Clarify the spec" sub="The AI pulled these features and flagged a few ambiguities. Answer them so the plan is grounded, not guessed." />
+
+      <div className="kicker" style={{ marginBottom: 8 }}>Extracted features · {WIZARD_SPEC.features.length}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, marginBottom: 22 }}>
+        {WIZARD_SPEC.features.map((f) => (
+          <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 10, height: 36, padding: "0 10px", borderRadius: "var(--r-md)" }}>
+            <Icon name="check" size={14} style={{ color: "var(--green)" }} />
+            <span style={{ fontSize: 13, flex: 1 }}>{f.title}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-tertiary)" }}><DiscDot d={f.lane} />{DISC[f.lane].label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="kicker" style={{ marginBottom: 8 }}>Ambiguities · {WIZARD_SPEC.ambiguities.length} need a call</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 22 }}>
+        {WIZARD_SPEC.ambiguities.map((a) => (
+          <div key={a.id} style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", padding: 14, boxShadow: "var(--shadow-1)" }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>{a.question}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {a.options.map((o) => {
+                const on = answers[a.id] === o;
+                return (
+                  <button key={o} onClick={() => setAnswers((ans) => ({ ...ans, [a.id]: o }))}
+                    style={{ height: 30, padding: "0 12px", borderRadius: "var(--r-md)", fontSize: 12.5, fontWeight: 500,
+                      background: on ? "var(--text-primary)" : "var(--bg-elevated)", color: on ? "#fff" : "var(--text-secondary)",
+                      border: `0.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`, boxShadow: on ? "none" : "var(--shadow-1)" }}>
+                    {o}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <GroundingStrip />
+    </div>
+  );
+}
+
+function StepArch({ arch, setArch }: { arch: string; setArch: (v: string) => void }) {
+  return (
+    <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
+      <WizHead title="Pick a stack" sub="Grounded architecture options — the recommended one reuses the most validated modules from memory." />
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {WIZARD_ARCHITECTURES.map((o) => {
+          const on = arch === o.id;
+          return (
+            <button key={o.id} onClick={() => setArch(o.id)} style={{ textAlign: "left", width: "100%",
+              border: `0.5px solid ${on ? "var(--text-primary)" : "var(--border)"}`, borderRadius: "var(--r-lg)", padding: 16,
+              background: "var(--bg-elevated)", boxShadow: on ? "var(--shadow-2)" : "var(--shadow-1)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{ width: 18, height: 18, borderRadius: "50%", border: `1.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`,
+                  display: "grid", placeItems: "center" }}>{on && <span style={{ width: 9, height: 9, borderRadius: "50%", background: "var(--text-primary)" }} />}</span>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", flex: 1 }}>{o.stack.map((s) => <Badge key={s} tone="outline">{s}</Badge>)}</div>
+                {o.recommended && <Badge tone="ink">recommended</Badge>}
+              </div>
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "0 0 6px", lineHeight: 1.5 }}>{o.rationale}</p>
+              <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "0 0 10px", lineHeight: 1.5 }}><b style={{ fontWeight: 500 }}>Trade-off:</b> {o.tradeoffs}</p>
+              {o.grounded.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <ZeroMark size={13} /><span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>reuses</span>
+                  {o.grounded.map((g) => <CapTag key={g} tag={g} />)}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StepPlan({ arch: _arch }: { arch: string }) {
+  const { members } = useApp();
+  const byUser = (u: string) => members.find((m) => m.username === u);
+  const cov = STAFFING.plan_HARB_42.coverage;
+  const order = ["uiux", "backend", "devops", "frontend", "qa"];
+  return (
+    <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
+      <WizHead title="Plan & draft relay" sub="18 issues planned across the relay. The plan enters as a draft — nothing ships until the gates clear." />
+
+      <div className="kicker" style={{ marginBottom: 10 }}>Draft relay</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "10px 4px 20px" }}>
+        {order.map((d, i) => (
+          <Fragment key={d}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 30, height: 30, borderRadius: "50%", display: "grid", placeItems: "center",
+                background: cov.gaps.includes(d) ? "var(--bg-elevated)" : "var(--bg-secondary)",
+                border: cov.gaps.includes(d) ? "1px dashed var(--text-primary)" : "0.5px solid var(--border)" }}>
+                <DiscDot d={d} size={9} />
+              </span>
+              <span style={{ fontSize: 9.5, color: cov.gaps.includes(d) ? "var(--text-primary)" : "var(--text-quaternary)", fontWeight: cov.gaps.includes(d) ? 600 : 400 }}>{DISC[d].label}</span>
+            </div>
+            {i < order.length - 1 && <span style={{ flex: 1, height: 1, background: "var(--border-strong)", marginTop: -16 }} />}
+          </Fragment>
+        ))}
+      </div>
+
+      {/* §7 staffing in review */}
+      <div style={{ border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: 14, background: "var(--bg-secondary)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <Icon name="team" size={15} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Coverage</span>
+          <div style={{ flex: 1 }} />
+          <Badge tone="outline" mono>1 gap</Badge>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", margin: "0 0 10px", lineHeight: 1.5 }}>
+          <b style={{ color: "var(--text-primary)", fontWeight: 500 }}>{DISC[cov.gaps[0]].label}</b> has no dedicated dev — its gate routes to you (manager). Strongest stretch: <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{byUser(cov.stretch_candidates[0].username)?.name}</b> (match {cov.stretch_candidates[0].score}).
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6 }}>
+          {cov.per_discipline.map((p) => (
+            <div key={p.discipline} style={{ textAlign: "center", padding: "8px 4px", borderRadius: "var(--r-md)",
+              background: p.covered ? "var(--bg-elevated)" : "transparent", border: p.covered ? "0.5px solid var(--border)" : "1px dashed var(--text-primary)" }}>
+              <DiscDot d={p.discipline} size={8} />
+              <div style={{ fontSize: 10, marginTop: 5, color: "var(--text-tertiary)" }}>{DISC[p.discipline].label}</div>
+              <div className="mono" style={{ fontSize: 9, color: p.covered ? "var(--green)" : "var(--text-primary)", marginTop: 2, fontWeight: 600 }}>{p.covered ? `${p.devs.length} dev` : "gap"}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StepReview({ mode, setMode, dispatched, onDispatch }: {
+  mode: string; setMode: (v: string) => void; dispatched: boolean; onDispatch: () => void;
+}) {
+  const { members } = useApp();
+  const byUser = (u: string) => members.find((m) => m.username === u);
+  const p = DISPATCH_PREVIEW;
+  return (
+    <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
+      <WizHead title="Dispatch preview" sub="The router can clear a relay with no human in the loop — so creating the real GitLab project is a separate, explicit commit. Review the irreversible side-effects." />
+
+      <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", marginBottom: 16, boxShadow: "var(--shadow-1)" }}>
+        <div style={{ padding: 16, borderBottom: "0.5px solid var(--border-subtle)" }}>
+          <div className="kicker" style={{ marginBottom: 8 }}>Creates</div>
+          <div style={{ display: "flex", gap: 22 }}>
+            <Stat n={p.creates.project} l="GitLab project" mono={p.project_name} />
+            <Stat n={p.creates.issues} l="issues" />
+            <Stat n={p.invite_count} l="member invites" />
+          </div>
+        </div>
+        <div style={{ padding: 16 }}>
+          <div className="kicker" style={{ marginBottom: 10 }}>Member invites · free tier cap {p.free_tier_cap}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: p.exceeds_cap ? 12 : 0 }}>
+            {p.member_invites.map((m, i) => (
+              <span key={m.username} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 9px 0 5px",
+                borderRadius: "var(--r-pill)", background: i >= p.free_tier_cap ? "var(--bg-active)" : "var(--bg-secondary)",
+                border: i >= p.free_tier_cap ? "0.5px solid var(--text-primary)" : "0.5px solid transparent" }}>
+                <Avatar name={byUser(m.username)?.name ?? m.username} size={18} />
+                <span style={{ fontSize: 11.5, fontWeight: 500 }}>{(byUser(m.username)?.name ?? m.username).split(" ")[0]}</span>
+                {i >= p.free_tier_cap && <span className="mono" style={{ fontSize: 9.5, color: "var(--text-primary)", fontWeight: 600 }}>over</span>}
+              </span>
+            ))}
+          </div>
+          {p.exceeds_cap && (
+            <div style={{ display: "flex", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)", background: "rgba(212,58,58,0.08)", border: "0.5px solid var(--red)" }}>
+              <Icon name="flag" size={14} style={{ color: "var(--red)", flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 12, color: "var(--red)", lineHeight: 1.45 }}>
+                {p.invite_count} invites exceeds the {p.free_tier_cap}-member free-tier cap. Drop {p.invite_count - p.free_tier_cap} member or upgrade before dispatch.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="kicker" style={{ marginBottom: 8 }}>Dispatch mode</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+        {([["supervised", "Supervised", "You ratify every expert gate"], ["autonomous", "Autonomous", "Auto-pass clears with no human"]] as const).map(([id, label, desc]) => {
+          const on = mode === id;
+          return (
+            <button key={id} onClick={() => setMode(id)} style={{ flex: 1, textAlign: "left", padding: 13, borderRadius: "var(--r-lg)",
+              border: `0.5px solid ${on ? "var(--text-primary)" : "var(--border)"}`, background: "var(--bg-elevated)", boxShadow: on ? "var(--shadow-2)" : "var(--shadow-1)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+                <span style={{ width: 15, height: 15, borderRadius: "50%", border: `1.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`, display: "grid", placeItems: "center" }}>
+                  {on && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--text-primary)" }} />}</span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", paddingLeft: 22 }}>{desc}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      <Button variant="primary" size="lg" icon="gitlab" style={{ width: "100%", opacity: dispatched ? 0.5 : 1 }} disabled={dispatched} onClick={onDispatch}>
+        {dispatched ? "Dispatched to GitLab" : `Dispatch — create ${DISPATCH_PREVIEW.project_name}`}
+      </Button>
+      <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", textAlign: "center", margin: "10px 0 0", lineHeight: 1.5 }}>
+        Irreversible. Scaffolds the real GitLab project, issues, and invites.
+      </p>
+    </div>
+  );
+}
+
+function Stat({ n, l, mono }: { n: number; l: string; mono?: string }) {
+  return (
+    <div>
+      <div style={{ fontFamily: "var(--font-mono)", fontSize: 22, fontWeight: 600, letterSpacing: "-0.5px" }}>{n}</div>
+      <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", marginTop: 2 }}>{l}</div>
+      {mono && <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", marginTop: 1 }}>{mono}</div>}
+    </div>
+  );
+}
+function WizHead({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <h1 style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.5px", margin: 0 }}>{title}</h1>
+      <p style={{ fontSize: 14, color: "var(--text-tertiary)", margin: "8px 0 0", lineHeight: 1.55, maxWidth: 520 }}>{sub}</p>
     </div>
   );
 }

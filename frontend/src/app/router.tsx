@@ -11,15 +11,14 @@ import { WorkHub } from "../views/work/WorkHub";
 import { Dashboard } from "../views/Dashboard";
 import { TeamView } from "../views/Team";
 import { RelayBoard } from "../views/RelayBoard";
-import { RatifyPanel } from "../views/RatifyPanel";
 import { RatifyQueue } from "../views/RatifyQueue";
-import { RelayPortfolio } from "../views/RelayPortfolio";
 import { Portfolio } from "../views/Portfolio";
 import { Profiles } from "../views/Profiles";
 import { Attributions } from "../views/Attributions";
 import { CodeGraph } from "../views/CodeGraph";
+import { Settings } from "../views/Settings";
 import { QAGate } from "../views/QAGate";
-import { DevToday, DevIssue, DevPassport } from "../views/dev/DevViews";
+import { DevPassport } from "../views/dev/DevViews";
 
 const rootRoute = createRootRoute({
   component: () => <AppShellNew />,
@@ -30,18 +29,15 @@ const PANELS: { path: string; component: FC }[] = [
   { path: "/inbox", component: InboxPage },
   { path: "/work", component: WorkHub },
   { path: "/dashboard", component: Dashboard },
-  { path: "/team", component: TeamView },
   { path: "/relay", component: RelayBoard },
-  { path: "/relays", component: RelayPortfolio },
   { path: "/queue", component: RatifyQueue },
-  { path: "/ratify", component: RatifyPanel },
-  { path: "/attributions", component: Attributions },
-  { path: "/codegraph", component: CodeGraph },
+  { path: "/team", component: TeamView },
   { path: "/profiles", component: Profiles },
+  { path: "/codegraph", component: CodeGraph },
+  { path: "/attributions", component: Attributions },
   { path: "/portfolio", component: Portfolio },
+  { path: "/settings", component: Settings },
   { path: "/qa", component: QAGate },
-  { path: "/today", component: DevToday },
-  { path: "/issue", component: DevIssue },
   { path: "/passport", component: DevPassport },
 ];
 
@@ -50,7 +46,7 @@ const indexRoute = createRoute({
   path: "/",
   // a sensible default; the AppContext role-gate effect redirects to the persona home if invalid.
   // (cast: the router type isn't registered yet inside a route definition.)
-  beforeLoad: () => { throw redirect({ to: "/work" as "/" }); },
+  beforeLoad: () => { throw redirect({ to: "/inbox" as "/" }); },
 });
 
 const panelRoutes = PANELS.map(({ path, component }) =>
