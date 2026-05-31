@@ -3,9 +3,11 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { Mode, Role, View, WizardKind } from "./types";
 import type { Discipline, InboxResponse, Member, PlanJSON, ProjectSummary, RelayState, WorkTask } from "../lib/api";
 import { api, token } from "../lib/api";
@@ -121,7 +123,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const discipline = member && member.role === "developer" ? member.discipline : null;
   const mode = roleToMode(role);
 
-  const [view, setView] = useState<View>("dashboard");
+  // view ↔ URL bridge: the router is the source of truth; `view` derives from the path and
+  // `setView` navigates. Keeps every panel's useApp().view/setView working through the new router.
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const view = (pathname === "/" ? ROLE_HOME[role] : pathname.slice(1)) as View;
+  const viewRef = useRef<View>(view);
+  viewRef.current = view;
+  const setView = useCallback<Dispatch<SetStateAction<View>>>(
+    (v) => {
+      const next = typeof v === "function" ? (v as (p: View) => View)(viewRef.current) : v;
+      navigate({ to: `/${next}` as string });
+    },
+    [navigate],
+  );
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardKind, setWizardKind] = useState<WizardKind>("brief");
   const [featureProjectId, setFeatureProjectId] = useState<number | null>(null);
