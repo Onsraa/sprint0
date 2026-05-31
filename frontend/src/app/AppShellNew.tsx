@@ -58,6 +58,8 @@ export function AppShellNew() {
 
   if (authLoading) return <SessionLoading />;
   if (!member) return <Landing />;
+  // The wizard is its own full-screen route (no sidebar), matching the v4/v5 design.
+  if (wizardOpen) return <Wizard kind={wizardKind} />;
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "var(--bg-app)" }}>
@@ -69,7 +71,6 @@ export function AppShellNew() {
           </div>
         </div>
       </div>
-      {wizardOpen && <Wizard kind={wizardKind} />}
       <CommandPalette />
     </div>
   );

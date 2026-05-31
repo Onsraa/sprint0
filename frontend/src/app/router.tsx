@@ -18,7 +18,7 @@ import { Attributions } from "../views/Attributions";
 import { CodeGraph } from "../views/CodeGraph";
 import { Settings } from "../views/Settings";
 import { QAGate } from "../views/QAGate";
-import { DevPassport } from "../views/dev/DevViews";
+import { Passport } from "../views/Passport";
 
 const rootRoute = createRootRoute({
   component: () => <AppShellNew />,
@@ -38,7 +38,7 @@ const PANELS: { path: string; component: FC }[] = [
   { path: "/portfolio", component: Portfolio },
   { path: "/settings", component: Settings },
   { path: "/qa", component: QAGate },
-  { path: "/passport", component: DevPassport },
+  { path: "/passport", component: Passport },
 ];
 
 const indexRoute = createRoute({

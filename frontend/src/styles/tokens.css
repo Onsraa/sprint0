@@ -166,3 +166,19 @@ svg { display: block; }
 @keyframes s0-pop-in { from { opacity: 0; transform: translateY(6px) scale(0.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes s0-spin { to { transform: rotate(360deg); } }
 @keyframes s0-toast-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+/* §wizard — progressive generation + loaders (v5) */
+@keyframes s0-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes s0-check-pop { 0% { opacity: 0; transform: scale(0.2); } 60% { opacity: 1; transform: scale(1.18); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes s0-ring-fill { from { stroke-dashoffset: var(--circ); } to { stroke-dashoffset: 0; } }
+@keyframes s0-dot-pulse { 0%, 80%, 100% { opacity: 0.18; transform: scale(0.7); } 40% { opacity: 1; transform: scale(1); } }
+@keyframes s0-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes s0-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes s0-sheet-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+/* the staggered reveal helper — set --d for per-row delay */
+.s0-stagger { opacity: 0; animation: s0-rise 0.42s var(--ease-out) forwards; animation-delay: var(--d, 0ms); }
+
+/* subtle press feedback on wizard chips/buttons */
+.s0-press { transition: transform var(--t-quick) var(--ease-quad), background var(--t-reg), border-color var(--t-reg), box-shadow var(--t-reg), color var(--t-reg); }
+.s0-press:active { transform: scale(0.97); }

@@ -85,7 +85,7 @@ export function useApp() {
   const markRead = useMarkAllRead();
   const markAllRead = () => markRead.mutate();
   const setToast = (n: any): void => { toast(n?.title ?? "", { description: n?.body }); };
-  const pushNotif = () => {};
+  const pushNotif = (_n?: any) => {};
   const toasts: never[] = [];
 
   // relay + Trust Dial (active plan from the UI store, else first active relay)
@@ -113,6 +113,8 @@ export function useApp() {
   const { projects: projectsRaw } = useProjects();
   const projects = projectsRaw.map(toMockProject);
   const { data: queue = [] } = useQuery({ queryKey: qk.myQueue(), queryFn: () => api.myQueue().then((r) => r.items) });
+  const drafts = useUI((s) => s.drafts);
+  const addDraft = useUI((s) => s.addDraft);
 
   // decisions (Portfolio) — real shape already matches the mock
   const { data: decisions = [] } = useQuery({ queryKey: qk.decisions(), queryFn: () => api.myDecisions().then((r) => r.decisions) });
@@ -154,7 +156,7 @@ export function useApp() {
     me, role, chrome, view, setView, switchPersona, members,
     notifs, unread, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
     gates, dial, applyDial, actGate, cards, staffing, planId, integration, relay,
-    tasks, projects, relaySummaries, queue,
+    tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,
     profiles, confirmProfile,
     subs, isWatching, watch, unwatch,

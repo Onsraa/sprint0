@@ -53,6 +53,10 @@ interface UIState {
   dial: number;
   setDial: (d: number) => void;
 
+  /** Wizard drafts (saved before dispatch; shown on Projects). */
+  drafts: any[];
+  addDraft: (d: any) => any;
+
   /** Clear all session-scoped UI on logout. */
   resetSession: () => void;
 }
@@ -108,6 +112,12 @@ export const useUI = create<UIState>((set) => ({
   setActiveDev: (activeDev) => set({ activeDev }),
   dial: 55,
   setDial: (dial) => set({ dial }),
+  drafts: [],
+  addDraft: (d) => {
+    const draft = { ...d, id: d.id || "dft_" + Date.now(), kind: "draft", status: "draft", created: "just now" };
+    set((s) => ({ drafts: [draft, ...s.drafts] }));
+    return draft;
+  },
 
   resetSession: () => set(SESSION_DEFAULTS),
 }));

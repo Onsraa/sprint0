@@ -1,231 +1,241 @@
+/* sprint0 — §27 the QA acceptance experience. QA owns the *accept* gate (not the
+   manager's "mark ok"). Run the acceptance checklist (pass / fail / needs-human per
+   item), reject a failing item → reroute to the responsible runner, and the consumer
+   side of the failing-API flow (report a failing dependency → it blocks the qa gate
+   → pings the producer). Reads QA_RUN; mutates locally.
+
+   Ported pixel-1:1 from the v5 mockup (app/QAGate.jsx). Data source: useApp() for
+   members + pushNotif/setToast; the acceptance run is a local seed (TODO below). */
 import { useState } from "react";
-import { useUI } from "../lib/store";
-import type { QAItemResult, QAReport, QAVerdict } from "../lib/api";
-import { api } from "../lib/api";
+import { useApp } from "../app/useApp";
+import { Icon } from "../lib/icon";
+import { Avatar, Badge, Button, DiscDot } from "../components/ui";
+import { ViewChrome } from "../components/ViewChrome";
 
-/* QA acceptance gate: run the agent-prefilled checklist, then reject failing
-   items back to the responsible runner (reopens the GitLab issue + flags re-QA). */
-
-const VERDICT: Record<QAVerdict, { label: string; fg: string; bg: string; icon: string }> = {
-  pass: { label: "Pass", fg: "var(--bg-elevated)", bg: "var(--green)", icon: "✓" },
-  fail: { label: "Fail", fg: "var(--bg-elevated)", bg: "var(--text-primary)", icon: "✕" },
-  needs_human: { label: "Needs human", fg: "var(--bg-elevated)", bg: "var(--amber)", icon: "?" },
+// TODO(reconcile): real qaRun via api.qaRun(projectId) — the orchestrator swaps this
+// scripted seed for the live acceptance run (POST /api/projects/{id}/qa/run).
+const QA_RUN: any = {
+  project: "Harbor Logistics", plan: "plan_HARB_42",
+  items: [
+    { issue_id: "HARB-119", title: "Filter rail tokens + spacing", verdict: "pass", note: "Matches the design-system skeleton tokens.", runner: "mira", disc: "uiux" },
+    { issue_id: "HARB-090", title: "Token-scope service — audience-pinned", verdict: "pass", note: "No wildcard tokens; audience claim verified.", runner: "rajiv", disc: "backend" },
+    { issue_id: "HARB-201", title: "Preview environments per MR", verdict: "pass", note: "Envs spin up green on every MR.", runner: "dario", disc: "devops" },
+    { issue_id: "HARB-104", title: "Geo-cluster perf — 60fps @ 12k pins", verdict: "fail", note: "Drops to 38fps at 9k pins — assertion on the pin budget fails.", runner: "noah", disc: "frontend" },
+    { issue_id: "HARB-118", title: "Share-link expired state", verdict: "needs_human", note: "Expired link 404s instead of a recoverable state — judgement call on copy.", runner: "talia", disc: "frontend" },
+  ],
+  reopened: [],
+};
+const VERDICT_META: Record<string, { label: string; tone: string; icon: string }> = {
+  pass:        { label: "Pass",        tone: "green",  icon: "check" },
+  fail:        { label: "Fail",        tone: "red",    icon: "close" },
+  needs_human: { label: "Needs human", tone: "amber",  icon: "eye" },
 };
 
 export function QAGate() {
-  const liveProjectId = useUI((s) => s.liveProjectId);
-  const [report, setReport] = useState<QAReport | null>(null);
-  const [running, setRunning] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [awaiting, setAwaiting] = useState<number[]>([]);
+  const { pushNotif, setToast, members } = useApp();
+  const byUser = (u: string) => members.find((m: any) => m.username === u);
+  const [items, setItems] = useState<any[]>(() => QA_RUN.items.map((i: any) => ({ ...i })));
+  const [, setRan] = useState(true);
+  const [rejecting, setRejecting] = useState<string | null>(null); // issue_id being rejected
+  const [flagging, setFlagging] = useState(false);
+  const [blocks, setBlocks] = useState<any[]>([]); // failing-dep flags holding the gate
 
-  const run = async () => {
-    if (liveProjectId == null) return;
-    setRunning(true);
-    setErr(null);
-    try {
-      const r = await api.qaRun(liveProjectId);
-      setReport(r);
-      setAwaiting(r.reopened ?? []);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRunning(false);
-    }
+  const pass = items.filter(i => i.verdict === "pass").length;
+  const total = items.length;
+  const gateBlocked = blocks.length > 0 || items.some(i => i.verdict === "fail" && !i.rerouted);
+
+  const reroute = (issue_id: string, to_runner: string, comment: string) => {
+    setItems(is => is.map(i => i.issue_id === issue_id ? { ...i, rerouted: true, to: to_runner, comment } : i));
+    setRejecting(null);
+    pushNotif({ id: "qa_" + Date.now(), kind: "blocked", title: `${issue_id} reopened → @${to_runner}`,
+      body: `QA reject · ${comment || "see acceptance note"}`, who: "elena", time: "now" });
+  };
+  const addFlag = (c: any) => {
+    setBlocks(b => [...b, { ...c, reporter: "HARB-300" }]);
+    setFlagging(false);
+    pushNotif({ id: "intg_" + Date.now(), kind: "blocked", title: `Failing dependency → @${c.assignee}`,
+      body: `${c.api_contract} reported failing · qa gate blocked`, who: "elena", time: "now" });
   };
 
-  if (liveProjectId == null) {
-    return (
-      <div style={{ maxWidth: 760, margin: "0 auto" }}>
-        <div className="card-soft" style={{ padding: 40, textAlign: "center", border: "2px dashed var(--border-strong)" }}>
-          <div className="display" style={{ fontSize: 22, marginBottom: 8 }}>
-            No dispatched project to QA.
-          </div>
-          <div style={{ fontSize: 14, color: "var(--text-secondary)" }}>
-            Once a plan is dispatched to GitLab, the acceptance checklist runs against it here.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const pass = report?.items.filter((i) => i.verdict === "pass").length ?? 0;
-  const total = report?.items.length ?? 0;
-
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-        <div>
-          <div className="kicker">QA gate · project {liveProjectId}</div>
-          <div className="display" style={{ fontSize: 28, marginTop: 4 }}>
-            {report ? `${pass}/${total} acceptance checks pass.` : "Run the acceptance checklist."}
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <ViewChrome breadcrumb={["Harbor Logistics", "QA gate"]}>
+        <Badge tone={gateBlocked ? "red" : "green"}>{gateBlocked ? "gate blocked" : "gate open"}</Badge>
+        <Badge tone="outline" mono>{QA_RUN.plan}</Badge>
+      </ViewChrome>
+
+      <div style={{ flex: 1, overflow: "auto" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 28px 56px" }}>
+          {/* header */}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 16, marginBottom: 20 }}>
+            <div style={{ flex: 1 }}>
+              <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 6px" }}>Acceptance & integration</h1>
+              <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.5 }}>
+                The <b style={{ color: "var(--text-primary)" }}>accept</b> gate — stage <span className="mono" style={{ color: "var(--text-secondary)" }}>build ∥ → integrate → accept</span>. Reject a failing check to reroute it to the runner.
+              </p>
+            </div>
+            <Button variant="secondary" size="md" icon="ratify" onClick={() => { setRan(true); setToast({ kind: "ratify", title: "Acceptance run complete", body: `${pass}/${total} checks pass`, who: "ai", time: "now" }); }}>Re-run acceptance</Button>
           </div>
+
+          {/* score */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: "var(--r-lg)",
+            border: "0.5px solid var(--border)", background: "var(--bg-secondary)", marginBottom: 20 }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 26, fontWeight: 600, letterSpacing: "-1px" }}>{pass}<span style={{ color: "var(--text-quaternary)" }}>/{total}</span></span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>acceptance checks pass</div>
+              <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
+                {items.map(i => (
+                  <span key={i.issue_id} style={{ flex: 1, height: 5, borderRadius: 3,
+                    background: i.rerouted ? "var(--text-quaternary)" : `var(--${VERDICT_META[i.verdict].tone === "green" ? "green" : VERDICT_META[i.verdict].tone === "red" ? "red" : "amber"})` }} />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* checklist */}
+          <div className="kicker" style={{ marginBottom: 10 }}>Acceptance checklist</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
+            {items.map(i => (
+              <AcceptanceItem key={i.issue_id} item={i} byUser={byUser} members={members}
+                rejecting={rejecting === i.issue_id}
+                onToggleReject={() => setRejecting(r => r === i.issue_id ? null : i.issue_id)}
+                onReroute={reroute} />
+            ))}
+          </div>
+
+          {/* integration / failing-API — consumer + QA side */}
+          <Integration blocks={blocks} flagging={flagging} setFlagging={setFlagging} addFlag={addFlag}
+            onClear={(i: number) => setBlocks(b => b.filter((_, j) => j !== i))} />
         </div>
-        <button onClick={run} disabled={running} className="btn btn-primary btn-sm" style={{ opacity: running ? 0.6 : 1 }}>
-          {running ? "Running…" : report ? "Re-run QA" : "Run QA →"}
-        </button>
       </div>
+    </div>
+  );
+}
 
-      {err && (
-        <div className="card-soft" style={{ padding: 14, marginBottom: 14, borderColor: "var(--ink-fill)", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-          {err}
+function AcceptanceItem({ item, byUser, members, rejecting, onToggleReject, onReroute }: any) {
+  const vm = VERDICT_META[item.verdict];
+  const runner = byUser(item.runner);
+  const canReject = item.verdict === "fail" || item.verdict === "needs_human";
+  return (
+    <div style={{ border: `0.5px solid ${rejecting ? "var(--text-primary)" : "var(--border)"}`, borderRadius: "var(--r-lg)",
+      overflow: "hidden", boxShadow: "var(--shadow-1)", background: "var(--bg-elevated)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px" }}>
+        <span style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center",
+          background: `color-mix(in srgb, var(--${vm.tone}) 14%, transparent)`, color: `var(--${vm.tone})` }}>
+          <Icon name={vm.icon as never} size={13} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{item.issue_id}</span>
+            <span style={{ fontSize: 13, fontWeight: 500, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.title}</span>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 3, lineHeight: 1.45 }}>{item.note}</div>
         </div>
-      )}
+        <Badge tone={vm.tone as never}>{vm.label}</Badge>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, width: 78 }} title={`runner: ${runner?.name}`}>
+          <DiscDot d={item.disc} /><Avatar name={runner?.name} size={18} />
+        </span>
+        {canReject && !item.rerouted && (
+          <Button variant="secondary" size="sm" onClick={onToggleReject}>{rejecting ? "Cancel" : "Reject"}</Button>
+        )}
+        {item.rerouted && <Badge tone="outline" mono>awaiting re-QA · @{item.to}</Badge>}
+      </div>
+      {rejecting && <RejectForm item={item} members={members} onReroute={onReroute} />}
+    </div>
+  );
+}
 
-      {awaiting.length > 0 && (
-        <div className="card-soft" style={{ padding: 14, marginBottom: 14, background: "var(--bg-hover)", borderColor: "var(--bg-secondary)" }}>
-          <span className="kicker" style={{ color: "var(--text-primary)" }}>Awaiting re-QA</span>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-            {awaiting.map((iid) => (
-              <span key={iid} className="chip chip-soft" style={{ fontSize: 11 }}>
-                #{iid}
-              </span>
+function RejectForm({ item, members, onReroute }: any) {
+  const [comment, setComment] = useState("");
+  const [to, setTo] = useState(item.runner);
+  const candidates = members.filter((m: any) => m.role === "developer" && (m.discipline === item.disc || m.username === item.runner));
+  return (
+    <div style={{ borderTop: "0.5px solid var(--border-subtle)", background: "var(--bg-secondary)", padding: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <Icon name="bolt" size={13} style={{ color: "var(--text-primary)" }} />
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>Reject → reopen the GitLab issue and route it back to a runner</span>
+      </div>
+      <textarea value={comment} onChange={e => setComment(e.target.value)} rows={2}
+        placeholder="What failed, and what the runner needs to change…"
+        style={{ width: "100%", padding: "9px 11px", fontSize: 13, lineHeight: 1.5, resize: "none", marginBottom: 10,
+          background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)",
+          outline: "none", color: "var(--text-primary)", boxShadow: "var(--shadow-inset)", fontFamily: "var(--font-ui)" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span className="kicker" style={{ fontSize: 10 }}>Route to</span>
+        <div style={{ display: "flex", gap: 6 }}>
+          {candidates.map((m: any) => (
+            <button key={m.username} onClick={() => setTo(m.username)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 28, padding: "0 9px", borderRadius: "var(--r-pill)",
+                border: `0.5px solid ${to === m.username ? "var(--text-primary)" : "var(--border)"}`, background: to === m.username ? "var(--bg-active)" : "var(--bg-elevated)",
+                fontSize: 12, fontWeight: 500 }}>
+              <Avatar name={m.name} size={16} />{m.name.split(" ")[0]}
+            </button>
+          ))}
+        </div>
+        <div style={{ flex: 1 }} />
+        <Button variant="primary" size="sm" icon="arrowRight" onClick={() => onReroute(item.issue_id, to, comment)}>Reject & reroute</Button>
+      </div>
+    </div>
+  );
+}
+
+/* consumer + QA side of the failing-API flow (§28) */
+const QA_PRODUCERS = [
+  { id: "HARB-090", title: "Token-scope service", assignee: "rajiv", api_contract: "POST /api/scopes" },
+  { id: "HARB-091", title: "Rate-limit + retry budget", assignee: "rajiv", api_contract: "middleware/ratelimit" },
+];
+function Integration({ blocks, flagging, setFlagging, addFlag }: any) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <Icon name="bolt" size={14} style={{ color: "var(--text-primary)" }} />
+        <span className="kicker" style={{ fontSize: 10 }}>Integration · failing dependency</span>
+        <div style={{ flex: 1 }} />
+        <Button variant="secondary" size="sm" icon="bolt" onClick={() => setFlagging((f: boolean) => !f)}>Report failing dependency</Button>
+      </div>
+      <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", margin: "0 0 12px", lineHeight: 1.5 }}>
+        A failing producer contract holds the <b style={{ color: "var(--text-primary)" }}>accept</b> gate <b style={{ color: "var(--text-primary)" }}>blocked</b> and pings the producer's Inbox — acceptance can't pass until they fix it.
+      </p>
+
+      {flagging && (
+        <div style={{ border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: 13, marginBottom: 12, background: "var(--bg-secondary)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+            <Icon name="flag" size={13} style={{ color: "var(--text-tertiary)" }} />
+            <span style={{ fontSize: 12.5, fontWeight: 500 }}>More than one upstream producer — pick which contract is failing</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {QA_PRODUCERS.map(c => (
+              <button key={c.id} onClick={() => addFlag(c)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", textAlign: "left",
+                background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-md)" }}>
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", width: 60 }}>{c.id}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 500 }}>{c.title}</div>
+                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{c.api_contract} · @{c.assignee}</div>
+                </div>
+                <Icon name="chevronRight" size={14} style={{ color: "var(--text-quaternary)" }} />
+              </button>
             ))}
           </div>
         </div>
       )}
 
-      {!report && !running && (
-        <div className="card-soft" style={{ padding: 28, textAlign: "center", color: "var(--text-secondary)" }}>
-          The QA agent prefills a pass/fail/needs-human verdict per issue. Reject any failing item to reopen it.
-        </div>
-      )}
-
-      {report && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {report.items.map((item) => (
-            <QAItemRow key={item.issue_id} item={item} projectId={liveProjectId} onRejected={setAwaiting} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function QAItemRow({
-  item,
-  projectId,
-  onRejected,
-}: {
-  item: QAItemResult;
-  projectId: number;
-  onRejected: (iids: number[]) => void;
-}) {
-  const v = VERDICT[item.verdict];
-  const [open, setOpen] = useState(false);
-  const [iid, setIid] = useState("");
-  const [comment, setComment] = useState("");
-  const [runner, setRunner] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-
-  const reject = async () => {
-    const n = parseInt(iid, 10);
-    if (!n || !comment.trim()) {
-      setErr("GitLab issue iid and a comment are required");
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await api.rejectIssue(projectId, n, {
-        comment,
-        to_runner: runner.trim() || undefined,
-      });
-      onRejected(res.awaiting_reqa);
-      setDone(true);
-      setOpen(false);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const rejectable = item.verdict !== "pass";
-
-  return (
-    <div className="card-soft" style={{ padding: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: "50%",
-            background: v.bg,
-            color: v.fg,
-            display: "grid",
-            placeItems: "center",
-            fontWeight: 800,
-            fontSize: 13,
-            flexShrink: 0,
-          }}
-        >
-          {v.icon}
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-              {item.issue_id}
-            </span>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{item.title}</span>
+      <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }}>
+        {blocks.length === 0 ? (
+          <div style={{ padding: "13px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)" }} />
+            <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>All producer contracts green.</span>
           </div>
-          {item.note && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{item.note}</div>}
-        </div>
-        <span className="chip" style={{ background: v.bg, color: v.fg, borderColor: v.bg, fontSize: 11 }}>
-          {v.label}
-        </span>
-        {rejectable && !done && (
-          <button onClick={() => setOpen((o) => !o)} className="btn btn-ghost btn-sm">
-            {open ? "Cancel" : "Reject →"}
-          </button>
-        )}
-        {done && (
-          <span className="chip" style={{ fontSize: 10, padding: "3px 8px", color: "var(--text-tertiary)" }}>
-            rerouted ✓
-          </span>
-        )}
+        ) : blocks.map((s: any, i: number) => (
+          <div key={s.id + i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderTop: i ? "0.5px solid var(--border-subtle)" : "none" }}>
+            <Badge tone="red">failing</Badge>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{s.title} <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 400 }}>{s.id}</span></div>
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{s.api_contract} · pinged @{s.assignee} · accept gate <b style={{ color: "var(--text-primary)" }}>blocked</b></div>
+            </div>
+            <Badge tone="outline" mono>acceptance held</Badge>
+          </div>
+        ))}
       </div>
-
-      {open && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input
-              value={iid}
-              onChange={(e) => setIid(e.target.value)}
-              placeholder="GitLab issue iid"
-              style={{ ...inputStyle, width: 150 }}
-            />
-            <input
-              value={runner}
-              onChange={(e) => setRunner(e.target.value)}
-              placeholder="reroute to runner (optional)"
-              style={{ ...inputStyle, flex: 1, minWidth: 180 }}
-            />
-          </div>
-          <textarea
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            rows={2}
-            placeholder="What failed? (posted as a GitLab note)"
-            style={{ ...inputStyle, resize: "vertical" }}
-          />
-          {err && <div style={{ fontSize: 12, color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}>{err}</div>}
-          <button onClick={reject} disabled={busy} className="btn btn-primary btn-sm" style={{ alignSelf: "flex-start", opacity: busy ? 0.6 : 1 }}>
-            {busy ? "Rejecting…" : "Reopen + reroute"}
-          </button>
-        </div>
-      )}
     </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  padding: "9px 12px",
-  border: "1.5px solid var(--border-strong)",
-  borderRadius: 8,
-  fontSize: 14,
-  background: "var(--bg-elevated)",
-  fontFamily: "inherit",
-};
