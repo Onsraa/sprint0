@@ -1,45 +1,168 @@
-/* sprint0 — design tokens. "sprint0 × Linear": monochrome warm-grey, warm-ink action color,
- * NO orange (the brand spark is retired), Geist + Geist Mono, hairline borders, subtle shadows.
- * (The legacy alias-shim is gone as of P8 — every file references these tokens directly.) */
+/* ============================================================================
+   sprint0 × Linear — theme tokens (VERBATIM from the design system's app/theme.css).
+   Linear's density + hairline discipline, monochrome ink-primary identity, warm-grey
+   neutrals, Geist (UI) + Geist Mono (signature). Geist + Geist Mono load from Google
+   Fonts in index.html, so no local @font-face is needed here.
+   ========================================================================== */
 
 :root {
-  /* Neutrals — warm-grey ramp */
-  --bg-base: #FCFCFB; --bg-app: #F4F3F0; --bg-secondary: #EEEDE9; --bg-tertiary: #E7E5E0;
-  --bg-elevated: #FFFFFF; --bg-hover: #EFEEEA; --bg-active: #E8E6E1;
+  /* ---- Neutrals: warm-grey ramp (hue ~55, very low chroma) ---- */
+  --bg-base:      #FCFCFB;  /* app outermost background */
+  --bg-app:       #F4F3F0;  /* nav rail + canvas behind the floating pane */
+  --bg-secondary: #EEEDE9;  /* recessed wells, tracks */
+  --bg-tertiary:  #E7E5E0;  /* deeper recess */
+  --bg-elevated:  #FFFFFF;  /* the floating content pane, cards, panels, inputs */
+  --bg-hover:     #EFEEEA;  /* nav/row hover + active selection fill */
+  --bg-active:    #E8E6E1;  /* pressed */
+  --bg-scrim:     rgba(26,23,20,0.32); /* modal backdrop (used sparingly) */
 
-  /* Borders — hairline, warm */
-  --border-subtle: #F1EFEB; --border: #E3E1DB; --border-strong: #D5D2CA;
+  /* ---- Borders: hairline, warm ---- */
+  --border-subtle: #F1EFEB;
+  --border:        #E3E1DB;
+  --border-strong: #D5D2CA;
 
-  /* Text — warm ink ramp */
-  --text-primary: #1A1714; --text-secondary: #3A352F; --text-tertiary: #6E675E; --text-quaternary: #A8A096;
+  /* ---- Text: warm ink ramp (never pure black) ---- */
+  --text-primary:    #1A1714;
+  --text-secondary:  #3A352F;
+  --text-tertiary:   #6E675E;
+  --text-quaternary: #A8A096;
 
-  /* Ink action (the primary/action color — replaces orange) */
-  --ink-fill: #1F1B17; --ink-fill-hover: #322C26; --ink-fill-press: #15110E;
+  /* ---- DEPRECATED orange brand spark — aliased to ink/neutral so nothing renders orange. ---- */
+  --accent:       #1F1B17;
+  --accent-deep:  #15110E;
+  --accent-soft:  #EEEDE9;
+  --accent-ring:  rgba(31,27,23,0.25);
 
-  /* Functional status — small dots/badges only */
-  --green: #2F8A4E; --blue: #2A6FDB; --amber: #C77800; --red: #D43A3A;
+  /* ---- Ink action (primary buttons are monochrome, Linear-style) ---- */
+  --ink-fill:       #1F1B17;
+  --ink-fill-hover: #322C26;
+  --ink-fill-press: #15110E;
 
-  /* Discipline accents — the only non-status color, as small 6–8px dots */
-  --disc-uiux: #7C5CD6; --disc-backend: #2E9466; --disc-frontend: #3B6FD4; --disc-qa: #C77800; --disc-devops: #57514A;
+  /* ---- Functional status (kept tiny: dots, status circles, never big fills) ---- */
+  --green:  #2F8A4E;   /* ratified / done / high trust */
+  --blue:   #2A6FDB;   /* auto-passed / info */
+  --amber:  #C77800;   /* changes-requested / stretch / load warning */
+  --red:    #D43A3A;   /* blocked / failing */
 
-  /* Type — Geist UI + Geist Mono signature */
-  --font-ui: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* ---- Discipline accents (6-8px dots in relay + task rows) ---- */
+  --disc-uiux:     #7C5CD6;
+  --disc-backend:  #2E9466;
+  --disc-frontend: #3B6FD4;
+  --disc-qa:       #C77800;
+  --disc-devops:   #57514A;
+
+  /* ---- Type ---- */
+  --font-ui:   "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", "SFMono-Regular", Menlo, Consolas, monospace;
 
-  /* Radius */
-  --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 10px; --r-xl: 12px; --r-pill: 9999px;
+  --fs-micro:  11px;
+  --fs-mini:   12px;
+  --fs-small:  13px;
+  --fs-base:   14px;
+  --fs-reg:    15px;
+  --fs-large:  18px;
+  --fs-t3:     20px;
+  --fs-t2:     24px;
+  --fs-t1:     34px;
 
-  /* Layout */
-  --nav-w: 244px; --panel-w: 300px; --topbar-h: 44px;
+  --fw-normal:   400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
 
-  /* Elevation — three black-at-low-opacity levels, never colored */
+  /* ---- Radius ---- */
+  --r-xs:  4px;
+  --r-sm:  6px;
+  --r-md:  8px;
+  --r-lg:  10px;
+  --r-xl:  12px;
+  --r-pill: 9999px;
+
+  /* ---- Spacing (4px base) ---- */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px;
+
+  /* ---- Layout ---- */
+  --nav-w: 244px;
+  --panel-w: 300px;     /* contextual right sub-panel */
+  --topbar-h: 44px;
+  --row-h: 36px;        /* list/issue row */
+  --nav-row-h: 28px;
+
+  /* ---- Elevation: subtle, black at low opacity (never colored) ---- */
   --shadow-1: 0px 3px 6px -2px rgba(20,17,14,0.04), 0px 1px 1px rgba(20,17,14,0.05);
   --shadow-2: 0px 6px 18px rgba(20,17,14,0.04), 0px 3px 9px rgba(20,17,14,0.05), 0px 1px 1px rgba(20,17,14,0.05);
   --shadow-3: 0px 9px 48px rgba(20,17,14,0.10), 0px 6px 24px rgba(20,17,14,0.10), 0px 1px 1px rgba(20,17,14,0.05);
+  --shadow-drag: 0px 16px 32px -8px rgba(20,17,14,0.22), 0px 4px 10px rgba(20,17,14,0.12);
   --shadow-inset: inset 0px 1px 2px rgba(20,17,14,0.06);
 
-  /* Motion */
-  --ease-out: cubic-bezier(0.19,1,0.22,1); --ease-quad: cubic-bezier(0.25,0.46,0.45,0.94);
-  --t-quick: 0.10s; --t-reg: 0.22s; --t-slow: 0.35s;
+  /* ---- Motion (Linear easings + quick feedback) ---- */
+  --ease-out:  cubic-bezier(0.19, 1, 0.22, 1);
+  --ease-quad: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --t-quick:   0.10s;
+  --t-reg:     0.22s;
+  --t-slow:    0.35s;
 }
 
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-normal);
+  color: var(--text-primary);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.05px;
+}
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; padding: 0; }
+input, textarea, select { font-family: inherit; }
+a { color: inherit; text-decoration: none; }
+svg { display: block; }
+
+/* Signature mono helpers */
+.mono { font-family: var(--font-mono); }
+.kicker {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* Hairline helper — true 0.5px feel via border color + width */
+.hair { border: 0.5px solid var(--border); }
+
+/* The floating content pane — white, rounded, hairline, over the warm-grey canvas. */
+#root { height: 100vh; overflow: hidden; }
+.pane {
+  height: 100%;
+  background: var(--bg-elevated);
+  border: 0.5px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Focus ring — subtle ink, with a whisper of warmth */
+:focus-visible { outline: none; box-shadow: 0 0 0 1.5px var(--accent-ring); border-radius: var(--r-sm); }
+
+/* Scrollbars — hidden, Linear-style */
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+*:hover::-webkit-scrollbar-thumb { background: var(--border-strong); background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Shared micro-interaction keyframes */
+@keyframes s0-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes s0-panel-in { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes s0-pop-in { from { opacity: 0; transform: translateY(6px) scale(0.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes s0-spin { to { transform: rotate(360deg); } }
+@keyframes s0-toast-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }

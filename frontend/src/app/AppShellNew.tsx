@@ -1,41 +1,40 @@
-/* sprint0 — app shell (TanStack Router). Persistent chrome: role-gated nav rail (Link-based) +
- * topbar + the routed <Outlet/>. Login/session gating + the wizard modal live here. Styling is still
- * the current tokens — P3 re-skins this to the Linear design. */
+/* sprint0 × Linear — app shell. A 244px nav rail on the warm-grey canvas, then the content as a
+ * floating white pane (rounded, hairline). Auth/session gating + the wizard modal + ⌘K live here.
+ * Ported from the design system's Shell.jsx; wired to our real router/auth/roster. */
+import { useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import { useMe, useLogout } from "../features/auth/useAuth";
 import { useUI } from "../lib/store";
-import { useView, useRoleGate } from "../features/nav/nav";
+import { useRoleGate } from "../features/nav/nav";
 import type { Role } from "./types";
-import type { Member } from "../lib/api";
 import { Icon, type IconName } from "../lib/icon";
 import { Login } from "../views/Login";
 import { Wizard } from "../wizard/Wizard";
-import { Mascot, Sprint0Logo } from "../components/Mascot";
+import { Sprint0Logo } from "../components/Mascot";
+import { Avatar, Kbd } from "../components/ui";
 import { CommandPalette } from "../features/palette/CommandPalette";
-import { BellPanel } from "../features/notify/BellPanel";
 import { useNotificationsWS } from "../features/notify/useNotifications";
 
 export function AppShellNew() {
   const { member, authLoading, role } = useMe();
   const wizardOpen = useUI((s) => s.wizardOpen);
   const wizardKind = useUI((s) => s.wizardKind);
-  useNotificationsWS(member?.username); // live notifications WS → invalidates the inbox query
-  useRoleGate(member ? role : null); // redirect a persona off a route it can't see (no-op logged out)
+  useNotificationsWS(member?.username);
+  useRoleGate(member ? role : null);
 
   if (authLoading) return <SessionLoading />;
   if (!member) return <Login />;
 
   return (
-    <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg-app)" }}>
+    <div style={{ display: "flex", height: "100vh", background: "var(--bg-app)" }}>
       <Sidebar />
-      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <TopBar />
-        <div style={{ flex: 1, overflow: "auto" }}>
-          <div style={{ padding: "24px 32px 40px" }}>
+      <div style={{ flex: 1, minWidth: 0, padding: "8px 8px 8px 0" }}>
+        <div className="pane">
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
             <Outlet />
           </div>
         </div>
-      </main>
+      </div>
       {wizardOpen && <Wizard kind={wizardKind} />}
       <CommandPalette />
     </div>
@@ -45,32 +44,30 @@ export function AppShellNew() {
 function SessionLoading() {
   return (
     <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "var(--bg-app)" }}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
-        <Mascot size={64} expression="working" className="wiggle" />
-        <div className="mono" style={{ fontSize: 13, color: "var(--text-tertiary)" }}>restoring your session…</div>
-      </div>
+      <div className="mono" style={{ fontSize: 12, color: "var(--text-tertiary)" }}>restoring your session…</div>
     </div>
   );
 }
 
-interface NavItem { to: string; label: string; icon: IconName }
-interface NavSection { title?: string; items: NavItem[] }
+interface NavItemT { to: string; label: string; icon: IconName }
+interface NavSection { title?: string; items: NavItemT[] }
 
 function navFor(role: Role): NavSection[] {
+  const common: NavSection = { items: [
+    { to: "/inbox", label: "Inbox", icon: "inbox" },
+    { to: "/work", label: "My Work", icon: "board" },
+    { to: "/dashboard", label: "Projects", icon: "projects" },
+  ]};
   if (role === "manager") {
     return [
-      { items: [
-        { to: "/inbox", label: "Inbox", icon: "inbox" },
-        { to: "/work", label: "My Work", icon: "board" },
-        { to: "/dashboard", label: "Projects", icon: "projects" },
-      ]},
+      common,
       { title: "Team", items: [
         { to: "/relays", label: "Relay", icon: "relay" },
         { to: "/queue", label: "Ratify", icon: "ratify" },
         { to: "/team", label: "Team", icon: "team" },
         { to: "/profiles", label: "Profiles", icon: "profiles" },
+        { to: "/codegraph", label: "Code Graph", icon: "codegraph" },
         { to: "/attributions", label: "Merges", icon: "merges" },
-        { to: "/codegraph", label: "Code graph", icon: "codegraph" },
       ]},
       { title: "You", items: [{ to: "/portfolio", label: "Portfolio", icon: "portfolio" }] },
     ];
@@ -84,7 +81,7 @@ function navFor(role: Role): NavSection[] {
       ]},
       { title: "You", items: [
         { to: "/portfolio", label: "Portfolio", icon: "portfolio" },
-        { to: "/passport", label: "My Passport", icon: "passport" },
+        { to: "/passport", label: "Passport", icon: "passport" },
       ]},
     ];
   }
@@ -92,125 +89,123 @@ function navFor(role: Role): NavSection[] {
     { items: [
       { to: "/inbox", label: "Inbox", icon: "inbox" },
       { to: "/work", label: "My Work", icon: "board" },
-      { to: "/queue", label: "Ratify", icon: "relay" },
+      { to: "/queue", label: "Ratify", icon: "ratify" },
     ]},
     { title: "You", items: [
       { to: "/portfolio", label: "Portfolio", icon: "portfolio" },
-      { to: "/passport", label: "My Passport", icon: "passport" },
+      { to: "/passport", label: "Passport", icon: "passport" },
     ]},
   ];
 }
 
 const ROLE_LABEL: Record<Role, string> = {
-  manager: "Manager", uiux: "UI/UX lead", backend: "Backend dev", frontend: "Frontend dev", qa: "QA tester",
+  manager: "manager", uiux: "uiux", backend: "backend", frontend: "frontend", qa: "qa",
 };
-const TRUST_COLOR: Record<string, string> = { high: "var(--green)", medium: "var(--blue)", low: "var(--text-tertiary)" };
-const navLinkStyle: React.CSSProperties = {
-  display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10,
-  color: "var(--text-secondary)", fontWeight: 600, fontSize: 14, textAlign: "left", width: "100%",
-};
-const navLinkActive: React.CSSProperties = { background: "var(--bg-secondary)", color: "var(--text-primary)", fontWeight: 700 };
-
-function initialsOf(name: string): string {
-  return name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
-}
 
 function Sidebar() {
   const { member, role } = useMe();
+  const isManager = role === "manager";
   const setWizardOpen = useUI((s) => s.setWizardOpen);
   const setWizardKind = useUI((s) => s.setWizardKind);
   const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
-  const resetSession = useUI((s) => s.resetSession);
-  const doLogout = useLogout();
-  const navigate = useNavigate();
-  const logout = () => { doLogout(); resetSession(); navigate({ to: "/" as "/" }); };
+  const togglePalette = useUI((s) => s.togglePalette);
   const sections = navFor(role);
-  const isManager = role === "manager";
 
   return (
-    <aside style={{ width: 240, background: "var(--bg-elevated)", borderRight: "1.5px solid var(--border)", padding: 20, display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 4 }}>
-        <Sprint0Logo size={18} />
-      </div>
-
-      {isManager ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <button onClick={() => { setFeatureProjectId(null); setWizardKind("brief"); setWizardOpen(true); }}
-            className="btn btn-primary" style={{ justifyContent: "center", padding: "11px 14px", fontSize: 14 }}>+ New project</button>
-          <button onClick={() => { setWizardKind("hire"); setWizardOpen(true); }}
-            className="btn btn-ghost" style={{ justifyContent: "center", padding: "9px 14px", fontSize: 13 }}>+ Onboard a dev</button>
-        </div>
-      ) : (
-        <div style={{ padding: 12, background: "var(--bg-hover)", borderRadius: 12, border: "1.5px solid var(--bg-secondary)" }}>
-          <div className="kicker" style={{ color: "var(--text-primary)" }}>Your discipline</div>
-          <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>{ROLE_LABEL[role]}</div>
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>ratify your slice · pass the baton</div>
-        </div>
+    <aside style={{ width: "var(--nav-w)", flexShrink: 0, height: "100vh", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4 }}>
+      <Workspace />
+      <SearchTrigger onClick={togglePalette} />
+      {isManager && (
+        <button onClick={() => { setFeatureProjectId(null); setWizardKind("brief"); setWizardOpen(true); }}
+          style={{ display: "flex", alignItems: "center", gap: 8, height: 32, margin: "2px 0", padding: "0 10px",
+            borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", fontSize: 13, fontWeight: 500 }}>
+          <Icon name="plus" size={15} /> New from brief
+        </button>
       )}
-
-      <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {sections.map((section, si) => (
-          <div key={si}>
-            {section.title && (
-              <div className="kicker" style={{ marginTop: si === 0 ? 0 : 10, marginBottom: 2, paddingLeft: 12 }}>{section.title}</div>
+      <nav style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 4 }}>
+        {sections.map((grp, gi) => (
+          <div key={gi} style={{ marginTop: grp.title ? 12 : 0 }}>
+            {grp.title && (
+              <div style={{ height: 24, display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11, fontWeight: 500, color: "var(--text-quaternary)", letterSpacing: "0.02em" }}>{grp.title}</div>
             )}
-            {section.items.map((it) => (
-              <Link key={it.to} to={it.to} style={navLinkStyle} activeProps={{ style: { ...navLinkStyle, ...navLinkActive } }}>
-                <Icon name={it.icon} size={16} style={{ opacity: 0.85 }} />
-                {it.label}
-              </Link>
-            ))}
+            {grp.items.map((it) => <NavItem key={it.to} item={it} />)}
           </div>
         ))}
       </nav>
-
-      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--green)", flexShrink: 0 }} />
-          <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>MCP · online</span>
-        </div>
-        <button onClick={logout} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-tertiary)", padding: "6px 10px", textAlign: "left", fontWeight: 600 }}
-          title={member ? `Signed in as ${member.username}` : undefined}>
-          <Icon name="logout" size={14} /> Log out
-        </button>
-      </div>
+      <div style={{ flex: 1 }} />
+      <SidebarFooter name={member?.name ?? ""} role={role} />
     </aside>
   );
 }
 
-function TopBar() {
-  const { member, role } = useMe();
-  const { view } = useView();
-  const titles: Record<string, string> = {
-    work: "My Work", dashboard: "Projects", team: "Team", relay: "Ratification relay", relays: "Active relays",
-    today: "Today", issue: "Active issue", passport: "My Passport", ratify: "Ratify", queue: "Ratify queue",
-    attributions: "Merge attribution", portfolio: "Decision Portfolio", codegraph: "Code Graph", profiles: "Capability profiles", qa: "QA gate", inbox: "Inbox",
-  };
-  const isManager = role === "manager";
-  const m = member as Member;
-  const trustC = TRUST_COLOR[m.trust_level] ?? "var(--text-tertiary)";
-
+function Workspace() {
+  const [h, setH] = useState(false);
   return (
-    <header style={{ padding: "16px 32px", borderBottom: "1.5px solid var(--border)", background: "var(--bg-elevated)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-      <div>
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontWeight: 700, letterSpacing: "0.08em", whiteSpace: "nowrap" }}>
-          {ROLE_LABEL[role].toUpperCase()} · {m.name.toUpperCase()}
-        </div>
-        <div className="display" style={{ fontSize: 22, marginTop: 2 }}>{titles[view] ?? "—"}</div>
+    <button onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", width: "100%",
+        background: h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
+      <Sprint0Logo size={17} />
+      <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· Studio</span>
+      <div style={{ flex: 1 }} />
+      <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
+    </button>
+  );
+}
+
+function SearchTrigger({ onClick }: { onClick: () => void }) {
+  const [h, setH] = useState(false);
+  return (
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 8px", borderRadius: "var(--r-md)",
+        background: h ? "var(--bg-hover)" : "transparent", color: "var(--text-tertiary)", transition: "background var(--t-quick)" }}>
+      <Icon name="search" size={15} />
+      <span style={{ fontSize: 13, fontWeight: 500 }}>Search</span>
+      <div style={{ flex: 1 }} />
+      <span style={{ display: "inline-flex", gap: 2 }}><Kbd>⌘</Kbd><Kbd>K</Kbd></span>
+    </button>
+  );
+}
+
+const navItemBase: React.CSSProperties = {
+  position: "relative", display: "flex", alignItems: "center", gap: 9, width: "100%", height: 28,
+  padding: "0 10px", borderRadius: "var(--r-md)", textAlign: "left",
+  color: "var(--text-secondary)", fontSize: 13, fontWeight: 500, letterSpacing: "-0.1px",
+  transition: "background var(--t-quick), color var(--t-quick)",
+};
+function NavItem({ item }: { item: NavItemT }) {
+  const [h, setH] = useState(false);
+  return (
+    <Link to={item.to} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ ...navItemBase, background: h ? "var(--bg-hover)" : "transparent" }}
+      activeProps={{ style: { ...navItemBase, background: "var(--bg-active)", color: "var(--text-primary)" } }}>
+      <Icon name={item.icon} size={16} style={{ color: "var(--text-tertiary)" }} />
+      <span>{item.label}</span>
+    </Link>
+  );
+}
+
+function SidebarFooter({ name, role }: { name: string; role: Role }) {
+  const navigate = useNavigate();
+  const resetSession = useUI((s) => s.resetSession);
+  const doLogout = useLogout();
+  const [h, setH] = useState(false);
+  const logout = () => { doLogout(); resetSession(); navigate({ to: "/" as "/" }); };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, height: 28, padding: "0 10px" }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)" }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>MCP · online</span>
       </div>
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        {!isManager && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--bg-secondary)", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: trustC }} />
-            <span style={{ color: trustC, textTransform: "capitalize" }}>{m.trust_level} trust</span>
-            <span style={{ color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>load {m.load}%</span>
-          </div>
-        )}
-        <BellPanel />
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: isManager ? "var(--ink-fill)" : "var(--blue)", color: "var(--bg-elevated)", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 14, border: "2px solid var(--text-primary)" }}>
-          {initialsOf(m.name) || "?"}
+      <button onClick={logout} title="Log out" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+        style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", background: h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
+        <Avatar name={name} size={22} tone={role === "manager" ? "ink" : undefined} />
+        <div style={{ textAlign: "left", lineHeight: 1.2 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)" }}>{name}</div>
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{ROLE_LABEL[role]}</div>
         </div>
-      </div>
-    </header>
+        <div style={{ flex: 1 }} />
+        <Icon name="logout" size={15} style={{ color: "var(--text-quaternary)" }} />
+      </button>
+    </div>
   );
 }
