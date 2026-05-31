@@ -11,11 +11,11 @@ export const DISCIPLINE_LABEL: Record<Discipline, string> = {
 };
 
 export const DISCIPLINE_COLOR: Record<Discipline, string> = {
-  uiux: "#7C3AED",
-  backend: "#0F8E5C",
-  frontend: "#2A6FDB",
-  qa: "#D97706",
-  devops: "#1a1410",
+  uiux: "var(--disc-uiux)",
+  backend: "var(--disc-backend)",
+  frontend: "var(--disc-frontend)",
+  qa: "var(--disc-qa)",
+  devops: "var(--disc-devops)",
 };
 
 export interface StatusStyle {
@@ -34,7 +34,7 @@ export function statusStyle(s: GateStatus): StatusStyle {
     case "changes_requested":
       return { label: "Changes requested", fg: "var(--paper)", bg: "var(--warn)", border: "var(--warn)" };
     case "blocked":
-      return { label: "Blocked · integration", fg: "var(--paper)", bg: "var(--orange-deep)", border: "var(--orange-deep)" };
+      return { label: "Blocked · integration", fg: "var(--bg-elevated)", bg: "var(--red)", border: "var(--red)" };
     case "locked":
       return { label: "Locked", fg: "var(--ink-mute)", bg: "var(--cream-deep)", border: "var(--line-strong)" };
     case "pending":
@@ -44,9 +44,9 @@ export function statusStyle(s: GateStatus): StatusStyle {
 }
 
 export const RISK_COLOR: Record<Risk, string> = {
-  low: "var(--positive)",
-  medium: "var(--warn)",
-  high: "var(--orange-deep)",
+  low: "var(--green)",
+  medium: "var(--amber)",
+  high: "var(--red)",
 };
 
 export const KIND_LABEL: Record<Kind, string> = {

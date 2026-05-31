@@ -7,7 +7,8 @@ import { planIssues } from "../lib/relayUtils";
    Honest fields only — counts/match/links are derived from the persisted ProjectRecord;
    no fabricated progress %, sprint #, or match score. */
 
-const ACCENTS = ["#0F8E5C", "#2A6FDB", "#7C3AED", "#D97706", "#F4511E", "#1a1410"];
+// Project accent squares — discipline-ish hues, no orange (the brand spark is retired).
+const ACCENTS = ["#2E9466", "#3B6FD4", "#7C5CD6", "#C77800", "#57514A", "#1A1714"];
 const accentFor = (id: number) => ACCENTS[Math.abs(id) % ACCENTS.length];
 
 function stats(p: ProjectSummary): { issues: number; devs: number } {

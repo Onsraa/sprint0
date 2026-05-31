@@ -1,38 +1,38 @@
-/* app-specific styles (design-system tokens live in shared.css) */
+/* app-specific styles (design tokens live in tokens.css, component classes in shared.css) */
 
-/* Trust slider thumb — from the app.html mockup */
+/* Trust slider thumb — monochrome ink */
 .trust-slider {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
   height: 6px;
   border-radius: 999px;
-  background: var(--cream-deep);
+  background: var(--bg-secondary);
   outline: none;
 }
 .trust-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  background: var(--ink);
-  border: 3px solid var(--paper);
-  box-shadow: 0 0 0 2px var(--ink), 0 3px 0 var(--ink);
+  background: var(--ink-fill);
+  border: 2px solid var(--bg-elevated);
+  box-shadow: var(--shadow-2);
   cursor: grab;
   margin-top: -8px;
 }
 .trust-slider::-webkit-slider-thumb:active {
   cursor: grabbing;
-  transform: scale(1.1);
+  transform: scale(1.08);
 }
 .trust-slider::-moz-range-thumb {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  background: var(--ink);
-  border: 3px solid var(--paper);
-  box-shadow: 0 0 0 2px var(--ink), 0 3px 0 var(--ink);
+  background: var(--ink-fill);
+  border: 2px solid var(--bg-elevated);
+  box-shadow: var(--shadow-2);
   cursor: grab;
 }
 
@@ -40,11 +40,11 @@
   min-height: 100vh;
 }
 
-/* Global input focus ring — replaces outline:none pattern throughout */
+/* Global input focus ring — ink, subtle */
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  border-color: var(--orange) !important;
-  box-shadow: 0 0 0 3px var(--orange-soft) !important;
+  border-color: var(--text-primary) !important;
+  box-shadow: 0 0 0 3px var(--bg-active) !important;
   outline: none;
 }
