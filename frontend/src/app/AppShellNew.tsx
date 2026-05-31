@@ -9,9 +9,13 @@ import { Icon, type IconName } from "../lib/icon";
 import { Login } from "../views/Login";
 import { Wizard } from "../wizard/Wizard";
 import { Mascot, Sprint0Logo } from "../components/Mascot";
+import { CommandPalette } from "../features/palette/CommandPalette";
+import { BellPanel } from "../features/notify/BellPanel";
+import { useNotificationsWS } from "../features/notify/useNotifications";
 
 export function AppShellNew() {
   const { member, authLoading, wizardOpen, wizardKind } = useApp();
+  useNotificationsWS(member?.username); // live notifications WS → invalidates the inbox query
 
   if (authLoading) return <SessionLoading />;
   if (!member) return <Login />;
@@ -28,6 +32,7 @@ export function AppShellNew() {
         </div>
       </main>
       {wizardOpen && <Wizard kind={wizardKind} />}
+      <CommandPalette />
     </div>
   );
 }
@@ -161,7 +166,7 @@ function Sidebar() {
 }
 
 function TopBar() {
-  const { member, role, view, inbox, setView } = useApp();
+  const { member, role, view } = useApp();
   const titles: Record<string, string> = {
     work: "My Work", dashboard: "Projects", team: "Team", relay: "Ratification relay", relays: "Active relays",
     today: "Today", issue: "Active issue", passport: "My Passport", ratify: "Ratify", queue: "Ratify queue",
@@ -170,7 +175,6 @@ function TopBar() {
   const isManager = role === "manager";
   const m = member as Member;
   const trustC = TRUST_COLOR[m.trust_level] ?? "var(--ink-mute)";
-  const unread = inbox?.unread ?? 0;
 
   return (
     <header style={{ padding: "16px 32px", borderBottom: "1.5px solid var(--line)", background: "var(--paper)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -188,14 +192,7 @@ function TopBar() {
             <span style={{ color: "var(--ink-mute)", fontFamily: "var(--font-mono)" }}>load {m.load}%</span>
           </div>
         )}
-        <button onClick={() => setView("inbox")} style={{ position: "relative", width: 36, height: 36, borderRadius: "50%", background: "var(--cream-deep)", border: "1.5px solid var(--line)", display: "grid", placeItems: "center", cursor: "pointer" }} title="Inbox">
-          <Icon name="bell" size={16} />
-          {unread > 0 && (
-            <span style={{ position: "absolute", top: 1, right: 1, minWidth: 16, height: 16, borderRadius: 999, background: "var(--orange)", color: "var(--paper)", fontSize: 9, fontWeight: 800, fontFamily: "var(--font-mono)", display: "grid", placeItems: "center", padding: "0 3px", border: "1.5px solid var(--paper)" }}>
-              {unread > 9 ? "9+" : unread}
-            </span>
-          )}
-        </button>
+        <BellPanel />
         <div style={{ width: 36, height: 36, borderRadius: "50%", background: isManager ? "var(--orange)" : "var(--info)", color: "var(--paper)", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 14, border: "2px solid var(--ink)" }}>
           {initialsOf(m.name) || "?"}
         </div>

@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useApp } from "../app/AppContext";
 import { api, type Member, type ProjectSummary } from "../lib/api";
+import { qk } from "../lib/query";
 import { planIssues } from "../lib/relayUtils";
 
 /* Manager home: every dispatched project from GET /api/projects (real GitLab scaffolds).
@@ -24,7 +26,8 @@ const fmtDate = (s?: string) => {
 };
 
 export function Dashboard() {
-  const { projects, refreshProjects, role, setWizardOpen, setWizardKind, setFeatureProjectId, liveProjectId, roster, loadInbox } = useApp();
+  const { projects, refreshProjects, role, setWizardOpen, setWizardKind, setFeatureProjectId, liveProjectId, roster } = useApp();
+  const qc = useQueryClient();
   const isManager = role === "manager";
   const [filter, setFilter] = useState<"all" | "active" | "shipped">("all");
   const [closing, setClosing] = useState<ProjectSummary | null>(null);
@@ -167,7 +170,7 @@ export function Dashboard() {
         <ChangeModal
           roster={roster.filter((m) => m.role !== "manager")}
           onClose={() => setChangeOpen(false)}
-          onDone={loadInbox}
+          onDone={() => qc.invalidateQueries({ queryKey: qk.inbox() })}
         />
       )}
     </div>

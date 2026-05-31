@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useApp } from "../app/AppContext";
 import { api } from "../lib/api";
 import type { InboxNeed, NotificationItem, QueueItem, RescheduleProposal } from "../lib/api";
+import { qk } from "../lib/query";
+import { useInbox } from "../features/notify/useNotifications";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL } from "../lib/relayUtils";
 
 // Human-readable presentation for the Inbox notification feed (type → icon + chip label).
@@ -32,12 +35,14 @@ const KIND_META: Record<string, { icon: string }> = {
 };
 
 export function InboxPage() {
-  const { inbox, loadInbox, setActiveGate, setView, setPlan, setPlanId, setRelay } = useApp();
+  const { setActiveGate, setView, setPlan, setPlanId } = useApp();
+  const { data: inbox } = useInbox();
+  const qc = useQueryClient();
   const [opening, setOpening] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadInbox(); api.inboxReadAll().catch(() => {}); }, []);
+  // Landing on the inbox marks everything read, then refetches so the bell badge clears.
+  useEffect(() => { api.inboxReadAll().then(() => qc.invalidateQueries({ queryKey: qk.inbox() })).catch(() => {}); }, [qc]);
 
   const openRatify = async (item: QueueItem) => {
     const key = item.plan_id + item.discipline;
@@ -50,7 +55,7 @@ export function InboxPage() {
       ]);
       setPlan(plan);
       setPlanId(item.plan_id);
-      setRelay(relay);
+      qc.setQueryData(qk.relay(item.plan_id), relay); // seed the relay query cache (no flash)
       setActiveGate(item.discipline);
       setView("ratify");
     } catch (e) {
@@ -67,7 +72,7 @@ export function InboxPage() {
       } else {
         await api.rejectAccess(grantId);
       }
-      loadInbox();
+      qc.invalidateQueries({ queryKey: qk.inbox() });
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : String(e));
     }
@@ -75,13 +80,13 @@ export function InboxPage() {
 
   const handleApplyResched = async (id: string) => {
     setActionErr(null);
-    try { await api.applyReschedule(id); loadInbox(); }
+    try { await api.applyReschedule(id); qc.invalidateQueries({ queryKey: qk.inbox() }); }
     catch (e) { setActionErr(e instanceof Error ? e.message : String(e)); }
   };
 
   const handleRejectResched = async (id: string) => {
     setActionErr(null);
-    try { await api.rejectReschedule(id); loadInbox(); }
+    try { await api.rejectReschedule(id); qc.invalidateQueries({ queryKey: qk.inbox() }); }
     catch (e) { setActionErr(e instanceof Error ? e.message : String(e)); }
   };
 
