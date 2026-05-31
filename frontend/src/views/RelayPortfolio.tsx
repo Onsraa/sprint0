@@ -53,26 +53,26 @@ export function RelayPortfolio() {
         <div className="display" style={{ fontSize: 28 }}>
           {relays.length ? `${relays.length} active relays` : "Active relays"}
         </div>
-        <div style={{ color: "var(--ink-soft)", marginTop: 4 }}>
+        <div style={{ color: "var(--text-secondary)", marginTop: 4 }}>
           Every plan currently moving through the relay. Open one to ratify or watch the baton.
         </div>
       </div>
 
       {loading ? (
-        <div className="card-soft" style={{ padding: 16, textAlign: "center", color: "var(--ink-soft)" }}>
+        <div className="card-soft" style={{ padding: 16, textAlign: "center", color: "var(--text-secondary)" }}>
           Loading…
         </div>
       ) : err ? (
-        <div className="card-soft mono" style={{ padding: 12, color: "var(--orange-deep)", fontSize: 12 }}>
+        <div className="card-soft mono" style={{ padding: 12, color: "var(--text-primary)", fontSize: 12 }}>
           {err}
         </div>
       ) : relays.length === 0 ? (
         <div
           className="card-soft"
-          style={{ padding: 24, textAlign: "center", border: "1px dashed var(--line-strong)" }}
+          style={{ padding: 24, textAlign: "center", border: "1px dashed var(--border-strong)" }}
         >
           <div className="display" style={{ fontSize: 18 }}>No active relays.</div>
-          <div style={{ color: "var(--ink-soft)", marginTop: 4 }}>
+          <div style={{ color: "var(--text-secondary)", marginTop: 4 }}>
             Draft a brief to put a plan into the relay.
           </div>
         </div>
@@ -97,9 +97,9 @@ export function RelayPortfolio() {
                   <span
                     className="chip"
                     style={{
-                      background: "var(--orange-soft)",
-                      borderColor: "var(--orange)",
-                      color: "var(--orange-deep)",
+                      background: "var(--bg-secondary)",
+                      borderColor: "var(--ink-fill)",
+                      color: "var(--text-primary)",
                       fontSize: 9,
                     }}
                   >
@@ -111,9 +111,9 @@ export function RelayPortfolio() {
                     <span
                       className="chip"
                       style={{
-                        background: "var(--positive-tint)",
-                        borderColor: "var(--positive)",
-                        color: "var(--positive)",
+                        background: "var(--bg-secondary)",
+                        borderColor: "var(--green)",
+                        color: "var(--green)",
                         fontSize: 10,
                       }}
                     >
@@ -151,7 +151,7 @@ export function RelayPortfolio() {
                 })}
               </div>
 
-              <div className="mono" style={{ marginTop: 10, fontSize: 10, color: "var(--ink-mute)" }}>
+              <div className="mono" style={{ marginTop: 10, fontSize: 10, color: "var(--text-tertiary)" }}>
                 {r.plan_id}
               </div>
             </div>

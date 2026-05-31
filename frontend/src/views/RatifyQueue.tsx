@@ -73,7 +73,7 @@ export function RatifyQueue() {
     <div style={{ maxWidth: 980, margin: "0 auto" }}>
       <div className="kicker">Relay</div>
       <div className="display">{title}</div>
-      <div style={{ color: "var(--ink-soft)", fontSize: 13, marginTop: 4 }}>
+      <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
         Gates across every active project where you hold the baton.
       </div>
 
@@ -81,14 +81,14 @@ export function RatifyQueue() {
         {loading ? (
           <div className="card-soft" style={{ textAlign: "center" }}>Loading…</div>
         ) : err ? (
-          <div className="card-soft mono" style={{ color: "var(--orange-deep)" }}>{err}</div>
+          <div className="card-soft mono" style={{ color: "var(--text-primary)" }}>{err}</div>
         ) : count === 0 ? (
           <div
             className="card-soft"
-            style={{ textAlign: "center", border: "1px dashed var(--line-strong)" }}
+            style={{ textAlign: "center", border: "1px dashed var(--border-strong)" }}
           >
             <div className="display">No gates awaiting you.</div>
-            <div style={{ color: "var(--ink-soft)", fontSize: 13, marginTop: 6 }}>
+            <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 6 }}>
               When a manager drafts a plan that needs your discipline, it shows up here.
             </div>
           </div>
@@ -115,7 +115,7 @@ export function RatifyQueue() {
                       className="chip"
                       style={{
                         background: DISCIPLINE_COLOR[item.discipline],
-                        color: "var(--paper)",
+                        color: "var(--bg-elevated)",
                         fontSize: 10,
                       }}
                     >
@@ -126,9 +126,9 @@ export function RatifyQueue() {
                       <span
                         className="chip"
                         style={{
-                          background: "var(--orange-soft)",
-                          borderColor: "var(--orange)",
-                          color: "var(--orange-deep)",
+                          background: "var(--bg-secondary)",
+                          borderColor: "var(--ink-fill)",
+                          color: "var(--text-primary)",
                           fontSize: 9,
                         }}
                       >
@@ -142,10 +142,10 @@ export function RatifyQueue() {
                       {ss.label}
                     </span>
                   </div>
-                  <div style={{ marginTop: 6, color: "var(--ink-soft)", fontSize: 13 }}>
+                  <div style={{ marginTop: 6, color: "var(--text-secondary)", fontSize: 13 }}>
                     {item.issue_count} {item.issue_count === 1 ? "issue" : "issues"} in your slice
                   </div>
-                  <div style={{ marginTop: 8, color: "var(--ink-mute)", fontSize: 12 }}>
+                  <div style={{ marginTop: 8, color: "var(--text-tertiary)", fontSize: 12 }}>
                     {busy ? "Opening…" : "Open to ratify →"}
                   </div>
                 </div>

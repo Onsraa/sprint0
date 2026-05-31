@@ -22,7 +22,7 @@ export function Disclosure({
           gap: 4,
           fontSize: 11,
           fontWeight: 700,
-          color: "var(--ink-mute)",
+          color: "var(--text-tertiary)",
           background: "none",
           padding: 0,
           cursor: "pointer",

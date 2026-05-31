@@ -89,8 +89,8 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
           height: "100vh",
           width: 420,
           maxWidth: "92vw",
-          background: "var(--paper)",
-          borderLeft: "2px solid var(--ink)",
+          background: "var(--bg-elevated)",
+          borderLeft: "2px solid var(--text-primary)",
           overflow: "auto",
           padding: 24,
         }}
@@ -107,7 +107,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
             fontSize: 20,
             lineHeight: 1,
             cursor: "pointer",
-            color: "var(--ink-mute)",
+            color: "var(--text-tertiary)",
             fontWeight: 700,
             padding: "2px 6px",
           }}
@@ -117,13 +117,13 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
         </button>
 
         {loading && (
-          <div className="mono" style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 40 }}>
+          <div className="mono" style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 40 }}>
             loading…
           </div>
         )}
 
         {!loading && err && (
-          <div className="mono" style={{ fontSize: 12, color: "var(--orange-deep)", marginTop: 40 }}>
+          <div className="mono" style={{ fontSize: 12, color: "var(--text-primary)", marginTop: 40 }}>
             {err}
           </div>
         )}
@@ -140,7 +140,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                 <div style={{ marginBottom: 12 }}>
                   <StatusChip status={detail.status} />
                 </div>
-                <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>
+                <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
                   You don't have access to this task's detail.
                 </div>
               </>
@@ -173,7 +173,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                   {detail.pinned && (
                     <span
                       className="chip"
-                      style={{ fontSize: 11, padding: "2px 9px", background: "var(--orange-soft)", color: "var(--orange-deep)", borderColor: "var(--orange)" }}
+                      style={{ fontSize: 11, padding: "2px 9px", background: "var(--bg-secondary)", color: "var(--text-primary)", borderColor: "var(--ink-fill)" }}
                       title="Locked — the reflow engine will not move this task"
                     >
                       📌 pinned
@@ -185,12 +185,12 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
                   <FieldRow label="assignee">
                     <span className="mono" style={{ fontSize: 13 }}>
-                      {detail.assignee ? `@${detail.assignee}` : <span style={{ color: "var(--ink-mute)" }}>unassigned</span>}
+                      {detail.assignee ? `@${detail.assignee}` : <span style={{ color: "var(--text-tertiary)" }}>unassigned</span>}
                     </span>
                   </FieldRow>
 
                   <FieldRow label="provenance">
-                    <span className="mono" style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                    <span className="mono" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                       {provenanceTag(detail.assigned_by)}
                     </span>
                   </FieldRow>
@@ -227,7 +227,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                         ))}
                       </div>
                     ) : (
-                      <span style={{ color: "var(--ink-mute)", fontSize: 13 }}>—</span>
+                      <span style={{ color: "var(--text-tertiary)", fontSize: 13 }}>—</span>
                     )}
                   </FieldRow>
 
@@ -241,18 +241,18 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                         ))}
                       </div>
                     ) : (
-                      <span style={{ color: "var(--ink-mute)", fontSize: 13 }}>—</span>
+                      <span style={{ color: "var(--text-tertiary)", fontSize: 13 }}>—</span>
                     )}
                   </FieldRow>
 
                   <FieldRow label="start">
-                    <span style={{ fontSize: 13, color: detail.scheduled_start ? "var(--ink)" : "var(--ink-mute)" }}>
+                    <span style={{ fontSize: 13, color: detail.scheduled_start ? "var(--text-primary)" : "var(--text-tertiary)" }}>
                       {detail.scheduled_start ?? "—"}
                     </span>
                   </FieldRow>
 
                   <FieldRow label="end">
-                    <span style={{ fontSize: 13, color: detail.scheduled_end ? "var(--ink)" : "var(--ink-mute)" }}>
+                    <span style={{ fontSize: 13, color: detail.scheduled_end ? "var(--text-primary)" : "var(--text-tertiary)" }}>
                       {detail.scheduled_end ?? "—"}
                     </span>
                   </FieldRow>
@@ -265,7 +265,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                       className="mono"
                       style={{
                         fontSize: 10,
-                        color: "var(--orange)",
+                        color: "var(--ink-fill)",
                         fontWeight: 800,
                         textTransform: "uppercase",
                         marginBottom: 6,
@@ -277,11 +277,11 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                       style={{
                         fontSize: 13,
                         lineHeight: 1.55,
-                        color: "var(--ink-soft)",
-                        background: "var(--cream)",
+                        color: "var(--text-secondary)",
+                        background: "var(--bg-app)",
                         borderRadius: 8,
                         padding: "10px 12px",
-                        border: "1px solid var(--line)",
+                        border: "1px solid var(--border)",
                       }}
                     >
                       {detail.description}
@@ -302,7 +302,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                     className="mono"
                     style={{
                       fontSize: 10,
-                      color: "var(--ink-mute)",
+                      color: "var(--text-tertiary)",
                       fontWeight: 800,
                       textTransform: "uppercase",
                       marginBottom: 6,
@@ -323,9 +323,9 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                             borderRadius: 999,
                             fontSize: 12,
                             fontWeight: 700,
-                            border: active ? "1.5px solid var(--orange)" : "1.5px solid var(--line-strong)",
-                            background: active ? "var(--orange-soft)" : "var(--cream)",
-                            color: active ? "var(--orange-deep)" : "var(--ink-soft)",
+                            border: active ? "1.5px solid var(--ink-fill)" : "1.5px solid var(--border-strong)",
+                            background: active ? "var(--bg-secondary)" : "var(--bg-app)",
+                            color: active ? "var(--text-primary)" : "var(--text-secondary)",
                             cursor: busy ? "not-allowed" : "pointer",
                             opacity: busy && !active ? 0.5 : 1,
                           }}
@@ -361,7 +361,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                   )}
                   {(isManager || member?.discipline === detail.discipline) && (
                     <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", fontWeight: 800, textTransform: "uppercase" }}>
+                      <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 800, textTransform: "uppercase" }}>
                         reassign
                       </span>
                       <select
@@ -380,10 +380,10 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                         }}
                         style={{
                           padding: "5px 9px",
-                          border: "1.5px solid var(--line-strong)",
+                          border: "1.5px solid var(--border-strong)",
                           borderRadius: 8,
                           fontSize: 12,
-                          background: "var(--paper)",
+                          background: "var(--bg-elevated)",
                           fontFamily: "inherit",
                           cursor: busy ? "not-allowed" : "pointer",
                         }}
@@ -405,9 +405,9 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                         borderRadius: 999,
                         fontSize: 12,
                         fontWeight: 700,
-                        border: detail.pinned ? "1.5px solid var(--orange)" : "1.5px solid var(--line-strong)",
-                        background: detail.pinned ? "var(--orange-soft)" : "var(--cream)",
-                        color: detail.pinned ? "var(--orange-deep)" : "var(--ink-soft)",
+                        border: detail.pinned ? "1.5px solid var(--ink-fill)" : "1.5px solid var(--border-strong)",
+                        background: detail.pinned ? "var(--bg-secondary)" : "var(--bg-app)",
+                        color: detail.pinned ? "var(--text-primary)" : "var(--text-secondary)",
                         cursor: busy ? "not-allowed" : "pointer",
                         opacity: busy ? 0.5 : 1,
                       }}
@@ -418,7 +418,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                 </div>
 
                 {actionErr && (
-                  <div className="mono" style={{ fontSize: 11, color: "var(--orange-deep)" }}>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
                     {actionErr}
                   </div>
                 )}
@@ -433,13 +433,13 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
 
 function StatusChip({ status }: { status: string }) {
   const map: Record<string, { bg: string; fg: string }> = {
-    planned:     { bg: "var(--cream-deep)",   fg: "var(--ink-mute)" },
-    in_progress: { bg: "var(--info)",          fg: "var(--paper)" },
-    in_review:   { bg: "var(--warn)",          fg: "var(--paper)" },
-    done:        { bg: "var(--positive)",      fg: "var(--paper)" },
-    blocked:     { bg: "var(--orange-deep)",   fg: "var(--paper)" },
+    planned:     { bg: "var(--bg-secondary)",   fg: "var(--text-tertiary)" },
+    in_progress: { bg: "var(--blue)",          fg: "var(--bg-elevated)" },
+    in_review:   { bg: "var(--amber)",          fg: "var(--bg-elevated)" },
+    done:        { bg: "var(--green)",      fg: "var(--bg-elevated)" },
+    blocked:     { bg: "var(--text-primary)",   fg: "var(--bg-elevated)" },
   };
-  const s = map[status] ?? { bg: "var(--cream-deep)", fg: "var(--ink-mute)" };
+  const s = map[status] ?? { bg: "var(--bg-secondary)", fg: "var(--text-tertiary)" };
   return (
     <span
       className="chip"
@@ -457,7 +457,7 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
         className="mono"
         style={{
           fontSize: 10,
-          color: "var(--orange)",
+          color: "var(--ink-fill)",
           fontWeight: 800,
           textTransform: "uppercase",
           minWidth: 80,

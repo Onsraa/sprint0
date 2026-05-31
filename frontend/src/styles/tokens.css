@@ -1,10 +1,6 @@
 /* sprint0 — design tokens. "sprint0 × Linear": monochrome warm-grey, warm-ink action color,
  * NO orange (the brand spark is retired), Geist + Geist Mono, hairline borders, subtle shadows.
- *
- * The second :root block is an ALIAS SHIM: it maps the legacy variable names (--orange, --cream,
- * --ink, …) onto the new tokens, so the whole app goes monochrome at once without touching the 27
- * files that still reference them. The by-file sweep (P3) removes the intentional-orange spots; the
- * shim block itself is deleted in P8 once nothing references the legacy names. */
+ * (The legacy alias-shim is gone as of P8 — every file references these tokens directly.) */
 
 :root {
   /* Neutrals — warm-grey ramp */
@@ -47,23 +43,3 @@
   --t-quick: 0.10s; --t-reg: 0.22s; --t-slow: 0.35s;
 }
 
-:root {
-  /* ── alias shim: legacy names → monochrome tokens (deleted in P8) ── */
-  --orange: var(--ink-fill); --orange-deep: var(--text-primary);
-  --orange-soft: var(--bg-secondary); --orange-tint: var(--bg-hover);
-  --cream: var(--bg-app); --cream-deep: var(--bg-secondary); --paper: var(--bg-elevated);
-  --ink: var(--text-primary); --ink-soft: var(--text-secondary);
-  --ink-mute: var(--text-tertiary); --ink-faint: var(--text-quaternary);
-  --line: var(--border); --line-strong: var(--border-strong);
-  --positive: var(--green); --info: var(--blue); --warn: var(--amber);
-
-  --font-display: var(--font-ui); --font-body: var(--font-ui);
-
-  /* radii → Linear scale */
-  --radius-xs: var(--r-sm); --radius-sm: var(--r-md); --radius-md: var(--r-lg);
-  --radius-lg: var(--r-xl); --radius-xl: var(--r-xl); --radius-pill: var(--r-pill);
-
-  /* shadows → subtle (kill the hard ink offset) */
-  --shadow-card: var(--shadow-1); --shadow-card-hover: var(--shadow-2);
-  --shadow-pop: var(--shadow-1); --shadow-pop-lg: var(--shadow-1);
-}

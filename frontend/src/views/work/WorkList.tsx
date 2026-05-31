@@ -28,9 +28,9 @@ const TH_BASE: React.CSSProperties = {
   textAlign: "left",
   fontSize: 11,
   fontWeight: 700,
-  color: "var(--ink-mute)",
+  color: "var(--text-tertiary)",
   padding: "5px 8px",
-  borderBottom: "1.5px solid var(--line)",
+  borderBottom: "1.5px solid var(--border)",
   whiteSpace: "nowrap",
   userSelect: "none",
   cursor: "pointer",
@@ -40,7 +40,7 @@ const TD_BASE: React.CSSProperties = {
   padding: "4px 8px",
   fontSize: 12,
   verticalAlign: "middle",
-  borderBottom: "1px solid var(--line)",
+  borderBottom: "1px solid var(--border)",
 };
 
 export function WorkList({ tasks, onOpen }: { tasks: WorkTask[]; onOpen: (id: string) => void }) {
@@ -102,10 +102,10 @@ export function WorkList({ tasks, onOpen }: { tasks: WorkTask[]; onOpen: (id: st
           style={{
             fontSize: 12,
             padding: "3px 8px",
-            border: "1px solid var(--line-strong)",
+            border: "1px solid var(--border-strong)",
             borderRadius: 4,
-            background: "var(--paper)",
-            color: "var(--ink)",
+            background: "var(--bg-elevated)",
+            color: "var(--text-primary)",
             cursor: "pointer",
           }}
         >
@@ -124,15 +124,15 @@ export function WorkList({ tasks, onOpen }: { tasks: WorkTask[]; onOpen: (id: st
           style={{
             fontSize: 12,
             padding: "3px 8px",
-            border: "1px solid var(--line-strong)",
+            border: "1px solid var(--border-strong)",
             borderRadius: 4,
-            background: "var(--paper)",
-            color: "var(--ink)",
+            background: "var(--bg-elevated)",
+            color: "var(--text-primary)",
             width: 200,
           }}
         />
 
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", marginLeft: "auto" }}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: "auto" }}>
           {sorted.length} / {tasks.length}
         </span>
       </div>
@@ -181,7 +181,7 @@ export function WorkList({ tasks, onOpen }: { tasks: WorkTask[]; onOpen: (id: st
               <tr>
                 <td
                   colSpan={9}
-                  style={{ ...TD_BASE, textAlign: "center", color: "var(--ink-mute)", padding: "20px 8px" }}
+                  style={{ ...TD_BASE, textAlign: "center", color: "var(--text-tertiary)", padding: "20px 8px" }}
                 >
                   No tasks match.
                 </td>
@@ -198,24 +198,24 @@ export function WorkList({ tasks, onOpen }: { tasks: WorkTask[]; onOpen: (id: st
 
 function TaskRow({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) => void }) {
   const [hovered, setHovered] = useState(false);
-  const discColor = DISCIPLINE_COLOR[t.discipline] ?? "var(--ink-mute)";
+  const discColor = DISCIPLINE_COLOR[t.discipline] ?? "var(--text-tertiary)";
 
   const rowStyle: React.CSSProperties = {
     cursor: "pointer",
-    background: hovered ? "var(--cream-deep)" : "transparent",
+    background: hovered ? "var(--bg-secondary)" : "transparent",
     transition: "background 0.1s",
   };
 
   /* Status chip colors */
   const statusChipStyle = (status: TaskStatus): React.CSSProperties => {
-    if (status === "done") return { background: "var(--positive)", borderColor: "var(--positive)", color: "var(--paper)" };
-    if (status === "blocked") return { background: "var(--orange-deep)", borderColor: "var(--orange-deep)", color: "var(--paper)", fontWeight: 700 };
-    if (status === "in_progress") return { background: "var(--info)", borderColor: "var(--info)", color: "var(--paper)" };
-    if (status === "in_review") return { background: "var(--warn)", borderColor: "var(--warn)", color: "var(--paper)" };
-    return { background: "var(--cream-deep)", borderColor: "var(--line-strong)", color: "var(--ink-mute)" };
+    if (status === "done") return { background: "var(--green)", borderColor: "var(--green)", color: "var(--bg-elevated)" };
+    if (status === "blocked") return { background: "var(--text-primary)", borderColor: "var(--text-primary)", color: "var(--bg-elevated)", fontWeight: 700 };
+    if (status === "in_progress") return { background: "var(--blue)", borderColor: "var(--blue)", color: "var(--bg-elevated)" };
+    if (status === "in_review") return { background: "var(--amber)", borderColor: "var(--amber)", color: "var(--bg-elevated)" };
+    return { background: "var(--bg-secondary)", borderColor: "var(--border-strong)", color: "var(--text-tertiary)" };
   };
 
-  const muted = <span style={{ color: "var(--ink-mute)" }}>—</span>;
+  const muted = <span style={{ color: "var(--text-tertiary)" }}>—</span>;
 
   return (
     <tr
@@ -241,7 +241,7 @@ function TaskRow({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) => 
 
       {/* ID */}
       <td style={{ ...TD_BASE }}>
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>{t.id}</span>
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{t.id}</span>
       </td>
 
       {/* Title */}
@@ -263,8 +263,8 @@ function TaskRow({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) => 
       <td style={{ ...TD_BASE }}>
         {t.redacted ? muted : (
           t.assignee
-            ? <span className="mono" style={{ fontSize: 11, color: "var(--ink-soft)" }}>@{t.assignee}</span>
-            : <span className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>—</span>
+            ? <span className="mono" style={{ fontSize: 11, color: "var(--text-secondary)" }}>@{t.assignee}</span>
+            : <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>—</span>
         )}
       </td>
 
@@ -272,7 +272,7 @@ function TaskRow({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) => 
       <td style={{ ...TD_BASE }}>
         {t.redacted ? muted : (
           t.estimate_days != null
-            ? <span style={{ color: "var(--ink-soft)" }}>{t.estimate_days}d</span>
+            ? <span style={{ color: "var(--text-secondary)" }}>{t.estimate_days}d</span>
             : muted
         )}
       </td>
@@ -289,7 +289,7 @@ function TaskRow({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) => 
                   padding: "1px 6px",
                   background: RISK_COLOR[t.risk],
                   borderColor: RISK_COLOR[t.risk],
-                  color: "var(--paper)",
+                  color: "var(--bg-elevated)",
                 }}
               >
                 {t.risk}
@@ -313,7 +313,7 @@ function TaskRow({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) => 
             ? (
               <span
                 className="chip"
-                style={{ fontSize: 10, padding: "1px 6px", background: "var(--cream-deep)", color: "var(--ink-mute)", borderColor: "var(--line-strong)" }}
+                style={{ fontSize: 10, padding: "1px 6px", background: "var(--bg-secondary)", color: "var(--text-tertiary)", borderColor: "var(--border-strong)" }}
               >
                 {provenanceTag(t.assigned_by)}
               </span>

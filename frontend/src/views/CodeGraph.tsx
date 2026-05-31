@@ -3,7 +3,7 @@ import { useProjects } from "../features/projects/useProjects";
 import { api } from "../lib/api";
 import type { DriftReport, GovernanceRule, GraphNode } from "../lib/api";
 
-const inp: React.CSSProperties = { padding: "7px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 13 };
+const inp: React.CSSProperties = { padding: "7px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 13 };
 
 export function CodeGraph() {
   const { projects } = useProjects();
@@ -47,10 +47,10 @@ export function CodeGraph() {
     <div style={{ maxWidth: 900, margin: "0 auto" }}>
       <div className="kicker">Code Graph</div>
       <div className="display" style={{ fontSize: 28 }}>Dependency graph + drift</div>
-      <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4 }}>
+      <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
         Static import graph (Python <span className="mono">ast</span>), decision governance, drift → refactor tasks.
       </div>
-      {err && <div className="card-soft mono" style={{ color: "var(--orange-deep)", marginTop: 12, fontSize: 12 }}>{err}</div>}
+      {err && <div className="card-soft mono" style={{ color: "var(--text-primary)", marginTop: 12, fontSize: 12 }}>{err}</div>}
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", alignItems: "center" }}>
         <button className="btn btn-primary btn-sm" disabled={busy === "build"} onClick={build}>
@@ -59,7 +59,7 @@ export function CodeGraph() {
         <button className="btn btn-ghost btn-sm" disabled={busy === "drift" || nodes.length === 0} onClick={checkDrift}>
           {busy === "drift" ? "Checking…" : "Check drift"}
         </button>
-        {summary && <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>{summary.nodes} files · {summary.edges} imports</span>}
+        {summary && <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{summary.nodes} files · {summary.edges} imports</span>}
       </div>
 
       {nodes.length > 0 && (
@@ -102,18 +102,18 @@ export function CodeGraph() {
         <div style={{ marginTop: 16 }}>
           <div className="kicker" style={{ marginBottom: 8 }}>Drift reports ({drift.length})</div>
           {drift.length === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No drift — graph is clean.</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>No drift — graph is clean.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {drift.map((r, i) => (
-                <div key={i} className="card-soft" style={{ padding: 12, borderColor: r.severity === "blocking" ? "var(--orange)" : "var(--line-strong)" }}>
+                <div key={i} className="card-soft" style={{ padding: 12, borderColor: r.severity === "blocking" ? "var(--ink-fill)" : "var(--border-strong)" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span className="chip" style={{ fontSize: 9, background: r.severity === "blocking" ? "var(--orange)" : "var(--cream)", color: r.severity === "blocking" ? "var(--paper)" : "var(--ink-soft)" }}>{r.severity}</span>
+                    <span className="chip" style={{ fontSize: 9, background: r.severity === "blocking" ? "var(--ink-fill)" : "var(--bg-app)", color: r.severity === "blocking" ? "var(--bg-elevated)" : "var(--text-secondary)" }}>{r.severity}</span>
                     <b style={{ fontSize: 13 }}>{r.violation}</b>
                     <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} disabled={busy === "rf" + r.violation} onClick={() => refactor(r)}>Create refactor task →</button>
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>{r.drift_from_description} · <span className="mono">{r.affected_files.join(", ")}</span></div>
-                  <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 2 }}>Fix: {r.suggested_fix}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>{r.drift_from_description} · <span className="mono">{r.affected_files.join(", ")}</span></div>
+                  <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>Fix: {r.suggested_fix}</div>
                 </div>
               ))}
             </div>

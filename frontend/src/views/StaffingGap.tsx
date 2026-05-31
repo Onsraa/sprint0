@@ -29,7 +29,7 @@ export function StaffingGap({ planId, onOnboard, next }: { planId: string | null
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
         <Mascot size={64} expression="surprised" />
         <div className="display" style={{ fontSize: 22 }}>Couldn't check staffing.</div>
-        <div className="mono" style={{ fontSize: 12, color: "var(--orange-deep)", maxWidth: 520, textAlign: "center" }}>{err}</div>
+        <div className="mono" style={{ fontSize: 12, color: "var(--text-primary)", maxWidth: 520, textAlign: "center" }}>{err}</div>
         <button onClick={next} className="btn btn-ghost btn-sm">Skip → trust</button>
       </div>
     );
@@ -38,8 +38,8 @@ export function StaffingGap({ planId, onOnboard, next }: { planId: string | null
   if (!coverage) {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
-        <div style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid var(--orange)", borderTopColor: "transparent", animation: "spin-slow 0.8s linear infinite" }} />
-        <div className="mono" style={{ fontSize: 13, color: "var(--ink-mute)" }}>checking team coverage…</div>
+        <div style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid var(--ink-fill)", borderTopColor: "transparent", animation: "spin-slow 0.8s linear infinite" }} />
+        <div className="mono" style={{ fontSize: 13, color: "var(--text-tertiary)" }}>checking team coverage…</div>
       </div>
     );
   }
@@ -71,18 +71,18 @@ export function StaffingGap({ planId, onOnboard, next }: { planId: string | null
                 gap: 8,
                 padding: "8px 12px",
                 borderRadius: 10,
-                border: `1.5px solid ${c.covered ? "var(--positive)" : "var(--warn)"}`,
-                background: c.covered ? "rgba(47,138,78,0.06)" : "var(--orange-tint)",
+                border: `1.5px solid ${c.covered ? "var(--green)" : "var(--amber)"}`,
+                background: c.covered ? "rgba(47,138,78,0.06)" : "var(--bg-hover)",
               }}
             >
-              <span style={{ width: 10, height: 10, borderRadius: 3, background: DISCIPLINE_COLOR[c.discipline], border: "1.5px solid var(--ink)" }} />
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: DISCIPLINE_COLOR[c.discipline], border: "1.5px solid var(--text-primary)" }} />
               <span style={{ fontWeight: 700, fontSize: 13 }}>{DISCIPLINE_LABEL[c.discipline]}</span>
               {c.covered ? (
-                <span style={{ fontSize: 11, color: "var(--positive)", fontWeight: 700 }}>
+                <span style={{ fontSize: 11, color: "var(--green)", fontWeight: 700 }}>
                   ✓ {c.lead ? `@${c.lead}` : "covered"}
                 </span>
               ) : (
-                <span style={{ fontSize: 11, color: "var(--warn)", fontWeight: 700 }}>gap</span>
+                <span style={{ fontSize: 11, color: "var(--amber)", fontWeight: 700 }}>gap</span>
               )}
             </div>
           ))}
@@ -129,16 +129,16 @@ function GapCard({
   return (
     <div className="card-soft" style={{ padding: 18, borderColor: accent }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        <span style={{ width: 12, height: 12, borderRadius: 3, background: accent, border: "1.5px solid var(--ink)" }} />
+        <span style={{ width: 12, height: 12, borderRadius: 3, background: accent, border: "1.5px solid var(--text-primary)" }} />
         <div style={{ fontWeight: 800, fontSize: 16 }}>{DISCIPLINE_LABEL[row.discipline]} — no available lead</div>
       </div>
       {rec && (
-        <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", marginBottom: 12 }}>
+        <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>
           weighted by: {rec.weighted_by}
         </div>
       )}
 
-      {!rec && <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>No recommendation returned.</div>}
+      {!rec && <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>No recommendation returned.</div>}
 
       {rec && (
         <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 14 }}>
@@ -146,7 +146,7 @@ function GapCard({
           <div>
             <div className="kicker" style={{ marginBottom: 8 }}>Stretch an internal dev</div>
             {rec.stretch_candidates.length === 0 ? (
-              <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No available candidates — onboarding is the move.</div>
+              <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>No available candidates — onboarding is the move.</div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {rec.stretch_candidates.map((cand) => (
@@ -157,7 +157,7 @@ function GapCard({
           </div>
 
           {/* Onboard */}
-          <div className="card-soft" style={{ padding: 14, background: "var(--cream)", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="card-soft" style={{ padding: 14, background: "var(--bg-app)", display: "flex", flexDirection: "column", gap: 8 }}>
             <div className="kicker">Or onboard</div>
             <div style={{ fontWeight: 700, fontSize: 13 }}>{rec.onboard.suggestion}</div>
             <ProsCons pros={rec.onboard.pros} cons={rec.onboard.cons} />
@@ -173,10 +173,10 @@ function GapCard({
 
 function CandidateRow({ cand, acked, onStretch }: { cand: StretchCandidate; acked: boolean; onStretch: () => void }) {
   return (
-    <div style={{ padding: 12, background: "var(--paper)", borderRadius: 10, border: "1.5px solid var(--line)" }}>
+    <div style={{ padding: 12, background: "var(--bg-elevated)", borderRadius: 10, border: "1.5px solid var(--border)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <span style={{ fontWeight: 700, fontSize: 14 }}>{cand.name}</span>
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
           @{cand.username}
           {cand.discipline && <> · {DISCIPLINE_LABEL[cand.discipline]}</>}
         </span>
@@ -199,14 +199,14 @@ function ProsCons({ pros, cons }: { pros: string[]; cons: string[] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       {pros.map((p, i) => (
-        <div key={`p${i}`} style={{ fontSize: 12, color: "var(--ink-soft)", display: "flex", gap: 6 }}>
-          <span style={{ color: "var(--positive)", fontWeight: 800 }}>+</span>
+        <div key={`p${i}`} style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", gap: 6 }}>
+          <span style={{ color: "var(--green)", fontWeight: 800 }}>+</span>
           {p}
         </div>
       ))}
       {cons.map((c, i) => (
-        <div key={`c${i}`} style={{ fontSize: 12, color: "var(--ink-soft)", display: "flex", gap: 6 }}>
-          <span style={{ color: "var(--warn)", fontWeight: 800 }}>−</span>
+        <div key={`c${i}`} style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", gap: 6 }}>
+          <span style={{ color: "var(--amber)", fontWeight: 800 }}>−</span>
           {c}
         </div>
       ))}

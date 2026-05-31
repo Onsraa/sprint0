@@ -105,7 +105,7 @@ export function InboxPage() {
       {actionErr && (
         <div
           className="card-soft mono"
-          style={{ color: "var(--orange-deep)", marginTop: 12, fontSize: 12 }}
+          style={{ color: "var(--text-primary)", marginTop: 12, fontSize: 12 }}
         >
           {actionErr}
         </div>
@@ -119,7 +119,7 @@ export function InboxPage() {
         >
           Needs action
           {needs.length > 0 && (
-            <span className="chip" style={{ fontSize: 10, background: "var(--orange)", color: "var(--paper)", borderColor: "var(--orange)" }}>
+            <span className="chip" style={{ fontSize: 10, background: "var(--ink-fill)", color: "var(--bg-elevated)", borderColor: "var(--ink-fill)" }}>
               {needs.length}
             </span>
           )}
@@ -127,7 +127,7 @@ export function InboxPage() {
         {needs.length === 0 ? (
           <div
             style={{
-              color: "var(--ink-mute)",
+              color: "var(--text-tertiary)",
               fontSize: 13,
               padding: "12px 0",
             }}
@@ -165,7 +165,7 @@ export function InboxPage() {
         {notifications.length === 0 ? (
           <div
             style={{
-              color: "var(--ink-mute)",
+              color: "var(--text-tertiary)",
               fontSize: 13,
               padding: "12px 0",
             }}
@@ -176,7 +176,7 @@ export function InboxPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {dayGroups(notifications).map((g) => (
               <div key={g.label}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "var(--ink-mute)", padding: "2px 12px 4px" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "var(--text-tertiary)", padding: "2px 12px 4px" }}>
                   {g.label}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -212,7 +212,7 @@ function NeedCard({
     const item = need.item as QueueItem;  // kind==="ratify" guarantees QueueItem (P1 makes InboxNeed a discriminated union)
     const key = item.plan_id + item.discipline;
     const busy = opening === key;
-    const discColor = DISCIPLINE_COLOR[item.discipline] ?? "var(--info)";
+    const discColor = DISCIPLINE_COLOR[item.discipline] ?? "var(--blue)";
     return (
       <div
         className="card-soft"
@@ -231,7 +231,7 @@ function NeedCard({
             className="chip"
             style={{
               background: discColor,
-              color: "var(--paper)",
+              color: "var(--bg-elevated)",
               fontSize: 10,
             }}
           >
@@ -242,9 +242,9 @@ function NeedCard({
             <span
               className="chip"
               style={{
-                background: "var(--orange-soft)",
-                borderColor: "var(--orange)",
-                color: "var(--orange-deep)",
+                background: "var(--bg-secondary)",
+                borderColor: "var(--ink-fill)",
+                color: "var(--text-primary)",
                 fontSize: 9,
               }}
             >
@@ -252,10 +252,10 @@ function NeedCard({
             </span>
           )}
         </div>
-        <div style={{ marginTop: 6, color: "var(--ink-soft)", fontSize: 13 }}>
+        <div style={{ marginTop: 6, color: "var(--text-secondary)", fontSize: 13 }}>
           {item.issue_count} {item.issue_count === 1 ? "issue" : "issues"} in your slice
         </div>
-        <div style={{ marginTop: 8, color: "var(--ink-mute)", fontSize: 12 }}>
+        <div style={{ marginTop: 8, color: "var(--text-tertiary)", fontSize: 12 }}>
           {busy ? "Opening…" : "Open to ratify →"}
         </div>
       </div>
@@ -357,8 +357,8 @@ function NotifRow({ n }: { n: NotificationItem }) {
         gap: 10,
         padding: "9px 12px",
         borderRadius: 8,
-        background: n.read ? "transparent" : "var(--orange-tint)",
-        borderLeft: n.read ? "2px solid transparent" : "2px solid var(--orange)",
+        background: n.read ? "transparent" : "var(--bg-hover)",
+        borderLeft: n.read ? "2px solid transparent" : "2px solid var(--ink-fill)",
         opacity: n.read ? 0.65 : 1,
         fontSize: 13,
       }}
@@ -370,7 +370,7 @@ function NotifRow({ n }: { n: NotificationItem }) {
       <span className="chip" style={{ fontSize: 10, flexShrink: 0 }}>
         {NOTIF_META[n.type]?.label ?? n.type}
       </span>
-      <span style={{ color: "var(--ink-mute)", fontSize: 11, fontFamily: "var(--font-mono)", flexShrink: 0 }}>
+      <span style={{ color: "var(--text-tertiary)", fontSize: 11, fontFamily: "var(--font-mono)", flexShrink: 0 }}>
         {relTime(n.created_at)}
       </span>
     </div>

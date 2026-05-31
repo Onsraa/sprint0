@@ -74,13 +74,13 @@ export function Portfolio() {
         <div className="display" style={{ fontSize: 30 }}>
           {decisions.length > 0 ? `Your ${decisions.length} decisions` : "Your decisions"}
         </div>
-        <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4 }}>
+        <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
           Reasoning you captured when passing the baton. Validated once the project ships.
         </div>
       </div>
 
       {loading && (
-        <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--ink-soft)" }}>
+        <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--text-secondary)" }}>
           Loading…
         </div>
       )}
@@ -88,18 +88,18 @@ export function Portfolio() {
       {err && (
         <div
           className="card-soft"
-          style={{ padding: 16, color: "var(--orange-deep)", fontFamily: "var(--font-mono)", fontSize: 13 }}
+          style={{ padding: 16, color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 13 }}
         >
           {err}
         </div>
       )}
 
       {!loading && !err && decisions.length === 0 && (
-        <div className="card-soft" style={{ padding: 24, textAlign: "center", border: "1px dashed var(--line-strong)" }}>
+        <div className="card-soft" style={{ padding: 24, textAlign: "center", border: "1px dashed var(--border-strong)" }}>
           <div className="display" style={{ fontSize: 18 }}>
             No decisions yet.
           </div>
-          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4 }}>
+          <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
             Ratify a relay gate with a note on why, and it lands here.
           </div>
         </div>
@@ -114,35 +114,35 @@ export function Portfolio() {
               style={{ padding: 16, borderColor: DISCIPLINE_COLOR[d.domain], opacity: d.deprecated ? 0.6 : 1 }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="chip" style={{ background: DISCIPLINE_COLOR[d.domain], color: "var(--paper)", fontSize: 10 }}>
+                <span className="chip" style={{ background: DISCIPLINE_COLOR[d.domain], color: "var(--bg-elevated)", fontSize: 10 }}>
                   {DISCIPLINE_LABEL[d.domain]}
                 </span>
                 <span style={{ fontWeight: 600 }}>{d.project_name}</span>
                 {d.deprecated && (
-                  <span className="chip" style={{ background: "var(--orange-tint)", color: "var(--orange-deep)", fontSize: 10 }}>
+                  <span className="chip" style={{ background: "var(--bg-hover)", color: "var(--text-primary)", fontSize: 10 }}>
                     Deprecated
                   </span>
                 )}
                 {d.outcome_validated ? (
-                  <span className="chip" style={{ marginLeft: "auto", background: "var(--positive-tint)", color: "var(--positive)", fontSize: 10 }}>
+                  <span className="chip" style={{ marginLeft: "auto", background: "var(--bg-secondary)", color: "var(--green)", fontSize: 10 }}>
                     Validated
                   </span>
                 ) : (
-                  <span className="chip" style={{ marginLeft: "auto", background: "var(--cream)", color: "var(--ink-mute)", fontSize: 10 }}>
+                  <span className="chip" style={{ marginLeft: "auto", background: "var(--bg-app)", color: "var(--text-tertiary)", fontSize: 10 }}>
                     Pending
                   </span>
                 )}
               </div>
 
               {d.reasoning ? (
-                <div style={{ fontSize: 14, color: "var(--ink)", marginTop: 10 }}>{d.reasoning}</div>
+                <div style={{ fontSize: 14, color: "var(--text-primary)", marginTop: 10 }}>{d.reasoning}</div>
               ) : (
-                <div style={{ fontSize: 14, color: "var(--ink-mute)", fontStyle: "italic", marginTop: 10 }}>
+                <div style={{ fontSize: 14, color: "var(--text-tertiary)", fontStyle: "italic", marginTop: 10 }}>
                   No reasoning recorded — personal only.
                 </div>
               )}
 
-              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 10 }}>
                 <span className="kicker">Decided</span>{" "}
                 <span style={{ display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "bottom" }}>
                   {d.recommendation}
@@ -160,7 +160,7 @@ export function Portfolio() {
               )}
 
               {d.deprecated && d.deprecation_reason && (
-                <div style={{ fontSize: 12, color: "var(--orange-deep)", marginTop: 8, fontStyle: "italic" }}>
+                <div style={{ fontSize: 12, color: "var(--text-primary)", marginTop: 8, fontStyle: "italic" }}>
                   ⚠ {d.deprecation_reason}
                 </div>
               )}
@@ -170,7 +170,7 @@ export function Portfolio() {
                 <span className="chip chip-soft" style={{ fontSize: 9 }}>
                   {d.visibility === "team" ? "👥 Team" : "🔒 Personal"}
                 </span>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-mute)" }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-tertiary)" }}>
                   {d.project_id} · {formatDate(d.created_at)}
                 </span>
                 <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 10px", marginLeft: "auto" }} disabled={busy === d.id} onClick={() => toggleVis(d)}>
@@ -181,7 +181,7 @@ export function Portfolio() {
                     Deprecate
                   </button>
                 )}
-                <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 10px", color: "var(--orange-deep)" }} disabled={busy === d.id} onClick={() => remove(d)}>
+                <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 10px", color: "var(--text-primary)" }} disabled={busy === d.id} onClick={() => remove(d)}>
                   Delete
                 </button>
               </div>
@@ -200,21 +200,21 @@ export function Portfolio() {
             Show validated team decisions →
           </button>
         ) : team.length === 0 ? (
-          <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No validated team decisions to surface yet.</div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>No validated team decisions to surface yet.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {team.map((d) => (
               <div key={d.id} className="card-soft" style={{ padding: 12, borderColor: DISCIPLINE_COLOR[d.domain] }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-                  <span className="chip" style={{ background: DISCIPLINE_COLOR[d.domain], color: "var(--paper)", fontSize: 9 }}>
+                  <span className="chip" style={{ background: DISCIPLINE_COLOR[d.domain], color: "var(--bg-elevated)", fontSize: 9 }}>
                     {DISCIPLINE_LABEL[d.domain]}
                   </span>
                   <b>{d.recommendation}</b>
-                  <span style={{ marginLeft: "auto", color: "var(--ink-mute)" }}>
+                  <span style={{ marginLeft: "auto", color: "var(--text-tertiary)" }}>
                     @{d.owner_id} · {d.project_name}
                   </span>
                 </div>
-                {d.reasoning && <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 6 }}>{d.reasoning}</div>}
+                {d.reasoning && <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 6 }}>{d.reasoning}</div>}
               </div>
             ))}
           </div>

@@ -43,17 +43,17 @@ function CodeSurface({ work }: { work: KindWork }) {
           Context scope · {files.length} {files.length === 1 ? "file" : "files"}
         </div>
         {scope.note && (
-          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>{scope.note}</div>
+          <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 10 }}>{scope.note}</div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {files.length === 0 && <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No files scoped yet.</div>}
+          {files.length === 0 && <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>No files scoped yet.</div>}
           {files.map((f) => (
             <div
               key={f}
               className="mono"
-              style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 8 }}
+              style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}
             >
-              <span style={{ color: "var(--orange)" }}>●</span>
+              <span style={{ color: "var(--ink-fill)" }}>●</span>
               {f}
             </div>
           ))}
@@ -62,16 +62,16 @@ function CodeSurface({ work }: { work: KindWork }) {
 
       <div
         className="mono"
-        style={{ background: "var(--ink)", color: "var(--paper)", borderRadius: 12, padding: 16, fontSize: 13, marginBottom: 12, boxShadow: "4px 4px 0 var(--orange)" }}
+        style={{ background: "var(--text-primary)", color: "var(--bg-elevated)", borderRadius: 12, padding: 16, fontSize: 13, marginBottom: 12, boxShadow: "4px 4px 0 var(--ink-fill)" }}
       >
         <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginBottom: 8 }}>fetch → focus → open (VSCode; swap `code .` for your editor)</div>
-        <div style={{ color: "var(--orange)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>$ {cmd}</div>
+        <div style={{ color: "var(--ink-fill)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>$ {cmd}</div>
       </div>
 
       {apiContract && (
         <div className="card-soft" style={{ padding: 18 }}>
           <div className="kicker" style={{ marginBottom: 8 }}>API contract</div>
-          <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--ink-soft)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {apiContract}
           </pre>
         </div>
@@ -87,7 +87,7 @@ function DesignSurface({ work }: { work: KindWork }) {
     <>
       <div className="card-soft" style={{ padding: 18, marginBottom: 12 }}>
         <div className="kicker" style={{ marginBottom: 8 }}>Design brief</div>
-        <div style={{ fontSize: 14, color: "var(--ink-soft)", lineHeight: 1.5 }}>
+        <div style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.5 }}>
           {scope.note || work.description}
         </div>
       </div>
@@ -95,16 +95,16 @@ function DesignSurface({ work }: { work: KindWork }) {
         <div className="card-soft" style={{ padding: 18 }}>
           <div className="kicker" style={{ marginBottom: 8 }}>Figma</div>
           {figma ? (
-            <a href={figma} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, color: "var(--info)", textDecoration: "underline", textUnderlineOffset: 3, wordBreak: "break-all" }}>
+            <a href={figma} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, color: "var(--blue)", textDecoration: "underline", textUnderlineOffset: 3, wordBreak: "break-all" }}>
               {figma}
             </a>
           ) : (
-            <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No Figma file linked yet.</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>No Figma file linked yet.</div>
           )}
         </div>
         <div className="card-soft" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
           <div className="kicker">Deliverable</div>
-          <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>Attach the frames you ship for this issue.</div>
+          <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>Attach the frames you ship for this issue.</div>
           <button className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }}>+ Attach frames</button>
         </div>
       </div>
@@ -125,9 +125,9 @@ function AuditSurface({ work }: { work: KindWork }) {
       <div className="card-soft" style={{ padding: 18 }}>
         <div className="kicker" style={{ marginBottom: 10 }}>Target pages</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {pages.length === 0 && <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>No pages specified.</div>}
+          {pages.length === 0 && <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>No pages specified.</div>}
           {pages.map((p) => (
-            <div key={p} className="mono" style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)" }}>
+            <div key={p} className="mono" style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border)" }}>
               {p}
             </div>
           ))}
@@ -136,9 +136,9 @@ function AuditSurface({ work }: { work: KindWork }) {
       <div className="card-soft" style={{ padding: 18 }}>
         <div className="kicker" style={{ marginBottom: 10 }}>Rubric</div>
         {rubric.length === 0 ? (
-          <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>{scope.note || "Use the standard accessibility + UX rubric."}</div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>{scope.note || "Use the standard accessibility + UX rubric."}</div>
         ) : (
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.6 }}>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
             {rubric.map((r, i) => (
               <li key={i}>{r}</li>
             ))}
@@ -155,13 +155,13 @@ function GenericSurface({ work }: { work: KindWork }) {
   return (
     <div className="card-soft" style={{ padding: 18 }}>
       <div className="kicker" style={{ marginBottom: 8 }}>{work.kind ? KIND_LABEL[work.kind] : "Work"} brief</div>
-      <div style={{ fontSize: 14, color: "var(--ink-soft)", lineHeight: 1.5 }}>
+      <div style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.5 }}>
         {scope.note || work.description}
       </div>
       {files.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 12 }}>
           {files.map((f) => (
-            <div key={f} className="mono" style={{ fontSize: 12, padding: "6px 10px", background: "var(--cream)", borderRadius: 6, border: "1px solid var(--line)" }}>
+            <div key={f} className="mono" style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg-app)", borderRadius: 6, border: "1px solid var(--border)" }}>
               {f}
             </div>
           ))}

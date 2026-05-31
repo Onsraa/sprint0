@@ -53,11 +53,11 @@ export function RatifyPanel() {
   if (!target || !plan || !planId) {
     return (
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
-        <div className="card-soft" style={{ padding: 40, textAlign: "center", border: "2px dashed var(--line-strong)" }}>
+        <div className="card-soft" style={{ padding: 40, textAlign: "center", border: "2px dashed var(--border-strong)" }}>
           <div className="display" style={{ fontSize: 22, marginBottom: 8 }}>
             Nothing to ratify yet.
           </div>
-          <div style={{ fontSize: 14, color: "var(--ink-soft)" }}>
+          <div style={{ fontSize: 14, color: "var(--text-secondary)" }}>
             A plan draft enters the relay once a manager drops a brief. Your discipline's slice shows up here.
           </div>
         </div>
@@ -133,23 +133,23 @@ export function RatifyPanel() {
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
             <span style={{ width: 9, height: 9, borderRadius: "50%", background: SIGNAL_COLOR[card.signal], display: "inline-block" }} />
             <span className="kicker">AI evaluation</span>
-            <span style={{ color: "var(--ink-mute)" }}>{card.card.confidence}% confidence</span>
+            <span style={{ color: "var(--text-tertiary)" }}>{card.card.confidence}% confidence</span>
             {card.low_confidence && (
-              <span style={{ color: "var(--orange-deep)", fontWeight: 700 }}>⚠ AI uncertain — your judgment is primary</span>
+              <span style={{ color: "var(--text-primary)", fontWeight: 700 }}>⚠ AI uncertain — your judgment is primary</span>
             )}
           </div>
           <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6 }}>{card.card.recommendation}</div>
           <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap", fontSize: 12 }}>
-            {card.card.pros.length > 0 && <div><b style={{ color: "var(--positive)" }}>+ </b>{card.card.pros.join(" · ")}</div>}
-            {card.card.cons.length > 0 && <div><b style={{ color: "var(--orange-deep)" }}>− </b>{card.card.cons.join(" · ")}</div>}
+            {card.card.pros.length > 0 && <div><b style={{ color: "var(--green)" }}>+ </b>{card.card.pros.join(" · ")}</div>}
+            {card.card.cons.length > 0 && <div><b style={{ color: "var(--text-primary)" }}>− </b>{card.card.cons.join(" · ")}</div>}
           </div>
           {card.signal === "orange" && card.card.conflict_reason && (
-            <div style={{ marginTop: 8, padding: "6px 10px", background: "var(--orange-soft)", borderRadius: 8, fontSize: 12, color: "var(--orange-deep)" }}>
+            <div style={{ marginTop: 8, padding: "6px 10px", background: "var(--bg-secondary)", borderRadius: 8, fontSize: 12, color: "var(--text-primary)" }}>
               ⚠ Conflicts with a past decision: {card.card.conflict_reason}
             </div>
           )}
           {[...card.past.own, ...card.past.team].length > 0 && (
-            <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-soft)" }}>
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-secondary)" }}>
               <span className="kicker">Past decisions</span>
               {[...card.past.own, ...card.past.team].slice(0, 3).map((d) => (
                 <div key={d.id} style={{ marginTop: 2 }}>
@@ -166,7 +166,7 @@ export function RatifyPanel() {
       )}
 
       {slice.length === 0 ? (
-        <div className="card-soft" style={{ padding: 28, textAlign: "center", color: "var(--ink-soft)" }}>
+        <div className="card-soft" style={{ padding: 28, textAlign: "center", color: "var(--text-secondary)" }}>
           No {DISCIPLINE_LABEL[target]} issues in this plan. Nothing to ratify — your gate auto-clears.
         </div>
       ) : (
@@ -181,7 +181,7 @@ export function RatifyPanel() {
       )}
 
       {/* Footer: note + actions */}
-      <div className="card-soft" style={{ padding: 18, marginTop: 18, background: "var(--cream)" }}>
+      <div className="card-soft" style={{ padding: 18, marginTop: 18, background: "var(--bg-app)" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
           <span className="kicker">Note to the next runner (optional)</span>
           <input
@@ -201,7 +201,7 @@ export function RatifyPanel() {
           />
         </label>
         {err && (
-          <div style={{ fontSize: 12, color: "var(--orange-deep)", marginBottom: 10, fontFamily: "var(--font-mono)" }}>
+          <div style={{ fontSize: 12, color: "var(--text-primary)", marginBottom: 10, fontFamily: "var(--font-mono)" }}>
             {err}
           </div>
         )}
@@ -222,7 +222,7 @@ export function RatifyPanel() {
           >
             {busy === "changes" ? "Sending…" : "Request changes"}
           </button>
-          <div style={{ marginLeft: "auto", fontSize: 12, color: "var(--ink-mute)" }}>
+          <div style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary)" }}>
             edits go to <span className="mono">/ratify/{target}</span>
           </div>
         </div>
@@ -256,7 +256,7 @@ function IssueEditor({
   return (
     <div className="card-soft" style={{ padding: 16, borderColor: accent }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <span className="mono" style={{ fontSize: 12, color: "var(--ink-mute)" }}>
+        <span className="mono" style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
           {value.id}
         </span>
         <span className="chip chip-soft" style={{ fontSize: 9, padding: "1px 7px" }}>
@@ -266,13 +266,13 @@ function IssueEditor({
           <span
             title={value.stretch_flag}
             className="chip"
-            style={{ fontSize: 9, padding: "1px 7px", background: "var(--orange-soft)", borderColor: "var(--orange)", color: "var(--orange-deep)", fontWeight: 700 }}
+            style={{ fontSize: 9, padding: "1px 7px", background: "var(--bg-secondary)", borderColor: "var(--ink-fill)", color: "var(--text-primary)", fontWeight: 700 }}
           >
             ⚠ stretch
           </span>
         )}
         {value.assignee && (
-          <span className="mono" style={{ marginLeft: "auto", fontSize: 11, color: "var(--ink-mute)" }}>
+          <span className="mono" style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-tertiary)" }}>
             @{value.assignee}
           </span>
         )}
@@ -315,9 +315,9 @@ function IssueEditor({
                   fontSize: 12,
                   fontWeight: 700,
                   textTransform: "capitalize",
-                  border: value.risk === r ? `1.5px solid ${RISK_COLOR[r]}` : "1.5px solid var(--line)",
-                  background: value.risk === r ? RISK_COLOR[r] : "var(--cream)",
-                  color: value.risk === r ? "var(--paper)" : "var(--ink-soft)",
+                  border: value.risk === r ? `1.5px solid ${RISK_COLOR[r]}` : "1.5px solid var(--border)",
+                  background: value.risk === r ? RISK_COLOR[r] : "var(--bg-app)",
+                  color: value.risk === r ? "var(--bg-elevated)" : "var(--text-secondary)",
                 }}
               >
                 {r}
@@ -342,9 +342,9 @@ function IssueEditor({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
-                  background: existing ? "var(--cream-deep)" : "var(--orange-soft)",
-                  borderColor: existing ? "var(--line-strong)" : "var(--orange)",
-                  color: existing ? "var(--ink-soft)" : "var(--orange-deep)",
+                  background: existing ? "var(--bg-secondary)" : "var(--bg-secondary)",
+                  borderColor: existing ? "var(--border-strong)" : "var(--ink-fill)",
+                  color: existing ? "var(--text-secondary)" : "var(--text-primary)",
                 }}
               >
                 <span style={{ fontWeight: 800 }}>{existing ? "✓" : "＋"}</span>
@@ -372,8 +372,8 @@ function IssueEditor({
             style={{ ...inputStyle, width: 150, fontFamily: "var(--font-mono)", fontSize: 12, padding: "5px 9px" }}
           />
         </div>
-        <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>
-          <b style={{ color: "var(--ink-soft)" }}>✓</b> existing · <b style={{ color: "var(--orange-deep)" }}>＋</b> new — Enter to add
+        <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+          <b style={{ color: "var(--text-secondary)" }}>✓</b> existing · <b style={{ color: "var(--text-primary)" }}>＋</b> new — Enter to add
         </span>
       </div>
 
@@ -395,10 +395,10 @@ function IssueEditor({
 
 const inputStyle: React.CSSProperties = {
   padding: "9px 12px",
-  border: "1.5px solid var(--line-strong)",
+  border: "1.5px solid var(--border-strong)",
   borderRadius: 8,
   fontSize: 14,
-  background: "var(--paper)",
+  background: "var(--bg-elevated)",
   fontFamily: "inherit",
   width: "100%",
 };

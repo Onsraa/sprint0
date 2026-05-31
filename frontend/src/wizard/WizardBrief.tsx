@@ -240,10 +240,10 @@ export function WizardBrief() {
           maxWidth: 1100,
           height: "calc(100vh - 48px)",
           maxHeight: 820,
-          background: "var(--cream)",
+          background: "var(--bg-app)",
           borderRadius: 24,
-          border: "2px solid var(--ink)",
-          boxShadow: "10px 10px 0 var(--ink)",
+          border: "2px solid var(--text-primary)",
+          boxShadow: "10px 10px 0 var(--text-primary)",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
@@ -253,8 +253,8 @@ export function WizardBrief() {
         <div
           style={{
             padding: "18px 24px",
-            borderBottom: "1.5px solid var(--line)",
-            background: "var(--paper)",
+            borderBottom: "1.5px solid var(--border)",
+            background: "var(--bg-elevated)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -278,8 +278,8 @@ export function WizardBrief() {
                   gap: 8,
                   padding: "6px 12px",
                   borderRadius: 999,
-                  background: i === step ? "var(--orange)" : i < step ? "var(--orange-soft)" : "transparent",
-                  color: i === step ? "var(--paper)" : i < step ? "var(--orange-deep)" : "var(--ink-mute)",
+                  background: i === step ? "var(--ink-fill)" : i < step ? "var(--bg-secondary)" : "transparent",
+                  color: i === step ? "var(--bg-elevated)" : i < step ? "var(--text-primary)" : "var(--text-tertiary)",
                   fontWeight: 700,
                   fontSize: 13,
                   opacity: i > step || i < firstStep ? 0.45 : 1,
@@ -292,8 +292,8 @@ export function WizardBrief() {
                     width: 20,
                     height: 20,
                     borderRadius: "50%",
-                    background: i === step ? "var(--paper)" : i < step ? "var(--orange)" : "var(--cream-deep)",
-                    color: i === step ? "var(--orange)" : "var(--paper)",
+                    background: i === step ? "var(--bg-elevated)" : i < step ? "var(--ink-fill)" : "var(--bg-secondary)",
+                    color: i === step ? "var(--ink-fill)" : "var(--bg-elevated)",
                     display: "grid",
                     placeItems: "center",
                     fontSize: 11,
@@ -353,8 +353,8 @@ export function WizardBrief() {
           <div
             style={{
               padding: "16px 24px",
-              borderTop: "1.5px solid var(--line)",
-              background: "var(--paper)",
+              borderTop: "1.5px solid var(--border)",
+              background: "var(--bg-elevated)",
               display: "flex",
               justifyContent: "space-between",
             }}
@@ -368,7 +368,7 @@ export function WizardBrief() {
               ← Back
             </button>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              {advanceErr && <span className="mono" style={{ fontSize: 11, color: "var(--orange-deep)" }}>{advanceErr}</span>}
+              {advanceErr && <span className="mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{advanceErr}</span>}
               <button onClick={close} className="btn btn-ghost btn-sm">
                 Save &amp; close
               </button>
@@ -409,7 +409,7 @@ function ResumeOffer({ draft: d, busy, onResume, onDiscard }: { draft: WizardDra
         <div className="display" style={{ fontSize: 32, margin: "6px 0 8px" }}>
           Pick up where you left off?
         </div>
-        <div style={{ fontSize: 15, color: "var(--ink-soft)" }}>
+        <div style={{ fontSize: 15, color: "var(--text-secondary)" }}>
           <b>{d.projectName}</b> · {STEPS[d.step]?.label ?? "in progress"} (step {d.step + 1}/{STEPS.length})
         </div>
       </div>
@@ -458,7 +458,7 @@ function StepDrop({ setState, next, onReset }: { setState: SetState; next: () =>
         <div className="display" style={{ fontSize: 44, marginBottom: 10 }}>
           Drop the brief.
         </div>
-        <div style={{ fontSize: 16, color: "var(--ink-soft)" }}>Upload a file, or paste the brief text below.</div>
+        <div style={{ fontSize: 16, color: "var(--text-secondary)" }}>Upload a file, or paste the brief text below.</div>
       </div>
 
       <input
@@ -487,10 +487,10 @@ function StepDrop({ setState, next, onReset }: { setState: SetState; next: () =>
         style={{
           width: "100%",
           maxWidth: 640,
-          border: `3px dashed ${drag ? "var(--orange)" : file ? "var(--positive)" : "var(--ink-faint)"}`,
+          border: `3px dashed ${drag ? "var(--ink-fill)" : file ? "var(--green)" : "var(--text-quaternary)"}`,
           borderRadius: 24,
           padding: 28,
-          background: drag ? "var(--orange-tint)" : file ? "rgba(47,138,78,0.06)" : "var(--paper)",
+          background: drag ? "var(--bg-hover)" : file ? "rgba(47,138,78,0.06)" : "var(--bg-elevated)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -499,9 +499,9 @@ function StepDrop({ setState, next, onReset }: { setState: SetState; next: () =>
           transition: "all 200ms",
         }}
       >
-        <div style={{ fontSize: 34, color: file ? "var(--positive)" : "var(--ink-mute)" }}>{file ? "📄" : "⬇"}</div>
+        <div style={{ fontSize: 34, color: file ? "var(--green)" : "var(--text-tertiary)" }}>{file ? "📄" : "⬇"}</div>
         <div style={{ fontWeight: 700, fontSize: 16 }}>{file ? file.name : "Drag a file or click to browse"}</div>
-        <div style={{ color: "var(--ink-mute)", fontSize: 12 }}>PDF · txt · md</div>
+        <div style={{ color: "var(--text-tertiary)", fontSize: 12 }}>PDF · txt · md</div>
       </div>
 
       <div style={{ width: "100%", maxWidth: 640 }}>
@@ -519,10 +519,10 @@ function StepDrop({ setState, next, onReset }: { setState: SetState; next: () =>
           style={{
             width: "100%",
             padding: "12px 14px",
-            border: "1.5px solid var(--line-strong)",
+            border: "1.5px solid var(--border-strong)",
             borderRadius: 12,
             fontSize: 14,
-            background: "var(--paper)",
+            background: "var(--bg-elevated)",
             outline: "none",
             fontFamily: "inherit",
             resize: "vertical",
@@ -530,7 +530,7 @@ function StepDrop({ setState, next, onReset }: { setState: SetState; next: () =>
         />
       </div>
 
-      {err && <div style={{ color: "var(--orange-deep)", fontSize: 13, fontFamily: "var(--font-mono)" }}>{err}</div>}
+      {err && <div style={{ color: "var(--text-primary)", fontSize: 13, fontFamily: "var(--font-mono)" }}>{err}</div>}
 
       <button onClick={submit} className="btn btn-primary" disabled={busy || (!file && !text.trim())} style={{ opacity: busy || (!file && !text.trim()) ? 0.5 : 1 }}>
         {busy ? "Reading…" : "Read it →"}
@@ -593,15 +593,15 @@ function StepClarify({ state, setState }: { state: WizardState; setState: SetSta
                     style={{
                       fontSize: 10,
                       padding: "2px 8px",
-                      background: r.action === "drop" ? "var(--cream-deep)" : "var(--orange-soft)",
-                      borderColor: r.action === "drop" ? "var(--line-strong)" : "var(--orange)",
-                      color: r.action === "drop" ? "var(--ink-mute)" : "var(--orange-deep)",
+                      background: r.action === "drop" ? "var(--bg-secondary)" : "var(--bg-secondary)",
+                      borderColor: r.action === "drop" ? "var(--border-strong)" : "var(--ink-fill)",
+                      color: r.action === "drop" ? "var(--text-tertiary)" : "var(--text-primary)",
                     }}
                   >
                     {r.action}
                   </span>
                   <b>{r.feature}</b>
-                  <span style={{ color: "var(--ink-mute)" }}>← {r.from_project}</span>
+                  <span style={{ color: "var(--text-tertiary)" }}>← {r.from_project}</span>
                 </div>
               ))}
             </div>
@@ -616,7 +616,7 @@ function StepClarify({ state, setState }: { state: WizardState; setState: SetSta
           {spec.ambiguities.length} {spec.ambiguities.length === 1 ? "question" : "questions"}.
         </div>
         {spec.ambiguities.length === 0 ? (
-          <div className="card-soft" style={{ padding: 20, color: "var(--ink-soft)", fontSize: 14 }}>
+          <div className="card-soft" style={{ padding: 20, color: "var(--text-secondary)", fontSize: 14 }}>
             Nothing ambiguous — the brief was clear. Continue to architecture.
           </div>
         ) : (
@@ -635,7 +635,7 @@ function ClarifyCard({ amb, answer, onAnswer }: { amb: AmbiguityCard; answer: st
   const onPreset = amb.options.includes(answer);
   return (
     <div className="card-soft" style={{ padding: 14 }}>
-      <div className="mono" style={{ fontSize: 10, color: "var(--orange)", fontWeight: 800, textTransform: "uppercase" }}>
+      <div className="mono" style={{ fontSize: 10, color: "var(--ink-fill)", fontWeight: 800, textTransform: "uppercase" }}>
         {amb.feature}
       </div>
       <div style={{ fontWeight: 700, fontSize: 14, margin: "6px 0 10px" }}>{amb.question}</div>
@@ -649,9 +649,9 @@ function ClarifyCard({ amb, answer, onAnswer }: { amb: AmbiguityCard; answer: st
               borderRadius: 999,
               fontSize: 12,
               fontWeight: 700,
-              border: answer === opt ? "1.5px solid var(--orange)" : "1.5px solid var(--line-strong)",
-              background: answer === opt ? "var(--orange-soft)" : "var(--cream)",
-              color: answer === opt ? "var(--orange-deep)" : "var(--ink-soft)",
+              border: answer === opt ? "1.5px solid var(--ink-fill)" : "1.5px solid var(--border-strong)",
+              background: answer === opt ? "var(--bg-secondary)" : "var(--bg-app)",
+              color: answer === opt ? "var(--text-primary)" : "var(--text-secondary)",
             }}
           >
             {opt}
@@ -665,10 +665,10 @@ function ClarifyCard({ amb, answer, onAnswer }: { amb: AmbiguityCard; answer: st
         style={{
           width: "100%",
           padding: "7px 10px",
-          border: "1.5px solid var(--line-strong)",
+          border: "1.5px solid var(--border-strong)",
           borderRadius: 8,
           fontSize: 12,
-          background: "var(--paper)",
+          background: "var(--bg-elevated)",
           outline: "none",
           fontFamily: "inherit",
         }}
@@ -726,8 +726,8 @@ function StepArchitecture({ state, setState }: { state: WizardState; setState: S
                 textAlign: "left",
                 cursor: "pointer",
                 borderWidth: active ? 2 : 1,
-                borderColor: active ? "var(--orange)" : "var(--line-strong)",
-                background: active ? "var(--orange-tint)" : "var(--paper)",
+                borderColor: active ? "var(--ink-fill)" : "var(--border-strong)",
+                background: active ? "var(--bg-hover)" : "var(--bg-elevated)",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -736,33 +736,33 @@ function StepArchitecture({ state, setState }: { state: WizardState; setState: S
                 </div>
                 {active && <span className="chip chip-orange" style={{ fontSize: 10, padding: "2px 8px" }}>chosen</span>}
               </div>
-              <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12, lineHeight: 1.45 }}>{card.summary}</div>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.45 }}>{card.summary}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
                 {Object.entries(card.tech_stack).map(([k, v]) => (
                   <span key={k} className="chip" style={{ fontSize: 10, padding: "2px 8px" }}>
-                    <span style={{ color: "var(--ink-mute)" }}>{k}:</span> {v}
+                    <span style={{ color: "var(--text-tertiary)" }}>{k}:</span> {v}
                   </span>
                 ))}
               </div>
               {card.grounded_on.length > 0 && (
-                <div className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", marginBottom: 2 }}>
+                <div className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>
                   ↻ {card.grounded_on.join(" · ")}
                 </div>
               )}
               {/* Defer the rationale — expanding must not pick the card. */}
               <div onClick={(e) => e.stopPropagation()}>
                 <Disclosure summary="Why this?">
-                  <div style={{ fontSize: 12, color: "var(--ink-soft)", lineHeight: 1.45, marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 8 }}>
                     <b>Why:</b> {card.rationale}
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--positive)", fontWeight: 700 }}>{card.fit_to_constraints}</div>
+                  <div style={{ fontSize: 12, color: "var(--green)", fontWeight: 700 }}>{card.fit_to_constraints}</div>
                 </Disclosure>
               </div>
             </div>
           );
         })}
       </div>
-      <div style={{ marginTop: 14, fontSize: 12, color: "var(--ink-mute)" }}>
+      <div style={{ marginTop: 14, fontSize: 12, color: "var(--text-tertiary)" }}>
         {picked ? `Locked: ${picked} — Continue below.` : "Choose a stack to continue."}
       </div>
     </div>
@@ -839,7 +839,7 @@ function StepPlan({
           <div className="display" style={{ fontSize: 30, marginTop: 4 }}>
             What should sprint0 add?
           </div>
-          <div style={{ fontSize: 14, color: "var(--ink-soft)", marginTop: 6 }}>
+          <div style={{ fontSize: 14, color: "var(--text-secondary)", marginTop: 6 }}>
             Grounded on the live project (#{featureProjectId}). Produces a delta plan + its own relay.
           </div>
         </div>
@@ -850,16 +850,16 @@ function StepPlan({
           placeholder="Add saved-search alerts: agents subscribe to a filter and get notified on new matching listings."
           style={{
             padding: "12px 14px",
-            border: "1.5px solid var(--line-strong)",
+            border: "1.5px solid var(--border-strong)",
             borderRadius: 12,
             fontSize: 14,
-            background: "var(--paper)",
+            background: "var(--bg-elevated)",
             outline: "none",
             fontFamily: "inherit",
             resize: "vertical",
           }}
         />
-        {err && <div style={{ color: "var(--orange-deep)", fontSize: 13, fontFamily: "var(--font-mono)" }}>{err}</div>}
+        {err && <div style={{ color: "var(--text-primary)", fontSize: 13, fontFamily: "var(--font-mono)" }}>{err}</div>}
         <button onClick={draftFeature} className="btn btn-primary" disabled={busy || !featureText.trim()} style={{ alignSelf: "flex-start", opacity: busy || !featureText.trim() ? 0.5 : 1 }}>
           {busy ? "Drafting…" : "Draft delta plan →"}
         </button>
@@ -882,7 +882,7 @@ function StepPlan({
           </div>
         </div>
         {plan.grounded_on.length > 0 && (
-          <div className="mono" style={{ fontSize: 11, color: "var(--positive)" }}>↻ {plan.grounded_on.join(" · ")}</div>
+          <div className="mono" style={{ fontSize: 11, color: "var(--green)" }}>↻ {plan.grounded_on.join(" · ")}</div>
         )}
       </div>
 
@@ -898,7 +898,7 @@ function StepPlan({
                     key={issue.id}
                     style={{
                       padding: "8px 10px",
-                      background: "var(--cream)",
+                      background: "var(--bg-app)",
                       borderRadius: 8,
                       borderLeft: `3px solid ${DISCIPLINE_COLOR[issue.discipline]}`,
                       display: "flex",
@@ -906,16 +906,16 @@ function StepPlan({
                       gap: 8,
                     }}
                   >
-                    <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>
+                    <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
                       {issue.id}
                     </span>
                     <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{issue.title}</span>
                     {issue.stretch_flag && (
-                      <span title={issue.stretch_flag} style={{ color: "var(--warn)", fontSize: 12, fontWeight: 800 }}>⚠</span>
+                      <span title={issue.stretch_flag} style={{ color: "var(--amber)", fontSize: 12, fontWeight: 800 }}>⚠</span>
                     )}
                     <span style={{ fontSize: 10, fontWeight: 700, color: RISK_COLOR[issue.risk] }}>{issue.risk}</span>
                     <span className="chip" style={{ fontSize: 9, padding: "1px 7px" }}>{DISCIPLINE_LABEL[issue.discipline]}</span>
-                    <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>{issue.estimate_days}d</span>
+                    <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{issue.estimate_days}d</span>
                   </div>
                 ))}
               </div>
@@ -938,7 +938,7 @@ function StepPlan({
                     className="card-soft"
                     style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}
                   >
-                    <span style={{ width: 10, height: 10, borderRadius: 3, background: DISCIPLINE_COLOR[g.discipline], border: "1.5px solid var(--ink)" }} />
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: DISCIPLINE_COLOR[g.discipline], border: "1.5px solid var(--text-primary)" }} />
                     <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{DISCIPLINE_LABEL[g.discipline]}</span>
                     <span className="chip" style={{ fontSize: 10, padding: "2px 8px", background: st.bg, color: st.fg, borderColor: st.border }}>
                       {st.label}
@@ -946,7 +946,7 @@ function StepPlan({
                   </div>
                 );
               })}
-              <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", marginTop: 4 }}>
+              <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
                 baton: {relay.baton.map((d) => DISCIPLINE_LABEL[d]).join(", ") || "—"}
               </div>
             </div>
@@ -1029,12 +1029,12 @@ function StepTrust({
           How much auto-passes?
         </div>
 
-        <div style={{ padding: 20, background: "var(--paper)", borderRadius: 16, border: "1.5px solid var(--line-strong)" }}>
+        <div style={{ padding: 20, background: "var(--bg-elevated)", borderRadius: 16, border: "1.5px solid var(--border-strong)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
-            <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 700 }}>
+            <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 700 }}>
               {level.toUpperCase()}
             </div>
-            <div className="display" style={{ fontSize: 28, color: "var(--orange)" }}>
+            <div className="display" style={{ fontSize: 28, color: "var(--ink-fill)" }}>
               {dial}%
             </div>
           </div>
@@ -1058,13 +1058,13 @@ function StepTrust({
                 transform: "translateY(-50%)",
                 height: 16,
                 borderRadius: 999,
-                background: "var(--cream-deep)",
-                border: "2px solid var(--ink)",
+                background: "var(--bg-secondary)",
+                border: "2px solid var(--text-primary)",
                 pointerEvents: "none",
                 overflow: "hidden",
               }}
             >
-              <div style={{ height: "100%", width: `${dial}%`, background: "var(--orange)" }} />
+              <div style={{ height: "100%", width: `${dial}%`, background: "var(--ink-fill)" }} />
             </div>
           </div>
 
@@ -1078,9 +1078,9 @@ function StepTrust({
                   borderRadius: 8,
                   fontSize: 11,
                   fontWeight: 700,
-                  background: level === n ? "var(--orange-soft)" : "var(--cream)",
-                  color: level === n ? "var(--orange-deep)" : "var(--ink-soft)",
-                  border: level === n ? "1.5px solid var(--orange)" : "1.5px solid var(--line)",
+                  background: level === n ? "var(--bg-secondary)" : "var(--bg-app)",
+                  color: level === n ? "var(--text-primary)" : "var(--text-secondary)",
+                  border: level === n ? "1.5px solid var(--ink-fill)" : "1.5px solid var(--border)",
                 }}
               >
                 {n}
@@ -1088,13 +1088,13 @@ function StepTrust({
             ))}
           </div>
 
-          <div style={{ marginTop: 18, padding: 14, background: "var(--cream)", borderRadius: 10, display: "flex", gap: 10, alignItems: "center" }}>
+          <div style={{ marginTop: 18, padding: 14, background: "var(--bg-app)", borderRadius: 10, display: "flex", gap: 10, alignItems: "center" }}>
             <Mascot size={40} expression={level === "Autonomous" ? "cheer" : level === "Navigator" ? "working" : "happy"} />
             <div style={{ fontSize: 13 }}>
               <b>{level}.</b> {busy ? "recomputing gates…" : `${autoCount} gate${autoCount === 1 ? "" : "s"} auto-pass, ${humanCount} need a human.`}
             </div>
           </div>
-          {err && <div style={{ color: "var(--orange-deep)", fontSize: 12, marginTop: 10, fontFamily: "var(--font-mono)" }}>{err}</div>}
+          {err && <div style={{ color: "var(--text-primary)", fontSize: 12, marginTop: 10, fontFamily: "var(--font-mono)" }}>{err}</div>}
         </div>
       </div>
 
@@ -1114,17 +1114,17 @@ function StepTrust({
                   alignItems: "center",
                   gap: 10,
                   padding: "10px 0",
-                  borderBottom: i < arr.length - 1 ? "1px solid var(--line)" : "none",
+                  borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : "none",
                 }}
               >
-                <span style={{ width: 10, height: 10, borderRadius: 3, background: DISCIPLINE_COLOR[g.discipline], border: "1.5px solid var(--ink)" }} />
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: DISCIPLINE_COLOR[g.discipline], border: "1.5px solid var(--text-primary)" }} />
                 <div style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{DISCIPLINE_LABEL[g.discipline]}</div>
                 <div
                   style={{
                     fontSize: 11,
                     fontWeight: 800,
                     fontFamily: "var(--font-mono)",
-                    color: auto ? "var(--info)" : "var(--warn)",
+                    color: auto ? "var(--blue)" : "var(--amber)",
                   }}
                 >
                   {auto ? "AUTO" : "HUMAN"}
@@ -1233,7 +1233,7 @@ function StepDispatch({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
           {stats.map(([l, v]) => (
             <div key={l} className="card-soft" style={{ padding: 16 }}>
-              <div className="display" style={{ fontSize: 28, color: "var(--orange)" }}>
+              <div className="display" style={{ fontSize: 28, color: "var(--ink-fill)" }}>
                 {v}
               </div>
               <div className="kicker" style={{ marginTop: 4 }}>
@@ -1246,7 +1246,7 @@ function StepDispatch({
         <div className="card-soft" style={{ padding: 18, display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ flex: 1 }}>
             <div className="kicker">Project {result.project_id}</div>
-            <a href={result.web_url} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, color: "var(--info)", textDecoration: "underline", textUnderlineOffset: 3, wordBreak: "break-all" }}>
+            <a href={result.web_url} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, color: "var(--blue)", textDecoration: "underline", textUnderlineOffset: 3, wordBreak: "break-all" }}>
               {result.web_url}
             </a>
           </div>
@@ -1255,7 +1255,7 @@ function StepDispatch({
           </button>
         </div>
         {result.persist_warning && (
-          <div style={{ fontSize: 11, color: "var(--warn)", fontFamily: "var(--font-mono)" }}>
+          <div style={{ fontSize: 11, color: "var(--amber)", fontFamily: "var(--font-mono)" }}>
             persist warning: {result.persist_warning}
           </div>
         )}
@@ -1270,7 +1270,7 @@ function StepDispatch({
         <div className="display" style={{ fontSize: 32, marginBottom: 8 }}>
           {busy ? "Scaffolding GitLab…" : "Ready to dispatch."}
         </div>
-        <div style={{ fontSize: 15, color: "var(--ink-soft)", maxWidth: 460 }}>
+        <div style={{ fontSize: 15, color: "var(--text-secondary)", maxWidth: 460 }}>
           Copilot dispatches once every gate is cleared. Autonomous force-passes the relay, then scaffolds.
         </div>
       </div>
@@ -1286,12 +1286,12 @@ function StepDispatch({
             <PreviewStat n={preview.invite_count} label={`of ${preview.free_tier_cap} seats`} warn={preview.exceeds_cap} />
           </div>
           {preview.member_invites.length > 0 && (
-            <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", wordBreak: "break-word" }}>
+            <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", wordBreak: "break-word" }}>
               invites: {preview.member_invites.map((m) => "@" + m).join(" · ")}
             </div>
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--ink-soft)" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: preview.relay_cleared ? "var(--positive)" : "var(--warn)", flexShrink: 0 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-secondary)" }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: preview.relay_cleared ? "var(--green)" : "var(--amber)", flexShrink: 0 }} />
             {preview.relay_cleared ? "Relay cleared — copilot can dispatch now." : "Relay not cleared — copilot will block; autonomous force-passes it."}
           </div>
           {preview.exceeds_cap && (
@@ -1304,15 +1304,15 @@ function StepDispatch({
       {busy && steps.length > 0 && (
         <div className="card-soft" style={{ padding: 16, width: 420, maxWidth: "90%", display: "flex", flexDirection: "column", gap: 8 }}>
           {steps.map((s, i) => (
-            <div key={i} className="mono" style={{ fontSize: 12, color: i === steps.length - 1 ? "var(--ink)" : "var(--ink-mute)", display: "flex", gap: 8 }}>
-              <span style={{ color: "var(--orange)", fontWeight: 700 }}>{s.step}/{s.of}</span>
+            <div key={i} className="mono" style={{ fontSize: 12, color: i === steps.length - 1 ? "var(--text-primary)" : "var(--text-tertiary)", display: "flex", gap: 8 }}>
+              <span style={{ color: "var(--ink-fill)", fontWeight: 700 }}>{s.step}/{s.of}</span>
               {s.message}
             </div>
           ))}
         </div>
       )}
       {err && (
-        <div className="card-soft" style={{ padding: 14, borderColor: "var(--orange)", color: "var(--orange-deep)", fontFamily: "var(--font-mono)", fontSize: 12, maxWidth: 560 }}>
+        <div className="card-soft" style={{ padding: 14, borderColor: "var(--ink-fill)", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 12, maxWidth: 560 }}>
           {err}
         </div>
       )}
@@ -1331,8 +1331,8 @@ function StepDispatch({
 /* ── small shared bits ── */
 function PreviewStat({ n, label, warn }: { n: number; label: string; warn?: boolean }) {
   return (
-    <div style={{ textAlign: "center", padding: "8px 4px", background: "var(--cream)", borderRadius: 8 }}>
-      <div className="display" style={{ fontSize: 22, color: warn ? "var(--red)" : "var(--ink)" }}>{n}</div>
+    <div style={{ textAlign: "center", padding: "8px 4px", background: "var(--bg-app)", borderRadius: 8 }}>
+      <div className="display" style={{ fontSize: 22, color: warn ? "var(--red)" : "var(--text-primary)" }}>{n}</div>
       <div className="kicker" style={{ marginTop: 2, fontSize: 9 }}>{label}</div>
     </div>
   );
@@ -1341,8 +1341,8 @@ function PreviewStat({ n, label, warn }: { n: number; label: string; warn?: bool
 function Loading({ label }: { label: string }) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
-      <div style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid var(--orange)", borderTopColor: "transparent", animation: "spin-slow 0.8s linear infinite" }} />
-      <div className="mono" style={{ fontSize: 13, color: "var(--ink-mute)" }}>
+      <div style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid var(--ink-fill)", borderTopColor: "transparent", animation: "spin-slow 0.8s linear infinite" }} />
+      <div className="mono" style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
         {label}
       </div>
     </div>
@@ -1356,7 +1356,7 @@ function ErrBox({ err }: { err: string | null }) {
       <div className="display" style={{ fontSize: 22 }}>
         Something tripped.
       </div>
-      <div className="mono" style={{ fontSize: 12, color: "var(--orange-deep)", maxWidth: 520, textAlign: "center" }}>
+      <div className="mono" style={{ fontSize: 12, color: "var(--text-primary)", maxWidth: 520, textAlign: "center" }}>
         {err ?? "No data returned."}
       </div>
     </div>
@@ -1366,7 +1366,7 @@ function ErrBox({ err }: { err: string | null }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "6px 0" }}>
-      <div className="mono" style={{ fontSize: 10, color: "var(--orange)", fontWeight: 800, textTransform: "uppercase", minWidth: 80 }}>
+      <div className="mono" style={{ fontSize: 10, color: "var(--ink-fill)", fontWeight: 800, textTransform: "uppercase", minWidth: 80 }}>
         {label}
       </div>
       <div style={{ fontSize: 14, fontWeight: 600 }}>{children}</div>
@@ -1376,8 +1376,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function ChipRow({ label, items }: { label: string; items: string[] }) {
   return (
-    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "6px 0", borderTop: "1px solid var(--line)" }}>
-      <div className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", fontWeight: 800, textTransform: "uppercase", minWidth: 80, paddingTop: 4 }}>
+    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "6px 0", borderTop: "1px solid var(--border)" }}>
+      <div className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 800, textTransform: "uppercase", minWidth: 80, paddingTop: 4 }}>
         {label}
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

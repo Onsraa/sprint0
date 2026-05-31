@@ -55,7 +55,7 @@ export function WorkEventControl({
     <div style={{ position: "relative", marginLeft: "auto" }}>
       <button
         className="chip"
-        style={{ cursor: "pointer", background: "var(--orange-soft)", color: "var(--orange-deep)", borderColor: "var(--orange)", fontWeight: 700 }}
+        style={{ cursor: "pointer", background: "var(--bg-secondary)", color: "var(--text-primary)", borderColor: "var(--ink-fill)", fontWeight: 700 }}
         onClick={() => setOpen((o) => !o)}
         title="Simulate a calendar or work change and watch the schedule re-flow"
       >
@@ -69,8 +69,8 @@ export function WorkEventControl({
             top: "calc(100% + 8px)",
             zIndex: 50,
             width: 320,
-            background: "var(--paper)",
-            border: "1.5px solid var(--ink)",
+            background: "var(--bg-elevated)",
+            border: "1.5px solid var(--text-primary)",
             borderRadius: 10,
             padding: 16,
             boxShadow: "0 8px 28px rgba(26,20,16,0.18)",
@@ -82,7 +82,7 @@ export function WorkEventControl({
                 key={k}
                 onClick={() => setKind(k)}
                 className="chip"
-                style={{ fontSize: 11, cursor: "pointer", ...(kind === k ? { background: "var(--ink)", color: "var(--paper)" } : {}) }}
+                style={{ fontSize: 11, cursor: "pointer", ...(kind === k ? { background: "var(--text-primary)", color: "var(--bg-elevated)" } : {}) }}
               >
                 {label}
               </button>
@@ -120,7 +120,7 @@ export function WorkEventControl({
             </>
           )}
 
-          {err && <div className="mono" style={{ fontSize: 11, color: "var(--orange-deep)", marginTop: 8 }}>{err}</div>}
+          {err && <div className="mono" style={{ fontSize: 11, color: "var(--text-primary)", marginTop: 8 }}>{err}</div>}
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
             <button className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Cancel</button>
@@ -137,7 +137,7 @@ export function WorkEventControl({
 const inputStyle: CSSProperties = {
   width: "100%",
   padding: "6px 9px",
-  border: "1.5px solid var(--line-strong)",
+  border: "1.5px solid var(--border-strong)",
   borderRadius: 8,
   fontSize: 12,
   fontFamily: "inherit",
@@ -147,7 +147,7 @@ const inputStyle: CSSProperties = {
 
 function Label({ children }: { children: ReactNode }) {
   return (
-    <div className="mono" style={{ fontSize: 10, color: "var(--orange)", fontWeight: 800, textTransform: "uppercase", marginBottom: 4 }}>
+    <div className="mono" style={{ fontSize: 10, color: "var(--ink-fill)", fontWeight: 800, textTransform: "uppercase", marginBottom: 4 }}>
       {children}
     </div>
   );

@@ -13,16 +13,16 @@ const DOTS: Record<TrustLevel, string> = { low: "●○○", medium: "●●○"
    or Reconcile the whole roster (R3 GitLab linking). */
 
 const TIERS: { name: string; level: TrustLevel; range: string; color: string }[] = [
-  { name: "Senior", level: "high", range: "high trust", color: "var(--positive)" },
-  { name: "Trusted", level: "medium", range: "medium trust", color: "var(--info)" },
-  { name: "Apprentice", level: "low", range: "low trust", color: "var(--ink-mute)" },
+  { name: "Senior", level: "high", range: "high trust", color: "var(--green)" },
+  { name: "Trusted", level: "medium", range: "medium trust", color: "var(--blue)" },
+  { name: "Apprentice", level: "low", range: "low trust", color: "var(--text-tertiary)" },
 ];
 
 const initials = (name: string) =>
   name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
 
 const roleLabel = (m: Member) => `${m.discipline ? DISCIPLINE_LABEL[m.discipline] : "Generalist"} · ${m.seniority}`;
-const accentOf = (m: Member) => (m.discipline ? DISCIPLINE_COLOR[m.discipline] : "var(--ink-mute)");
+const accentOf = (m: Member) => (m.discipline ? DISCIPLINE_COLOR[m.discipline] : "var(--text-tertiary)");
 
 type AccessState = { i_can_see: AccessGrant[]; can_see_me: AccessGrant[]; pending_in: AccessGrant[] };
 const EMPTY_ACCESS: AccessState = { i_can_see: [], can_see_me: [], pending_in: [] };
@@ -104,7 +104,7 @@ export function TeamView() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
         <div>
           <div className="display" style={{ fontSize: 28, marginBottom: 6 }}>The team.</div>
-          <p style={{ color: "var(--ink-soft)", maxWidth: 520, margin: 0, fontSize: 14 }}>
+          <p style={{ color: "var(--text-secondary)", maxWidth: 520, margin: 0, fontSize: 14 }}>
             Live passports. Trust grows with every successful merge. New hires start at <b>Apprentice</b> and earn their way up.
           </p>
         </div>
@@ -123,9 +123,9 @@ export function TeamView() {
       <AccessPanel access={access} reloadAccess={reloadAccess} />
 
       {loading ? (
-        <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--ink-soft)" }}>Loading roster…</div>
+        <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--text-secondary)" }}>Loading roster…</div>
       ) : err ? (
-        <div className="card-soft mono" style={{ padding: 16, color: "var(--orange-deep)", fontSize: 13 }}>{err}</div>
+        <div className="card-soft mono" style={{ padding: 16, color: "var(--text-primary)", fontSize: 13 }}>{err}</div>
       ) : (
         TIERS.map((t) => (
           <TierStrip
@@ -161,7 +161,7 @@ function TierStrip({
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
         <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />
         <div className="display" style={{ fontSize: 20 }}>{name}</div>
-        <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 700 }}>
+        <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 700 }}>
           {range} · {devs.length} {devs.length === 1 ? "dev" : "devs"}
         </div>
       </div>
@@ -180,7 +180,7 @@ function TierStrip({
           />
         ))}
         {devs.length === 0 && (
-          <div className="card-soft" style={{ padding: 20, textAlign: "center", color: "var(--ink-mute)", fontSize: 13, fontStyle: "italic", border: "1.5px dashed var(--line-strong)" }}>
+          <div className="card-soft" style={{ padding: 20, textAlign: "center", color: "var(--text-tertiary)", fontSize: 13, fontStyle: "italic", border: "1.5px dashed var(--border-strong)" }}>
             no devs at this tier
           </div>
         )}
@@ -246,17 +246,17 @@ function DevCard({
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <div style={{
           width: 44, height: 44, borderRadius: "50%",
-          background: accentOf(d), color: "var(--paper)", border: "2px solid var(--ink)",
+          background: accentOf(d), color: "var(--bg-elevated)", border: "2px solid var(--text-primary)",
           display: "grid", placeItems: "center", fontWeight: 800, flexShrink: 0,
         }}>{initials(d.name)}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</div>
-            {d.promoted && <span className="chip" style={{ fontSize: 9, padding: "1px 6px", background: "var(--positive-tint)", color: "var(--positive)" }}>↑</span>}
+            {d.promoted && <span className="chip" style={{ fontSize: 9, padding: "1px 6px", background: "var(--bg-secondary)", color: "var(--green)" }}>↑</span>}
           </div>
-          <div style={{ fontSize: 11, color: "var(--ink-mute)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{roleLabel(d)}</div>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{roleLabel(d)}</div>
         </div>
-        <div className="mono" style={{ fontSize: 12, fontWeight: 800, color: "var(--orange)", textTransform: "capitalize" }}>{d.trust_level}</div>
+        <div className="mono" style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-fill)", textTransform: "capitalize" }}>{d.trust_level}</div>
       </div>
 
       {Object.keys(d.trust).length > 0 && (
@@ -264,34 +264,34 @@ function DevCard({
           {(Object.entries(d.trust) as [Discipline, TrustLevel][]).map(([disc, lvl]) => (
             <span key={disc} className="mono" style={{ fontSize: 10, display: "inline-flex", alignItems: "center", gap: 4 }}>
               <span style={{ color: DISCIPLINE_COLOR[disc], fontWeight: 700 }}>{DISCIPLINE_LABEL[disc]}</span>
-              <span style={{ letterSpacing: 1, color: "var(--ink-soft)" }}>{DOTS[lvl]}</span>
+              <span style={{ letterSpacing: 1, color: "var(--text-secondary)" }}>{DOTS[lvl]}</span>
             </span>
           ))}
         </div>
       )}
 
       <div style={{ marginBottom: 10 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, marginBottom: 4, color: "var(--ink-mute)", fontWeight: 700 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, marginBottom: 4, color: "var(--text-tertiary)", fontWeight: 700 }}>
           <span>BANDWIDTH</span>
           <span>{d.load}%</span>
         </div>
-        <div style={{ height: 5, background: "var(--cream-deep)", borderRadius: 999, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${d.load}%`, background: d.load > 75 ? "var(--warn)" : "var(--positive)" }} />
+        <div style={{ height: 5, background: "var(--bg-secondary)", borderRadius: 999, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${d.load}%`, background: d.load > 75 ? "var(--amber)" : "var(--green)" }} />
         </div>
       </div>
 
       {d.skills_text && (
-        <div style={{ fontSize: 11, color: "var(--ink-soft)", lineHeight: 1.4, marginBottom: 10, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+        <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.4, marginBottom: 10, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
           {d.skills_text}
         </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {linked ? (
-          <span className="mono" style={{ fontSize: 10, color: "var(--positive)", fontWeight: 700 }}>✓ @{d.gitlab_username}</span>
+          <span className="mono" style={{ fontSize: 10, color: "var(--green)", fontWeight: 700 }}>✓ @{d.gitlab_username}</span>
         ) : (
           <>
-            <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", fontWeight: 700 }}>unlinked</span>
+            <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 700 }}>unlinked</span>
             {isManager && (
               <button
                 onClick={() => onLink(d.username)}
@@ -318,9 +318,9 @@ function DevCard({
             </button>
             {grant ? (
               <>
-                <span className="chip mono" style={{ fontSize: 9, padding: "2px 6px", background: "var(--positive-tint)", color: "var(--positive)", fontWeight: 700 }}>✓ access</span>
+                <span className="chip mono" style={{ fontSize: 9, padding: "2px 6px", background: "var(--bg-secondary)", color: "var(--green)", fontWeight: 700 }}>✓ access</span>
                 {inlineNote === "error" && (
-                  <span className="mono" style={{ fontSize: 9, color: "var(--orange-deep)", fontWeight: 700 }}>error</span>
+                  <span className="mono" style={{ fontSize: 9, color: "var(--text-primary)", fontWeight: 700 }}>error</span>
                 )}
                 <button
                   onClick={() => handleRevoke(grant.id)}
@@ -332,7 +332,7 @@ function DevCard({
                 </button>
               </>
             ) : isPending || inlineNote === "requested" ? (
-              <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", fontWeight: 700 }}>requested</span>
+              <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 700 }}>requested</span>
             ) : (
               <button
                 onClick={handleRequestAccess}
@@ -388,19 +388,19 @@ function AccessPanel({ access, reloadAccess }: { access: AccessState; reloadAcce
 
   return (
     <div className="card-soft" style={{ padding: "14px 18px", marginBottom: 24 }}>
-      <div className="mono" style={{ fontSize: 10, fontWeight: 700, color: "var(--ink-mute)", letterSpacing: 1, marginBottom: hasAny ? 12 : 0, textTransform: "uppercase" }}>
+      <div className="mono" style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: 1, marginBottom: hasAny ? 12 : 0, textTransform: "uppercase" }}>
         Access
       </div>
       {err && (
-        <div className="mono" style={{ fontSize: 10, color: "var(--orange-deep)", fontWeight: 700, marginBottom: 8 }}>{err}</div>
+        <div className="mono" style={{ fontSize: 10, color: "var(--text-primary)", fontWeight: 700, marginBottom: 8 }}>{err}</div>
       )}
       {!hasAny ? (
-        <div style={{ fontSize: 12, color: "var(--ink-mute)", fontStyle: "italic" }}>No access grants yet.</div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No access grants yet.</div>
       ) : (
         <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
           {access.can_see_me.length > 0 && (
             <div style={{ minWidth: 220 }}>
-              <div className="mono" style={{ fontSize: 10, color: "var(--ink-soft)", fontWeight: 700, marginBottom: 6 }}>Can see my tasks</div>
+              <div className="mono" style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 700, marginBottom: 6 }}>Can see my tasks</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {access.can_see_me.map((g) => (
                   <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -428,12 +428,12 @@ function AccessPanel({ access, reloadAccess }: { access: AccessState; reloadAcce
           )}
           {access.i_can_see.length > 0 && (
             <div style={{ minWidth: 180 }}>
-              <div className="mono" style={{ fontSize: 10, color: "var(--ink-soft)", fontWeight: 700, marginBottom: 6 }}>I can see</div>
+              <div className="mono" style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 700, marginBottom: 6 }}>I can see</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {access.i_can_see.map((g) => (
                   <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 12, fontWeight: 600 }}>@{g.subject_id}</span>
-                    <span className="chip mono" style={{ fontSize: 9, padding: "1px 5px", background: g.status === "granted" ? "var(--positive-tint)" : "var(--cream-deep)", color: g.status === "granted" ? "var(--positive)" : "var(--ink-mute)" }}>
+                    <span className="chip mono" style={{ fontSize: 9, padding: "1px 5px", background: g.status === "granted" ? "var(--bg-secondary)" : "var(--bg-secondary)", color: g.status === "granted" ? "var(--green)" : "var(--text-tertiary)" }}>
                       {g.status}
                     </span>
                     {g.status === "granted" && (

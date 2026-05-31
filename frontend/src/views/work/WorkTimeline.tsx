@@ -29,7 +29,7 @@ function Bar({
   spanMs: number;
   onOpen: (id: string) => void;
 }) {
-  const color = DISCIPLINE_COLOR[t.discipline] ?? "var(--ink-mute)";
+  const color = DISCIPLINE_COLOR[t.discipline] ?? "var(--text-tertiary)";
   const left = leftPct(t.scheduled_start!, minMs, spanMs);
   const width = widthPct(t.scheduled_start!, t.scheduled_end!, spanMs);
 
@@ -59,7 +59,7 @@ function Bar({
         <span
           style={{
             fontSize: 11,
-            color: "var(--paper)",
+            color: "var(--bg-elevated)",
             fontWeight: 600,
             whiteSpace: "nowrap",
             overflow: "hidden",
@@ -110,7 +110,7 @@ export function WorkTimeline({
           style={{
             padding: "24px 20px",
             textAlign: "center",
-            color: "var(--ink-mute)",
+            color: "var(--text-tertiary)",
             fontSize: 13,
           }}
         >
@@ -189,9 +189,9 @@ export function WorkTimeline({
               fontSize: 11,
               padding: "3px 10px",
               cursor: "pointer",
-              background: mode === m ? "var(--ink)" : "var(--cream-deep)",
-              color: mode === m ? "var(--paper)" : "var(--ink-soft)",
-              borderColor: mode === m ? "var(--ink)" : "var(--line-strong)",
+              background: mode === m ? "var(--text-primary)" : "var(--bg-secondary)",
+              color: mode === m ? "var(--bg-elevated)" : "var(--text-secondary)",
+              borderColor: mode === m ? "var(--text-primary)" : "var(--border-strong)",
               fontWeight: mode === m ? 700 : 400,
               border: "1px solid",
               borderRadius: 99,
@@ -214,7 +214,7 @@ export function WorkTimeline({
             style={{
               display: "flex",
               marginBottom: 4,
-              borderBottom: "1px solid var(--line)",
+              borderBottom: "1px solid var(--border)",
               paddingBottom: 4,
             }}
           >
@@ -234,7 +234,7 @@ export function WorkTimeline({
                       top: 0,
                       fontSize: 10,
                       fontFamily: "var(--font-mono, monospace)",
-                      color: "var(--ink-mute)",
+                      color: "var(--text-tertiary)",
                       transform: "translateX(-50%)",
                       whiteSpace: "nowrap",
                     }}
@@ -253,7 +253,7 @@ export function WorkTimeline({
               style={{
                 borderBottom:
                   laneIdx < lanes.length - 1
-                    ? "1px solid var(--line)"
+                    ? "1px solid var(--border)"
                     : "none",
                 marginBottom: 2,
                 paddingBottom: 4,
@@ -279,7 +279,7 @@ export function WorkTimeline({
                         style={{
                           fontSize: 11,
                           fontWeight: 700,
-                          color: "var(--ink-soft)",
+                          color: "var(--text-secondary)",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
@@ -306,7 +306,7 @@ export function WorkTimeline({
                             top: 0,
                             bottom: 0,
                             width: 1,
-                            background: "var(--line)",
+                            background: "var(--border)",
                             pointerEvents: "none",
                           }}
                         />
@@ -322,7 +322,7 @@ export function WorkTimeline({
                           top: 0,
                           bottom: 0,
                           width: 2,
-                          background: "var(--orange)",
+                          background: "var(--ink-fill)",
                           pointerEvents: "none",
                           zIndex: 2,
                         }}
@@ -358,7 +358,7 @@ export function WorkTimeline({
                     left: `${todayPct}%`,
                     transform: "translateX(-50%)",
                     fontSize: 9,
-                    color: "var(--orange)",
+                    color: "var(--ink-fill)",
                     fontWeight: 600,
                     whiteSpace: "nowrap",
                     fontFamily: "var(--font-mono, monospace)",
@@ -378,7 +378,7 @@ export function WorkTimeline({
           style={{
             marginTop: 8,
             fontSize: 11,
-            color: "var(--ink-mute)",
+            color: "var(--text-tertiary)",
             paddingLeft: 2,
           }}
         >

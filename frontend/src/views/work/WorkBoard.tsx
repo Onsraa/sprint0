@@ -67,7 +67,7 @@ function Column({ label, status, tasks, onOpen, onDropTo }: {
         <span style={{ fontWeight: 700, fontSize: 13 }}>{label}</span>
         <span
           className="chip"
-          style={{ fontSize: 10, padding: "1px 7px", background: "var(--cream-deep)", color: "var(--ink-mute)", borderColor: "var(--line-strong)" }}
+          style={{ fontSize: 10, padding: "1px 7px", background: "var(--bg-secondary)", color: "var(--text-tertiary)", borderColor: "var(--border-strong)" }}
         >
           {tasks.length}
         </span>
@@ -93,7 +93,7 @@ function ManagerGrid({ tasks, onOpen, onDropTo }: {
       {/* Header row */}
       <div />
       {STATUS_COLUMNS.map((col) => (
-        <div key={col.status} style={{ fontWeight: 700, fontSize: 13, paddingBottom: 6, borderBottom: "1.5px solid var(--line)" }}>
+        <div key={col.status} style={{ fontWeight: 700, fontSize: 13, paddingBottom: 6, borderBottom: "1.5px solid var(--border)" }}>
           {col.label}
         </div>
       ))}
@@ -123,7 +123,7 @@ function ProjectRow({ projectId, tasks, onOpen, onDropTo }: {
       <div style={{ display: "flex", alignItems: "flex-start", paddingTop: 6 }}>
         <span
           className="mono"
-          style={{ fontSize: 11, fontWeight: 700, color: "var(--ink-mute)", paddingTop: 2 }}
+          style={{ fontSize: 11, fontWeight: 700, color: "var(--text-tertiary)", paddingTop: 2 }}
         >
           #{projectId}
         </span>
@@ -150,7 +150,7 @@ function ProjectRow({ projectId, tasks, onOpen, onDropTo }: {
 /* ── TaskCard ─────────────────────────────────────────────────────────── */
 
 function TaskCard({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) => void }) {
-  const disciplineColor = DISCIPLINE_COLOR[t.discipline] ?? "var(--ink-mute)";
+  const disciplineColor = DISCIPLINE_COLOR[t.discipline] ?? "var(--text-tertiary)";
 
   if (t.redacted) {
     return (
@@ -165,7 +165,7 @@ function TaskCard({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) =>
         <span style={{ fontSize: 12, fontWeight: 600, flex: 1, lineHeight: 1.3 }}>{t.title}</span>
         <span
           className="chip"
-          style={{ fontSize: 9, padding: "1px 6px", background: "var(--cream-deep)", color: "var(--ink-mute)", borderColor: "var(--line-strong)", whiteSpace: "nowrap" }}
+          style={{ fontSize: 9, padding: "1px 6px", background: "var(--bg-secondary)", color: "var(--text-tertiary)", borderColor: "var(--border-strong)", whiteSpace: "nowrap" }}
         >
           {t.status}
         </span>
@@ -193,14 +193,14 @@ function TaskCard({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) =>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center", paddingLeft: 14 }}>
         {/* Assignee */}
         {t.assignee ? (
-          <span className="mono" style={{ fontSize: 10, color: "var(--ink-soft)" }}>@{t.assignee}</span>
+          <span className="mono" style={{ fontSize: 10, color: "var(--text-secondary)" }}>@{t.assignee}</span>
         ) : (
-          <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>unassigned</span>
+          <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)" }}>unassigned</span>
         )}
 
         {/* Estimate */}
         {t.estimate_days != null && (
-          <span style={{ fontSize: 10, color: "var(--ink-mute)" }}>est {t.estimate_days}d</span>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>est {t.estimate_days}d</span>
         )}
 
         {/* Risk chip */}
@@ -212,7 +212,7 @@ function TaskCard({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) =>
               padding: "1px 6px",
               background: RISK_COLOR[t.risk],
               borderColor: RISK_COLOR[t.risk],
-              color: "var(--paper)",
+              color: "var(--bg-elevated)",
             }}
           >
             {t.risk}
@@ -223,7 +223,7 @@ function TaskCard({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) =>
         {t.assigned_by !== undefined && (
           <span
             className="chip"
-            style={{ fontSize: 9, padding: "1px 6px", background: "var(--cream-deep)", color: "var(--ink-mute)", borderColor: "var(--line-strong)" }}
+            style={{ fontSize: 9, padding: "1px 6px", background: "var(--bg-secondary)", color: "var(--text-tertiary)", borderColor: "var(--border-strong)" }}
           >
             {provenanceTag(t.assigned_by)}
           </span>
@@ -233,7 +233,7 @@ function TaskCard({ task: t, onOpen }: { task: WorkTask; onOpen: (id: string) =>
         {t.status === "blocked" && (
           <span
             className="chip"
-            style={{ fontSize: 9, padding: "1px 6px", background: "var(--orange-deep)", borderColor: "var(--orange-deep)", color: "var(--paper)", fontWeight: 700 }}
+            style={{ fontSize: 9, padding: "1px 6px", background: "var(--text-primary)", borderColor: "var(--text-primary)", color: "var(--bg-elevated)", fontWeight: 700 }}
           >
             blocked
           </span>

@@ -57,18 +57,18 @@ export function RelayBoard() {
         <div className="display" style={{ fontSize: 28, marginTop: 4 }}>
           {plan.project_name} — pass the baton.
         </div>
-        <div style={{ fontSize: 14, color: "var(--ink-soft)", marginTop: 6 }}>
+        <div style={{ fontSize: 14, color: "var(--text-secondary)", marginTop: 6 }}>
           {"{UI/UX ∥ Backend ∥ DevOps} → Frontend → QA. "}
           {baton.size > 0 ? (
             <>
               Baton held by{" "}
-              <b style={{ color: "var(--ink)" }}>
+              <b style={{ color: "var(--text-primary)" }}>
                 {relay.baton.map((d) => DISCIPLINE_LABEL[d]).join(", ")}
               </b>
               .
             </>
           ) : (
-            <b style={{ color: "var(--positive)" }}>All gates cleared.</b>
+            <b style={{ color: "var(--green)" }}>All gates cleared.</b>
           )}
         </div>
       </div>
@@ -148,14 +148,14 @@ function IntegrationPanel() {
       style={{
         padding: 18,
         marginTop: 24,
-        borderColor: failing.length ? "var(--orange-soft)" : "var(--line-strong)",
-        background: failing.length ? "var(--orange-tint)" : undefined,
+        borderColor: failing.length ? "var(--bg-secondary)" : "var(--border-strong)",
+        background: failing.length ? "var(--bg-hover)" : undefined,
       }}
     >
-      <div className="kicker" style={{ color: failing.length ? "var(--orange-deep)" : undefined }}>
+      <div className="kicker" style={{ color: failing.length ? "var(--text-primary)" : undefined }}>
         API integration
       </div>
-      <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4, marginBottom: 12 }}>
+      <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4, marginBottom: 12 }}>
         A failing API holds the QA gate until the producer fixes it — ratified slices aren't reworked.
       </div>
 
@@ -163,16 +163,16 @@ function IntegrationPanel() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: mine.length ? 16 : 0 }}>
           {failing.map((s) => (
             <div key={s.target_issue_id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span className="chip" style={{ background: "var(--orange-deep)", color: "var(--paper)", borderColor: "var(--orange-deep)", fontSize: 11 }}>
+              <span className="chip" style={{ background: "var(--text-primary)", color: "var(--bg-elevated)", borderColor: "var(--text-primary)", fontSize: 11 }}>
                 failing
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{titleOf(s.target_issue_id)}</span>
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", marginLeft: 8 }}>
+                <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 8 }}>
                   by @{s.by}
                   {s.reporter_issue_id ? ` · ${titleOf(s.reporter_issue_id)}` : ""}
                 </span>
-                {s.note && <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>{s.note}</div>}
+                {s.note && <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{s.note}</div>}
               </div>
               <button onClick={() => run({ state: "ok", target_issue_id: s.target_issue_id })} disabled={busy} className="btn btn-ghost btn-sm">
                 Mark api-ok ✓
@@ -183,7 +183,7 @@ function IntegrationPanel() {
       )}
 
       {mine.length > 0 && (
-        <div style={{ borderTop: failing.length ? "1px solid var(--line)" : undefined, paddingTop: failing.length ? 14 : 0, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ borderTop: failing.length ? "1px solid var(--border)" : undefined, paddingTop: failing.length ? 14 : 0, display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700 }}>Report a failing API on one of your issues</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <select
@@ -213,7 +213,7 @@ function IntegrationPanel() {
           </div>
           {candidates && (
             <div style={{ marginTop: 4 }}>
-              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>Which API is failing? Pick the producer:</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 6 }}>Which API is failing? Pick the producer:</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {candidates.map((c) => (
                   <button
@@ -231,24 +231,24 @@ function IntegrationPanel() {
         </div>
       )}
 
-      {err && <div style={{ fontSize: 12, color: "var(--orange-deep)", fontFamily: "var(--font-mono)", marginTop: 8 }}>{err}</div>}
+      {err && <div style={{ fontSize: 12, color: "var(--text-primary)", fontFamily: "var(--font-mono)", marginTop: 8 }}>{err}</div>}
     </div>
   );
 }
 
 const selectStyle: React.CSSProperties = {
   padding: "8px 11px",
-  border: "1.5px solid var(--line-strong)",
+  border: "1.5px solid var(--border-strong)",
   borderRadius: 8,
   fontSize: 13,
-  background: "var(--paper)",
+  background: "var(--bg-elevated)",
   fontFamily: "inherit",
 };
 
 function Connector() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "var(--ink-faint)" }}>
-      <div style={{ width: 2, height: 18, background: "var(--line-strong)" }} />
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "var(--text-quaternary)" }}>
+      <div style={{ width: 2, height: 18, background: "var(--border-strong)" }} />
       <div style={{ fontSize: 14, marginTop: -4 }}>▼</div>
     </div>
   );
@@ -278,8 +278,8 @@ function GateCard({
         padding: 16,
         position: "relative",
         borderWidth: isMine || holdsBaton ? 2 : 1,
-        borderColor: holdsBaton ? "var(--orange)" : isMine ? accent : "var(--line-strong)",
-        boxShadow: holdsBaton ? "4px 4px 0 var(--orange)" : undefined,
+        borderColor: holdsBaton ? "var(--ink-fill)" : isMine ? accent : "var(--border-strong)",
+        boxShadow: holdsBaton ? "4px 4px 0 var(--ink-fill)" : undefined,
       }}
     >
       {holdsBaton && (
@@ -291,10 +291,10 @@ function GateCard({
         </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <span style={{ width: 12, height: 12, borderRadius: 3, background: accent, border: "1.5px solid var(--ink)" }} />
+        <span style={{ width: 12, height: 12, borderRadius: 3, background: accent, border: "1.5px solid var(--text-primary)" }} />
         <div style={{ fontWeight: 800, fontSize: 15 }}>{DISCIPLINE_LABEL[gate.discipline]}</div>
         {isStretched && (
-          <span title="a stretched assignment in this slice" style={{ color: "var(--warn)", fontSize: 13, fontWeight: 800 }}>⚠</span>
+          <span title="a stretched assignment in this slice" style={{ color: "var(--amber)", fontSize: 13, fontWeight: 800 }}>⚠</span>
         )}
         {isMine && (
           <span className="chip" style={{ fontSize: 9, padding: "1px 7px", marginLeft: "auto" }}>
@@ -321,7 +321,7 @@ function GateCard({
             {gate.tier === "auto_pass" ? "auto-pass" : gate.tier === "one_expert" ? "1 expert" : "2 experts"}
           </span>
           {gate.blast_radius != null && (
-            <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>
+            <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
               blast {gate.blast_radius}
               {gate.expected_cost != null ? ` · cost ${gate.expected_cost}` : ""}
             </span>
@@ -330,12 +330,12 @@ function GateCard({
       )}
 
       {gate.depends_on.length > 0 && (
-        <div className="mono" style={{ fontSize: 10, color: "var(--ink-mute)", marginTop: 10 }}>
+        <div className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 10 }}>
           waits on: {gate.depends_on.map((d) => DISCIPLINE_LABEL[d]).join(" · ")}
         </div>
       )}
       {gate.note && (
-        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.4 }}>{gate.note}</div>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.4 }}>{gate.note}</div>
       )}
 
       {onRatify && !done && (
@@ -355,12 +355,12 @@ function EmptyRelay() {
   return (
     <div
       className="card-soft"
-      style={{ padding: 40, textAlign: "center", border: "2px dashed var(--line-strong)" }}
+      style={{ padding: 40, textAlign: "center", border: "2px dashed var(--border-strong)" }}
     >
       <div className="display" style={{ fontSize: 22, marginBottom: 8 }}>
         No plan in the relay yet.
       </div>
-      <div style={{ fontSize: 14, color: "var(--ink-soft)" }}>
+      <div style={{ fontSize: 14, color: "var(--text-secondary)" }}>
         Drop a brief from the manager wizard — a plan draft enters the relay and shows up here.
       </div>
     </div>

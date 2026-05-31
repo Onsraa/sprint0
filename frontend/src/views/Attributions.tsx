@@ -54,19 +54,19 @@ export function Attributions() {
       <div className="display" style={{ fontSize: 28, marginTop: 4 }}>
         {count === 0 ? "Attribution queue" : `${count} merge${count === 1 ? "" : "s"} awaiting attribution`}
       </div>
-      <div style={{ color: "var(--ink-soft)", fontSize: 13, marginTop: 4 }}>
+      <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
         Merges sprint0 couldn't map to a roster member. Assign the runner who earned it — their passport grows.
       </div>
 
-      {err && <div className="card-soft mono" style={{ marginTop: 16, padding: 12, color: "var(--orange-deep)", fontSize: 12 }}>{err}</div>}
+      {err && <div className="card-soft mono" style={{ marginTop: 16, padding: 12, color: "var(--text-primary)", fontSize: 12 }}>{err}</div>}
 
       <div style={{ marginTop: 16 }}>
         {loading ? (
-          <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--ink-soft)" }}>Loading…</div>
+          <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--text-secondary)" }}>Loading…</div>
         ) : count === 0 ? (
-          <div className="card-soft" style={{ padding: 24, textAlign: "center", border: "1px dashed var(--line-strong)" }}>
+          <div className="card-soft" style={{ padding: 24, textAlign: "center", border: "1px dashed var(--border-strong)" }}>
             <div className="display" style={{ fontSize: 18 }}>No merges awaiting attribution.</div>
-            <div style={{ color: "var(--ink-soft)", fontSize: 13, marginTop: 6 }}>
+            <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 6 }}>
               When a merge can't be matched to a roster member, it shows up here for your call.
             </div>
           </div>
@@ -78,10 +78,10 @@ export function Attributions() {
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span className="mono" style={{ fontWeight: 700 }}>@{a.gitlab_username}</span>
                     <span className="chip chip-soft" style={{ fontSize: 10 }}>{a.task_type}</span>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>score {a.score.toFixed(2)}</span>
+                    <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>score {a.score.toFixed(2)}</span>
                   </div>
                   {a.suggested && (
-                    <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 6 }}>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
                       AI suggests: <b>{a.suggested}</b>
                     </div>
                   )}
@@ -89,7 +89,7 @@ export function Attributions() {
                 <select
                   value={pickFor(a)}
                   onChange={(e) => setPicks((p) => ({ ...p, [a.id]: e.target.value }))}
-                  style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 13, background: "var(--paper)", fontFamily: "inherit" }}
+                  style={{ padding: "8px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 13, background: "var(--bg-elevated)", fontFamily: "inherit" }}
                 >
                   {members.map((m) => (
                     <option key={m.username} value={m.username}>

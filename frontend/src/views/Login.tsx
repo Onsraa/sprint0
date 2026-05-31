@@ -12,9 +12,9 @@ import { DISCIPLINE_LABEL } from "../lib/relayUtils";
    independently, so several personas can be driven side-by-side. */
 
 const TRUST_COLOR: Record<string, string> = {
-  high: "var(--positive)",
-  medium: "var(--info)",
-  low: "var(--ink-mute)",
+  high: "var(--green)",
+  medium: "var(--blue)",
+  low: "var(--text-tertiary)",
 };
 
 export function Login() {
@@ -56,12 +56,12 @@ export function Login() {
   };
 
   return (
-    <div style={{ height: "100vh", display: "grid", gridTemplateColumns: "1fr 1fr", background: "var(--cream)" }}>
+    <div style={{ height: "100vh", display: "grid", gridTemplateColumns: "1fr 1fr", background: "var(--bg-app)" }}>
       {/* Left — brand panel */}
       <div
         style={{
-          background: "var(--orange)",
-          color: "var(--paper)",
+          background: "var(--ink-fill)",
+          color: "var(--bg-elevated)",
           padding: 48,
           position: "relative",
           overflow: "hidden",
@@ -70,7 +70,7 @@ export function Login() {
           justifyContent: "space-between",
         }}
       >
-        <Sprint0Logo size={22} color="var(--paper)" markColor="var(--paper)" markOutline="var(--ink)" />
+        <Sprint0Logo size={22} color="var(--bg-elevated)" markColor="var(--bg-elevated)" markOutline="var(--text-primary)" />
         <div style={{ position: "relative", zIndex: 2 }}>
           <div className="kicker" style={{ color: "rgba(255,255,255,0.7)" }}>
             Sign in
@@ -85,7 +85,7 @@ export function Login() {
           </p>
         </div>
         <div style={{ position: "absolute", right: -30, bottom: -40, transform: "rotate(8deg)" }}>
-          <Mascot size={260} expression="happy" color="var(--orange-deep)" outline="var(--paper)" />
+          <Mascot size={260} expression="happy" color="var(--text-primary)" outline="var(--bg-elevated)" />
         </div>
       </div>
 
@@ -100,16 +100,16 @@ export function Login() {
           {loadErr && (
             <div
               className="card-soft"
-              style={{ padding: 14, marginBottom: 14, borderColor: "var(--orange)", color: "var(--orange-deep)", fontFamily: "var(--font-mono)", fontSize: 12 }}
+              style={{ padding: 14, marginBottom: 14, borderColor: "var(--ink-fill)", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 12 }}
             >
               Couldn't load the roster: {loadErr}
             </div>
           )}
 
           {!members && !loadErr && (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--ink-mute)", fontSize: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-tertiary)", fontSize: 14 }}>
               <span
-                style={{ width: 20, height: 20, borderRadius: "50%", border: "2.5px solid var(--orange)", borderTopColor: "transparent", animation: "spin-slow 0.8s linear infinite" }}
+                style={{ width: 20, height: 20, borderRadius: "50%", border: "2.5px solid var(--ink-fill)", borderTopColor: "transparent", animation: "spin-slow 0.8s linear infinite" }}
               />
               Loading roster…
             </div>
@@ -118,7 +118,7 @@ export function Login() {
           {members && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {members.length === 0 && (
-                <div className="card-soft" style={{ padding: 20, color: "var(--ink-soft)", fontSize: 14 }}>
+                <div className="card-soft" style={{ padding: 20, color: "var(--text-secondary)", fontSize: 14 }}>
                   No accounts on the roster yet. Use the field below to sign in by username.
                 </div>
               )}
@@ -129,7 +129,7 @@ export function Login() {
           )}
 
           {/* Sign in by username (covers the manager + any account not in the dev roster). */}
-          <div className="card-soft" style={{ padding: 16, marginTop: 16, background: "var(--cream)" }}>
+          <div className="card-soft" style={{ padding: 16, marginTop: 16, background: "var(--bg-app)" }}>
             <div className="kicker" style={{ marginBottom: 8 }}>
               Or sign in by username
             </div>
@@ -147,10 +147,10 @@ export function Login() {
                 style={{
                   flex: 1,
                   padding: "9px 12px",
-                  border: "1.5px solid var(--line-strong)",
+                  border: "1.5px solid var(--border-strong)",
                   borderRadius: 8,
                   fontSize: 14,
-                  background: "var(--paper)",
+                  background: "var(--bg-elevated)",
                   outline: "none",
                   fontFamily: "inherit",
                 }}
@@ -162,7 +162,7 @@ export function Login() {
           </div>
 
           {err && (
-            <div style={{ color: "var(--orange-deep)", fontSize: 13, marginTop: 12, fontFamily: "var(--font-mono)" }}>{err}</div>
+            <div style={{ color: "var(--text-primary)", fontSize: 13, marginTop: 12, fontFamily: "var(--font-mono)" }}>{err}</div>
           )}
         </div>
       </div>
@@ -179,7 +179,7 @@ function AccountCard({ member, busy, onClick }: { member: Member; busy: boolean;
     .slice(0, 2)
     .join("")
     .toUpperCase();
-  const trustC = TRUST_COLOR[member.trust_level] ?? "var(--ink-mute)";
+  const trustC = TRUST_COLOR[member.trust_level] ?? "var(--text-tertiary)";
   const overLoaded = member.load >= 100;
 
   return (
@@ -194,9 +194,9 @@ function AccountCard({ member, busy, onClick }: { member: Member; busy: boolean;
           width: 44,
           height: 44,
           borderRadius: "50%",
-          background: isManager ? "var(--orange)" : "var(--info)",
-          color: "var(--paper)",
-          border: "2px solid var(--ink)",
+          background: isManager ? "var(--ink-fill)" : "var(--blue)",
+          color: "var(--bg-elevated)",
+          border: "2px solid var(--text-primary)",
           display: "grid",
           placeItems: "center",
           fontWeight: 800,
@@ -213,7 +213,7 @@ function AccountCard({ member, busy, onClick }: { member: Member; busy: boolean;
             {member.role}
           </span>
         </div>
-        <div style={{ fontSize: 12, color: "var(--ink-mute)", fontFamily: "var(--font-mono)" }}>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
           {isManager ? "orchestrates" : member.discipline ? DISCIPLINE_LABEL[member.discipline] : "unassigned"}
           {!isManager && <> · {member.seniority}</>}
         </div>
@@ -222,7 +222,7 @@ function AccountCard({ member, busy, onClick }: { member: Member; busy: boolean;
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
           <span
             className="chip"
-            style={{ fontSize: 10, padding: "2px 8px", background: overLoaded ? "var(--cream-deep)" : "var(--cream)", color: overLoaded ? "var(--warn)" : "var(--ink-soft)" }}
+            style={{ fontSize: 10, padding: "2px 8px", background: overLoaded ? "var(--bg-secondary)" : "var(--bg-app)", color: overLoaded ? "var(--amber)" : "var(--text-secondary)" }}
           >
             load {member.load}%
           </span>
@@ -232,7 +232,7 @@ function AccountCard({ member, busy, onClick }: { member: Member; busy: boolean;
           </span>
         </div>
       )}
-      <span style={{ fontSize: 16, color: "var(--ink-faint)" }}>→</span>
+      <span style={{ fontSize: 16, color: "var(--text-quaternary)" }}>→</span>
     </button>
   );
 }

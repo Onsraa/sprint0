@@ -74,7 +74,7 @@ export function Dashboard() {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "flex-end",
-          borderBottom: "1.5px solid var(--line)",
+          borderBottom: "1.5px solid var(--border)",
         }}
       >
         <div>
@@ -82,7 +82,7 @@ export function Dashboard() {
           <div className="display" style={{ fontSize: 36, marginTop: 6 }}>
             {total} {total === 1 ? "project" : "projects"} · {shipped} shipped.
           </div>
-          <div style={{ fontSize: 13, color: "var(--ink-mute)", marginTop: 6, fontFamily: "var(--font-mono)" }}>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 6, fontFamily: "var(--font-mono)" }}>
             {totalIssues} issues scaffolded across the relay
           </div>
         </div>
@@ -101,10 +101,10 @@ export function Dashboard() {
       {liveProjectId != null && (
         <div
           className="card-soft"
-          style={{ padding: 16, marginBottom: 20, display: "flex", alignItems: "center", gap: 12, background: "var(--orange-tint)", borderColor: "var(--orange-soft)" }}
+          style={{ padding: 16, marginBottom: 20, display: "flex", alignItems: "center", gap: 12, background: "var(--bg-hover)", borderColor: "var(--bg-secondary)" }}
         >
-          <span className="kicker" style={{ color: "var(--orange-deep)" }}>Live project {liveProjectId}</span>
-          <span style={{ fontSize: 13, color: "var(--ink-soft)", flex: 1 }}>
+          <span className="kicker" style={{ color: "var(--text-primary)" }}>Live project {liveProjectId}</span>
+          <span style={{ fontSize: 13, color: "var(--text-secondary)", flex: 1 }}>
             Dispatched this session — find it below to add a feature mid-production or close it out.
           </span>
         </div>
@@ -114,7 +114,7 @@ export function Dashboard() {
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <div className="display" style={{ fontSize: 22 }}>Active</div>
-          <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 700 }}>sprint0-managed</div>
+          <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 700 }}>sprint0-managed</div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           {(["all", "active", "shipped"] as const).map((f) => (
@@ -122,7 +122,7 @@ export function Dashboard() {
               key={f}
               onClick={() => setFilter(f)}
               className="chip"
-              style={{ textTransform: "capitalize", ...(filter === f ? { background: "var(--ink)", color: "var(--paper)" } : { cursor: "pointer" }) }}
+              style={{ textTransform: "capitalize", ...(filter === f ? { background: "var(--text-primary)", color: "var(--bg-elevated)" } : { cursor: "pointer" }) }}
             >
               {f}
             </button>
@@ -135,8 +135,8 @@ export function Dashboard() {
           onClick={newProject}
           className="card-soft"
           style={{
-            padding: 40, width: "100%", border: "2px dashed var(--line-strong)", background: "transparent",
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: "var(--ink-mute)", cursor: "pointer",
+            padding: 40, width: "100%", border: "2px dashed var(--border-strong)", background: "transparent",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: "var(--text-tertiary)", cursor: "pointer",
           }}
         >
           <div style={{ fontSize: 32 }}>+</div>
@@ -146,7 +146,7 @@ export function Dashboard() {
       ) : (
         <>
           {shownActive.length === 0 ? (
-            <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--ink-mute)", fontSize: 13 }}>
+            <div className="card-soft" style={{ padding: 24, textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
               No matching active projects.
             </div>
           ) : (
@@ -161,7 +161,7 @@ export function Dashboard() {
             <>
               <div style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "28px 0 14px" }}>
                 <div className="display" style={{ fontSize: 22 }}>Reference</div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", fontWeight: 700 }}>
+                <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 700 }}>
                   agency memory · {reference.length} shipped
                 </div>
               </div>
@@ -215,15 +215,15 @@ function ProjectCard({
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div
             style={{
-              width: 38, height: 38, borderRadius: 10, background: accent, color: "var(--paper)",
-              display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13, border: "2px solid var(--ink)",
+              width: 38, height: 38, borderRadius: 10, background: accent, color: "var(--bg-elevated)",
+              display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13, border: "2px solid var(--text-primary)",
             }}
           >
             {p.name.slice(0, 2).toUpperCase()}
           </div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 16 }}>{p.name}</div>
-            <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>
+            <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
               #{p.project_id}{created ? ` · ${created}` : ""}
             </div>
           </div>
@@ -231,9 +231,9 @@ function ProjectCard({
         <div
           className="chip"
           style={{
-            background: isRef ? "var(--cream-deep)" : st ? "var(--ink-mute)" : "var(--positive)",
-            color: isRef ? "var(--ink-soft)" : "var(--paper)",
-            borderColor: isRef ? "var(--line-strong)" : st ? "var(--ink-mute)" : "var(--positive)",
+            background: isRef ? "var(--bg-secondary)" : st ? "var(--text-tertiary)" : "var(--green)",
+            color: isRef ? "var(--text-secondary)" : "var(--bg-elevated)",
+            borderColor: isRef ? "var(--border-strong)" : st ? "var(--text-tertiary)" : "var(--green)",
           }}
         >
           {isRef ? "Reference" : st ? "Shipped" : "Active"}
@@ -243,10 +243,10 @@ function ProjectCard({
       {isRef ? (
         <>
           {p.summary && (
-            <div style={{ fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.45, marginBottom: 10 }}>{p.summary}</div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 10 }}>{p.summary}</div>
           )}
-          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink-soft)", fontWeight: 600, marginBottom: tags.length > 0 ? 10 : 0 }}>
-            <span className="mono" style={{ color: "var(--ink-mute)" }}>agency memory · shipped</span>
+          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--text-secondary)", fontWeight: 600, marginBottom: tags.length > 0 ? 10 : 0 }}>
+            <span className="mono" style={{ color: "var(--text-tertiary)" }}>agency memory · shipped</span>
             {p.web_url && (
               <a href={p.web_url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", color: accent, fontWeight: 700 }}>
                 Open in GitLab ↗
@@ -256,7 +256,7 @@ function ProjectCard({
           {tags.length > 0 && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {tags.map((t, i) => (
-                <span key={`${t}-${i}`} style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "var(--cream-deep)", color: "var(--ink-soft)", fontWeight: 600 }}>
+                <span key={`${t}-${i}`} style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "var(--bg-secondary)", color: "var(--text-secondary)", fontWeight: 600 }}>
                   {t}
                 </span>
               ))}
@@ -265,9 +265,9 @@ function ProjectCard({
         </>
       ) : (
         <>
-          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink-soft)", fontWeight: 600, marginBottom: 12 }}>
-            <span><b style={{ color: "var(--ink)" }}>{s.issues}</b> issues</span>
-            <span><b style={{ color: "var(--ink)" }}>{s.devs}</b> {s.devs === 1 ? "dev" : "devs"}</span>
+          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--text-secondary)", fontWeight: 600, marginBottom: 12 }}>
+            <span><b style={{ color: "var(--text-primary)" }}>{s.issues}</b> issues</span>
+            <span><b style={{ color: "var(--text-primary)" }}>{s.devs}</b> {s.devs === 1 ? "dev" : "devs"}</span>
             {p.web_url && (
               <a href={p.web_url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", color: accent, fontWeight: 700 }}>
                 Open in GitLab ↗
@@ -278,11 +278,11 @@ function ProjectCard({
           {grounded.length > 0 && (
             <div
               style={{
-                padding: 10, background: "var(--cream)", borderRadius: 10, fontSize: 12,
+                padding: 10, background: "var(--bg-app)", borderRadius: 10, fontSize: 12,
                 display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10,
               }}
             >
-              <span style={{ fontFamily: "var(--font-mono)", color: "var(--ink-mute)", fontWeight: 700 }}>reused:</span>
+              <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", fontWeight: 700 }}>reused:</span>
               {grounded.map((g) => (
                 <span key={g} style={{ fontWeight: 700 }}>{g}</span>
               ))}
@@ -294,7 +294,7 @@ function ProjectCard({
               {stack.map((t, i) => (
                 <span
                   key={`${t}-${i}`}
-                  style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "var(--cream-deep)", color: "var(--ink-soft)", fontWeight: 600 }}
+                  style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "var(--bg-secondary)", color: "var(--text-secondary)", fontWeight: 600 }}
                 >
                   {t}
                 </span>
@@ -365,7 +365,7 @@ function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: (
       <div
         onClick={(e) => e.stopPropagation()}
         className="card-soft"
-        style={{ padding: 24, width: 480, maxWidth: "90vw", background: "var(--paper)" }}
+        style={{ padding: 24, width: 480, maxWidth: "90vw", background: "var(--bg-elevated)" }}
       >
         <div className="kicker">Trigger a change event</div>
         <div className="display" style={{ fontSize: 22, marginTop: 4, marginBottom: 14 }}>⚡ Change</div>
@@ -380,7 +380,7 @@ function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: (
               style={{
                 cursor: "pointer",
                 textTransform: "none",
-                ...(mode === m ? { background: "var(--ink)", color: "var(--paper)" } : {}),
+                ...(mode === m ? { background: "var(--text-primary)", color: "var(--bg-elevated)" } : {}),
               }}
             >
               {m === "out" ? "📅 Mark someone out" : "🔀 Scope change on task"}
@@ -390,7 +390,7 @@ function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: (
 
         {result ? (
           <>
-            <div style={{ fontSize: 14, color: "var(--positive)", fontWeight: 700, margin: "14px 0" }}>
+            <div style={{ fontSize: 14, color: "var(--green)", fontWeight: 700, margin: "14px 0" }}>
               ✓ {result}
             </div>
             <button onClick={onClose} className="btn btn-primary btn-sm">Done</button>
@@ -404,7 +404,7 @@ function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: (
                   <select
                     value={who}
                     onChange={(e) => setWho(e.target.value)}
-                    style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                    style={{ padding: "8px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 14, background: "var(--bg-elevated)", fontFamily: "inherit" }}
                   >
                     {roster.map((m) => (
                       <option key={m.username} value={m.username}>
@@ -420,7 +420,7 @@ function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: (
                       type="date"
                       value={start}
                       onChange={(e) => setStart(e.target.value)}
-                      style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                      style={{ padding: "8px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 14, background: "var(--bg-elevated)", fontFamily: "inherit" }}
                     />
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 5, flex: 1 }}>
@@ -429,7 +429,7 @@ function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: (
                       type="date"
                       value={end}
                       onChange={(e) => setEnd(e.target.value)}
-                      style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                      style={{ padding: "8px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 14, background: "var(--bg-elevated)", fontFamily: "inherit" }}
                     />
                   </label>
                 </div>
@@ -443,7 +443,7 @@ function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: (
                     value={taskId}
                     onChange={(e) => setTaskId(e.target.value)}
                     placeholder="e.g. task-abc123"
-                    style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                    style={{ padding: "8px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 14, background: "var(--bg-elevated)", fontFamily: "inherit" }}
                   />
                 </label>
                 <label style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
@@ -453,14 +453,14 @@ function ChangeModal({ roster, onClose, onDone }: { roster: Member[]; onClose: (
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
                     placeholder="e.g. Add real-time sync requirement"
-                    style={{ padding: "8px 10px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit" }}
+                    style={{ padding: "8px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 14, background: "var(--bg-elevated)", fontFamily: "inherit" }}
                   />
                 </label>
               </>
             )}
 
             {err && (
-              <div className="mono" style={{ fontSize: 12, color: "var(--orange-deep)", marginBottom: 10 }}>{err}</div>
+              <div className="mono" style={{ fontSize: 12, color: "var(--text-primary)", marginBottom: 10 }}>{err}</div>
             )}
 
             <div style={{ display: "flex", gap: 10 }}>
@@ -505,20 +505,20 @@ function CloseModal({ project, onClose, onDone }: { project: ProjectSummary; onC
       <div
         onClick={(e) => e.stopPropagation()}
         className="card-soft"
-        style={{ padding: 24, width: 480, maxWidth: "90vw", background: "var(--paper)" }}
+        style={{ padding: 24, width: 480, maxWidth: "90vw", background: "var(--bg-elevated)" }}
       >
         <div className="kicker">Close project</div>
         <div className="display" style={{ fontSize: 22, marginTop: 4, marginBottom: 6 }}>{project.name}</div>
         {done ? (
           <>
-            <div style={{ fontSize: 14, color: "var(--positive)", fontWeight: 700, margin: "14px 0" }}>
+            <div style={{ fontSize: 14, color: "var(--green)", fontWeight: 700, margin: "14px 0" }}>
               ✓ Written to agency memory — future briefs will ground on it.
             </div>
             <button onClick={onClose} className="btn btn-primary btn-sm">Done</button>
           </>
         ) : (
           <>
-            <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 14 }}>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 14 }}>
               The post-mortem writes this project into agency memory (PastProjects) so future plans reuse what shipped.
             </div>
             <label style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
@@ -528,10 +528,10 @@ function CloseModal({ project, onClose, onDone }: { project: ProjectSummary; onC
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
                 placeholder="e.g. Shipped in 9 weeks; map + saved-search reused from memory."
-                style={{ padding: "9px 12px", border: "1.5px solid var(--line-strong)", borderRadius: 8, fontSize: 14, background: "var(--paper)", fontFamily: "inherit", resize: "vertical" }}
+                style={{ padding: "9px 12px", border: "1.5px solid var(--border-strong)", borderRadius: 8, fontSize: 14, background: "var(--bg-elevated)", fontFamily: "inherit", resize: "vertical" }}
               />
             </label>
-            {err && <div className="mono" style={{ fontSize: 12, color: "var(--orange-deep)", marginBottom: 10 }}>{err}</div>}
+            {err && <div className="mono" style={{ fontSize: 12, color: "var(--text-primary)", marginBottom: 10 }}>{err}</div>}
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={submit} disabled={busy} className="btn btn-primary btn-sm" style={{ opacity: busy ? 0.5 : 1 }}>
                 {busy ? "Closing…" : "Close & write memory"}

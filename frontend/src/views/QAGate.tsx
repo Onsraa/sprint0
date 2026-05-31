@@ -7,9 +7,9 @@ import { api } from "../lib/api";
    items back to the responsible runner (reopens the GitLab issue + flags re-QA). */
 
 const VERDICT: Record<QAVerdict, { label: string; fg: string; bg: string; icon: string }> = {
-  pass: { label: "Pass", fg: "var(--paper)", bg: "var(--positive)", icon: "✓" },
-  fail: { label: "Fail", fg: "var(--paper)", bg: "var(--orange-deep)", icon: "✕" },
-  needs_human: { label: "Needs human", fg: "var(--paper)", bg: "var(--warn)", icon: "?" },
+  pass: { label: "Pass", fg: "var(--bg-elevated)", bg: "var(--green)", icon: "✓" },
+  fail: { label: "Fail", fg: "var(--bg-elevated)", bg: "var(--text-primary)", icon: "✕" },
+  needs_human: { label: "Needs human", fg: "var(--bg-elevated)", bg: "var(--amber)", icon: "?" },
 };
 
 export function QAGate() {
@@ -37,11 +37,11 @@ export function QAGate() {
   if (liveProjectId == null) {
     return (
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
-        <div className="card-soft" style={{ padding: 40, textAlign: "center", border: "2px dashed var(--line-strong)" }}>
+        <div className="card-soft" style={{ padding: 40, textAlign: "center", border: "2px dashed var(--border-strong)" }}>
           <div className="display" style={{ fontSize: 22, marginBottom: 8 }}>
             No dispatched project to QA.
           </div>
-          <div style={{ fontSize: 14, color: "var(--ink-soft)" }}>
+          <div style={{ fontSize: 14, color: "var(--text-secondary)" }}>
             Once a plan is dispatched to GitLab, the acceptance checklist runs against it here.
           </div>
         </div>
@@ -67,14 +67,14 @@ export function QAGate() {
       </div>
 
       {err && (
-        <div className="card-soft" style={{ padding: 14, marginBottom: 14, borderColor: "var(--orange)", color: "var(--orange-deep)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+        <div className="card-soft" style={{ padding: 14, marginBottom: 14, borderColor: "var(--ink-fill)", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
           {err}
         </div>
       )}
 
       {awaiting.length > 0 && (
-        <div className="card-soft" style={{ padding: 14, marginBottom: 14, background: "var(--orange-tint)", borderColor: "var(--orange-soft)" }}>
-          <span className="kicker" style={{ color: "var(--orange-deep)" }}>Awaiting re-QA</span>
+        <div className="card-soft" style={{ padding: 14, marginBottom: 14, background: "var(--bg-hover)", borderColor: "var(--bg-secondary)" }}>
+          <span className="kicker" style={{ color: "var(--text-primary)" }}>Awaiting re-QA</span>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
             {awaiting.map((iid) => (
               <span key={iid} className="chip chip-soft" style={{ fontSize: 11 }}>
@@ -86,7 +86,7 @@ export function QAGate() {
       )}
 
       {!report && !running && (
-        <div className="card-soft" style={{ padding: 28, textAlign: "center", color: "var(--ink-soft)" }}>
+        <div className="card-soft" style={{ padding: 28, textAlign: "center", color: "var(--text-secondary)" }}>
           The QA agent prefills a pass/fail/needs-human verdict per issue. Reject any failing item to reopen it.
         </div>
       )}
@@ -166,12 +166,12 @@ function QAItemRow({
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>
+            <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
               {item.issue_id}
             </span>
             <span style={{ fontWeight: 700, fontSize: 14 }}>{item.title}</span>
           </div>
-          {item.note && <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 2 }}>{item.note}</div>}
+          {item.note && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{item.note}</div>}
         </div>
         <span className="chip" style={{ background: v.bg, color: v.fg, borderColor: v.bg, fontSize: 11 }}>
           {v.label}
@@ -182,14 +182,14 @@ function QAItemRow({
           </button>
         )}
         {done && (
-          <span className="chip" style={{ fontSize: 10, padding: "3px 8px", color: "var(--ink-mute)" }}>
+          <span className="chip" style={{ fontSize: 10, padding: "3px 8px", color: "var(--text-tertiary)" }}>
             rerouted ✓
           </span>
         )}
       </div>
 
       {open && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
               value={iid}
@@ -211,7 +211,7 @@ function QAItemRow({
             placeholder="What failed? (posted as a GitLab note)"
             style={{ ...inputStyle, resize: "vertical" }}
           />
-          {err && <div style={{ fontSize: 12, color: "var(--orange-deep)", fontFamily: "var(--font-mono)" }}>{err}</div>}
+          {err && <div style={{ fontSize: 12, color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}>{err}</div>}
           <button onClick={reject} disabled={busy} className="btn btn-primary btn-sm" style={{ alignSelf: "flex-start", opacity: busy ? 0.6 : 1 }}>
             {busy ? "Rejecting…" : "Reopen + reroute"}
           </button>
@@ -223,9 +223,9 @@ function QAItemRow({
 
 const inputStyle: React.CSSProperties = {
   padding: "9px 12px",
-  border: "1.5px solid var(--line-strong)",
+  border: "1.5px solid var(--border-strong)",
   borderRadius: 8,
   fontSize: 14,
-  background: "var(--paper)",
+  background: "var(--bg-elevated)",
   fontFamily: "inherit",
 };

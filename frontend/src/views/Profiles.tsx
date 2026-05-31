@@ -11,7 +11,7 @@ import type { CapabilityProfile, ProfileStatus } from "../lib/schemas";
 
 const STATUS_CHIP: Record<ProfileStatus, { label: string; bg: string; fg: string; border: string }> = {
   proposed: { label: "Proposed", bg: "var(--bg-secondary)", fg: "var(--text-primary)", border: "var(--text-primary)" },
-  confirmed: { label: "Confirmed", bg: "var(--bg-secondary)", fg: "var(--positive)", border: "var(--positive)" },
+  confirmed: { label: "Confirmed", bg: "var(--bg-secondary)", fg: "var(--green)", border: "var(--green)" },
   seed: { label: "Seed", bg: "var(--bg-secondary)", fg: "var(--text-tertiary)", border: "var(--border)" },
 };
 
@@ -30,10 +30,10 @@ export function Profiles() {
     <div style={{ maxWidth: 820, margin: "0 auto" }}>
       <div className="kicker">Team</div>
       <div className="display">The growing taxonomy</div>
-      <div style={{ color: "var(--ink-soft)", fontSize: 13, marginTop: 6, maxWidth: 580, lineHeight: 1.55 }}>
+      <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 6, maxWidth: 580, lineHeight: 1.55 }}>
         The 5 seed lanes still ship, but the AI grows new capability profiles from issue tags.
         {proposed.length > 0 && (
-          <> <b style={{ color: "var(--ink)" }}>{proposed.length} proposed</b> {canConfirm ? "need your confirm" : "await the manager"}.</>
+          <> <b style={{ color: "var(--text-primary)" }}>{proposed.length} proposed</b> {canConfirm ? "need your confirm" : "await the manager"}.</>
         )}
       </div>
 
@@ -60,9 +60,9 @@ export function Profiles() {
             </Section>
           )}
           {profiles.length === 0 && (
-            <div className="card-soft" style={{ marginTop: 16, textAlign: "center", border: "1px dashed var(--line-strong)" }}>
+            <div className="card-soft" style={{ marginTop: 16, textAlign: "center", border: "1px dashed var(--border-strong)" }}>
               <div className="display">No capability profiles yet.</div>
-              <div style={{ color: "var(--ink-soft)", fontSize: 13, marginTop: 6 }}>They grow as the AI tags issues across new projects.</div>
+              <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 6 }}>They grow as the AI tags issues across new projects.</div>
             </div>
           )}
         </>
@@ -76,7 +76,7 @@ function Section({ title, hint, children }: { title: string; hint: string; child
     <div style={{ marginTop: 24 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
         <span className="kicker" style={{ paddingLeft: 0 }}>{title}</span>
-        <span style={{ fontSize: 11, color: "var(--ink-mute)" }}>· {hint}</span>
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>· {hint}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(238px, 1fr))", gap: 10 }}>{children}</div>
     </div>
@@ -88,10 +88,10 @@ function ProfileCard({ p, canConfirm, busy, onConfirm }: {
 }) {
   const chip = STATUS_CHIP[p.status];
   const isProposed = p.status === "proposed";
-  const laneColor = DISCIPLINE_COLOR[p.default_lane as Discipline] ?? "var(--ink-mute)";
+  const laneColor = DISCIPLINE_COLOR[p.default_lane as Discipline] ?? "var(--text-tertiary)";
   const laneLabel = DISCIPLINE_LABEL[p.default_lane as Discipline] ?? p.default_lane;
   return (
-    <div className="card-soft" style={{ borderColor: isProposed ? "var(--ink)" : "var(--line)" }}>
+    <div className="card-soft" style={{ borderColor: isProposed ? "var(--text-primary)" : "var(--border)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
         <span className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{p.label}</span>
         <span style={{ flex: 1 }} />
@@ -105,8 +105,8 @@ function ProfileCard({ p, canConfirm, busy, onConfirm }: {
         </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: isProposed && canConfirm ? 12 : 0 }}>
-        <span style={{ fontSize: 11, color: "var(--ink-mute)" }}>maps to</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "var(--ink-soft)" }}>
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>maps to</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "var(--text-secondary)" }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: laneColor }} />{laneLabel}
         </span>
       </div>
@@ -117,7 +117,7 @@ function ProfileCard({ p, canConfirm, busy, onConfirm }: {
         </button>
       )}
       {isProposed && !canConfirm && (
-        <div style={{ fontSize: 11, color: "var(--ink-mute)", textAlign: "center", padding: "6px 0" }}>Manager confirms</div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", textAlign: "center", padding: "6px 0" }}>Manager confirms</div>
       )}
     </div>
   );
