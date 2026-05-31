@@ -9,6 +9,151 @@
 import { z } from "zod";
 import * as S from "./schemas";
 
+// Domain types are defined once in schemas.ts (Zod → z.infer). api.ts imports them for its own
+// method signatures and re-exports them, so the 20+ files importing from "../lib/api" keep one
+// source of truth. (WizardDraft stays below — a localStorage shape with no runtime schema.)
+import type {
+  AccessGrant,
+  AmbiguityCard,
+  ArchitectureCard,
+  ArchitectureOptions,
+  Attribution,
+  ClarifiedSpec,
+  CloseResult,
+  Constraints,
+  ContextScope,
+  CoverageRow,
+  Decision,
+  DecisionCard,
+  DecisionCardResponse,
+  DeveloperProfile,
+  Discipline,
+  DispatchResult,
+  DriftReport,
+  Epic,
+  FeaturePlanResponse,
+  FlagIntegrationResult,
+  Gate,
+  GateStatus,
+  GovernanceRule,
+  GraphEdge,
+  GraphNode,
+  ImpactedTask,
+  InboxNeed,
+  InboxResponse,
+  IntegrationCandidate,
+  IntegrationSignal,
+  Issue,
+  IssueType,
+  Kind,
+  LoginResponse,
+  Member,
+  MemberRole,
+  MyIssue,
+  MyIssuesResponse,
+  NotificationItem,
+  OnboardSuggestion,
+  PlanJSON,
+  PlanResponse,
+  ProjectSummary,
+  QAItemResult,
+  QAReport,
+  QAVerdict,
+  QueueItem,
+  RejectResult,
+  RelayState,
+  RelaySummary,
+  Reliability,
+  RescheduleProposal,
+  RescheduleStrategy,
+  ReuseItem,
+  Risk,
+  Scalability,
+  Seniority,
+  StaffingRecommendation,
+  StaffingResponse,
+  StretchCandidate,
+  TaskPriority,
+  TaskStatus,
+  TechStack,
+  TimeToMarket,
+  TrustLevel,
+  UserSubscription,
+  WorkResponse,
+  WorkTask,
+} from "./schemas";
+export type {
+  AccessGrant,
+  AmbiguityCard,
+  ArchitectureCard,
+  ArchitectureOptions,
+  Attribution,
+  ClarifiedSpec,
+  CloseResult,
+  Constraints,
+  ContextScope,
+  CoverageRow,
+  Decision,
+  DecisionCard,
+  DecisionCardResponse,
+  DeveloperProfile,
+  Discipline,
+  DispatchResult,
+  DriftReport,
+  Epic,
+  FeaturePlanResponse,
+  FlagIntegrationResult,
+  Gate,
+  GateStatus,
+  GovernanceRule,
+  GraphEdge,
+  GraphNode,
+  ImpactedTask,
+  InboxNeed,
+  InboxResponse,
+  IntegrationCandidate,
+  IntegrationSignal,
+  Issue,
+  IssueType,
+  Kind,
+  LoginResponse,
+  Member,
+  MemberRole,
+  MyIssue,
+  MyIssuesResponse,
+  NotificationItem,
+  OnboardSuggestion,
+  PlanJSON,
+  PlanResponse,
+  ProjectSummary,
+  QAItemResult,
+  QAReport,
+  QAVerdict,
+  QueueItem,
+  RejectResult,
+  RelayState,
+  RelaySummary,
+  Reliability,
+  RescheduleProposal,
+  RescheduleStrategy,
+  ReuseItem,
+  Risk,
+  Scalability,
+  Seniority,
+  StaffingRecommendation,
+  StaffingResponse,
+  StretchCandidate,
+  TaskPriority,
+  TaskStatus,
+  TechStack,
+  TimeToMarket,
+  TrustLevel,
+  UserSubscription,
+  WorkResponse,
+  WorkTask,
+};
+
+
 const BASE: string = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 const TOKEN_KEY = "sprint0_token";
@@ -45,283 +190,40 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 
 /* ── Wire types (mirror orchestrator/app/contracts.py) ───────────────── */
 
-export type TimeToMarket = "fast" | "balanced" | "thorough";
-export type Scalability = "small" | "medium" | "large";
-export type Reliability = "low-cost" | "standard" | "high-availability";
 
-export interface Constraints {
-  time_to_market: TimeToMarket;
-  scalability: Scalability;
-  reliability: Reliability;
-}
 
-export interface TechStack {
-  frontend: string;
-  backend: string;
-  db: string;
-  infra: string;
-}
 
-export type IssueType = "backend" | "frontend" | "db" | "devops" | "design";
-export type Risk = "low" | "medium" | "high";
-export type Discipline = "uiux" | "backend" | "frontend" | "qa" | "devops";
-export type Kind = "code" | "design" | "audit" | "content" | "infra" | "runbook";
-export type GateStatus =
-  | "pending"
-  | "locked"
-  | "auto_passed"
-  | "ratified"
-  | "changes_requested"
-  | "blocked";
 
-export interface ContextScope {
-  files: string[];
-  note: string;
-}
 
-export interface Issue {
-  id: string;
-  title: string;
-  description: string;
-  type: IssueType;
-  estimate_days: number;
-  risk: Risk;
-  required_skill: string;
-  context_scope: ContextScope;
-  assignee: string | null;
-  kind: Kind;
-  discipline: Discipline;
-  depends_on: string[];
-  api_contract: string | null;
-  context: Record<string, unknown>;
-  /** Set by the assignment engine when a dev is stretched out of discipline. */
-  stretch_flag: string | null;
-}
 
-export interface Epic {
-  id: string;
-  title: string;
-  issues: Issue[];
-}
 
-export interface PlanJSON {
-  project_name: string;
-  client_summary: string;
-  tech_stack: TechStack;
-  grounded_on: string[];
-  timeline_weeks: number;
-  epics: Epic[];
-}
 
-export interface AmbiguityCard {
-  id: string;
-  feature: string;
-  question: string;
-  options: string[];
-  resolution: string | null;
-}
 
-export interface ReuseItem {
-  from_project: string;
-  feature: string;
-  action: "reuse" | "adapt" | "drop";
-}
 
-export interface ClarifiedSpec {
-  goal: string;
-  users: string[];
-  must_haves: string[];
-  constraints: string[];
-  ambiguities: AmbiguityCard[];
-  reuse: ReuseItem[];
-}
 
-export interface ArchitectureCard {
-  name: string;
-  tech_stack: TechStack;
-  summary: string;
-  rationale: string;
-  grounded_on: string[];
-  fit_to_constraints: string;
-}
 
-export interface ArchitectureOptions {
-  cards: ArchitectureCard[];
-}
 
-export interface Gate {
-  discipline: Discipline;
-  status: GateStatus;
-  depends_on: Discipline[];
-  note: string;
-  /** Spine routing tier (null on legacy gates): how much expert attention the router budgeted. */
-  tier?: "auto_pass" | "one_expert" | "two_expert" | null;
-  confidence?: number | null;
-  blast_radius?: number | null;
-  expected_cost?: number | null;
-  routed_note?: string;
-}
 
 /** A declared api-failing/ok flag on a producer issue (the integration gate, B+C+D). */
-export interface IntegrationSignal {
-  target_issue_id: string;
-  state: "failing" | "ok";
-  by: string;
-  reporter_issue_id: string | null;
-  source: "manual" | "webhook" | "ci" | "ai";
-  note: string;
-  created_at: string;
-}
 
-export interface RelayState {
-  gates: Gate[];
-  baton: Discipline[];
-  integration_signals: IntegrationSignal[];
-}
 
 /** When a consumer's `depends_on` has >1 producer, the flag endpoint asks which to reject. */
-export interface IntegrationCandidate {
-  id: string;
-  title: string;
-  assignee: string | null;
-  api_contract: string | null;
-}
-export type FlagIntegrationResult = RelayState | { need_target: true; candidates: IntegrationCandidate[] };
 
-export interface PlanResponse {
-  plan_id: string;
-  plan: PlanJSON;
-  relay: RelayState;
-}
 
-export interface Decision {
-  id: string;
-  owner_id: string;
-  domain: Discipline;
-  context_tags: string[];
-  recommendation: string;
-  reasoning: string;
-  project_id: string;
-  project_name: string;
-  issue_ids: string[];
-  outcome_validated: boolean;
-  visibility: "personal" | "team";
-  deprecated: boolean;
-  deprecation_reason?: string | null;
-  created_at: string;
-  updated_at: string;
-}
 
-export interface DecisionCard {
-  domain: string;
-  context: string;
-  recommendation: string;
-  confidence: number;
-  pros: string[];
-  cons: string[];
-  conflict: boolean;
-  conflict_reason: string | null;
-}
 
-export interface DecisionCardResponse {
-  card: DecisionCard | null;
-  signal: "green" | "orange" | "grey";
-  low_confidence: boolean;
-  past: { own: Decision[]; team: Decision[] };
-  error?: string;
-}
 
-export interface UserSubscription { id: string; watcher_id: string; subject_id: string; events: string[]; created_at: string; }
 
-export interface GraphNode { path: string; domain: string; node_type: string; loc: number; project_id: string; }
-export interface GraphEdge { from_path: string; to_path: string; edge_type: string; }
-export interface GovernanceRule { id: string; decision_id: string; domain: string; governs_pattern: string; constraint: string; }
-export interface DriftReport {
-  severity: "blocking" | "drift" | "cosmetic";
-  drift_from_decision_id: string;
-  drift_from_description: string;
-  affected_files: string[];
-  violation: string;
-  suggested_fix: string;
-  effort: "small" | "medium" | "large";
-  domain: string;
-}
 
-export interface QueueItem {
-  plan_id: string;
-  project: string;
-  discipline: Discipline;
-  status: GateStatus;
-  issue_count: number;
-  is_delta: boolean;
-  target_project_id: number | null;
-}
 
-export interface RelaySummary {
-  plan_id: string;
-  project: string;
-  baton: Discipline[];
-  gates: { discipline: Discipline; status: GateStatus; note: string }[];
-  is_delta: boolean;
-  target_project_id: number | null;
-  all_ratified: boolean;
-}
 
 /** A project on the manager Dashboard. `active` = sprint0-managed (has a ProjectRecord, full plan);
  *  `reference` = an agency past project (memory only — no plan/counts). */
-export interface ProjectSummary {
-  project_id: number;
-  name: string;
-  web_url: string;
-  kind: "active" | "reference";
-  tech_stack?: TechStack;
-  grounded_on?: string[];
-  plan?: PlanJSON;
-  module_manifest?: string[];
-  status?: string; // "in_progress"/"closed"/"shipped"; absent → active
-  created_at?: string;
-  last_activity_at?: string;
-  summary?: string;
-  tags?: string[];
-}
 
-export type TaskStatus = "planned" | "in_progress" | "in_review" | "done" | "blocked";
-export type TaskPriority = "low" | "normal" | "high" | "urgent";
 
 /** A Task from /api/work (Phase A store). Non-owned/non-granted tasks come back REDACTED:
  *  only id/project_id/title/status/discipline/assignee + redacted:true are present. */
-export interface WorkTask {
-  id: string;
-  project_id: number;
-  title: string;
-  status: TaskStatus;
-  discipline: Discipline;
-  assignee: string | null;
-  redacted?: boolean;
-  // full-detail fields (absent when redacted):
-  description?: string;
-  assigned_by?: string;        // "ai" | "self" | "<username>"
-  estimate_days?: number;
-  risk?: Risk;
-  depends_on?: string[];
-  priority?: TaskPriority;
-  scheduled_start?: string | null;
-  scheduled_end?: string | null;
-  pinned?: boolean;            // locked dates → the reflow engine never moves this task
-  gitlab_issue_iid?: number | null;
-  context_scope?: ContextScope;
-  kind?: Kind;                          // artifact class → drives the KindSurface in the drawer
-  context?: Record<string, unknown>;    // kind-specific extras (figma/rubric/screens…)
-  api_contract?: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
 
-export interface WorkResponse {
-  scope: string;
-  count: number;
-  tasks: WorkTask[];
-}
 
 /** Saved wizard progress so closing never loses work; offered as "Resume" on reopen. */
 export interface WizardDraft {
@@ -363,176 +265,33 @@ export const draft = {
 };
 
 /** A merge sprint0 couldn't map to a roster member — awaits the manager's call. */
-export interface Attribution {
-  id: string;
-  gitlab_username: string;
-  task_type: string;
-  score: number;
-  project_id: number | null;
-  issue_iid: number | null;
-  suggested: string | null;
-}
 
-export interface FeaturePlanResponse extends PlanResponse {
-  project_id: number;
-}
 
-export interface DispatchResult {
-  plan_id: string;
-  mode: "copilot" | "autonomous";
-  web_url: string;
-  clone_url?: string;
-  project_id: number;
-  default_branch: string;
-  issues_created: number;
-  context_branches?: number;
-  qa_issue_iid?: number | null;
-  persist_warning?: string;
-}
 
-export type QAVerdict = "pass" | "fail" | "needs_human";
 
-export interface QAItemResult {
-  issue_id: string;
-  title: string;
-  verdict: QAVerdict;
-  note: string;
-}
 
-export interface QAReport {
-  items: QAItemResult[];
-  reopened?: number[];
-}
 
-export interface RejectResult {
-  issue_iid: number;
-  rerouted_to: string | null;
-  awaiting_reqa: number[];
-}
 
-export type TrustLevel = "low" | "medium" | "high";
-export type MemberRole = "manager" | "developer";
-export type Seniority = "junior" | "mid" | "senior";
 
 /** A team member = a login account (the manager or a developer). */
-export interface Member {
-  username: string;
-  name: string;
-  email: string;
-  role: MemberRole;
-  discipline: Discipline | null;
-  seniority: Seniority;
-  load: number; // 0-100 capacity used
-  gitlab_user_id: number | null;
-  gitlab_username: string;
-  skills_text: string;
-  /** Per-discipline trust tier; falls back to trust_level. */
-  trust: Partial<Record<Discipline, TrustLevel>>;
-  trust_level: TrustLevel;
-  history: Record<string, unknown>[];
-  promoted?: boolean;
-}
 
 /** Back-compat alias — the onboarding/merge endpoints still call it a profile. */
-export type DeveloperProfile = Member;
 
 /** A single issue assigned to the logged-in member (from /api/me/issues). */
-export interface MyIssue {
-  project_id: number;
-  project: string;
-  epic: string;
-  issue: Issue;
-}
 
-export interface MyIssuesResponse {
-  username: string;
-  count: number;
-  issues: MyIssue[];
-}
 
 /* ── Staffing (gap coverage + stretch/onboard recommendations) ── */
-export interface StretchCandidate {
-  username: string;
-  name: string;
-  discipline: Discipline | null;
-  score: number;
-  pros: string[];
-  cons: string[];
-}
 
-export interface OnboardSuggestion {
-  suggestion: string;
-  pros: string[];
-  cons: string[];
-}
 
-export interface StaffingRecommendation {
-  discipline: Discipline;
-  stretch_candidates: StretchCandidate[];
-  onboard: OnboardSuggestion;
-  weighted_by: string;
-}
 
-export interface CoverageRow {
-  discipline: Discipline;
-  covered: boolean;
-  lead: string | null;
-  recommendation: StaffingRecommendation | null;
-}
 
-export interface StaffingResponse {
-  coverage: CoverageRow[];
-}
 
-export interface LoginResponse {
-  token: string;
-  member: Member;
-}
 
-export interface CloseResult {
-  name: string;
-  added_to_memory: boolean;
-}
 
-export interface NotificationItem {
-  id: string; user_id: string; type: string; title: string;
-  body?: string; ref?: Record<string, unknown>; actionable?: boolean; read?: boolean; created_at: string;
-}
-export interface AccessGrant {
-  id: string; requester_id: string; subject_id: string;
-  status: "pending" | "granted" | "revoked"; notifications_muted?: boolean; created_at: string; updated_at: string;
-}
 
-export interface RescheduleStrategy {
-  action: "right_shift" | "reassign" | "compress" | "descope" | "re_estimate" | "re_plan" | "escalate";
-  target_task_ids: string[];
-  reassign_to: string | null;
-  rationale: string;
-  confidence: number;
-  impact_summary: string;
-}
 
-export interface ImpactedTask {
-  task_id: string;
-  title: string;
-  assignee: string | null;
-  old_start: string | null;
-  old_end: string | null;
-  scheduled_start: string | null;
-  scheduled_end: string | null;
-}
 
-export interface RescheduleProposal {
-  id: string;
-  project_id: number | null;
-  strategy: RescheduleStrategy;
-  impacted: ImpactedTask[];
-  affected_users: string[];
-  status: "proposed" | "applied" | "rejected";
-}
 
-export interface InboxNeed { kind: "ratify" | "access_request" | "reschedule"; title: string; ref: Record<string, unknown> & { proposal_id?: string }; item?: QueueItem | RescheduleProposal; }
-export interface InboxResponse { needs_action: InboxNeed[]; notifications: NotificationItem[]; unread: number; }
 
 /* ── Transport helpers ───────────────────────────────────────────────── */
 
