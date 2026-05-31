@@ -1,27 +1,28 @@
-"""Assignment + trust gate (Phase 3).
+"""Assignment — scored attribution (spine refactor P3).
 
-Each issue's `required_skill` is vector-matched to developers (best-first by score).
-Trust gate: a low-trust dev may only take low-risk issues; higher risk needs higher
-trust. Mutates the PlanJSON in place, setting `assignee`.
+Each issue's required_skill is vector-matched to developers (skill_dev); we pick the best by a
+weighted score (scoring.best_assignment): skill cosine × per-lane trust × load × lane-match ×
+seniority-vs-risk × history. The lane/discipline is ONE signal, not a hard gate — a high-skill
+out-of-lane dev can win. A weak best score (below the floor) or an out-of-lane pick sets stretch_flag
+so the manager looks. Mutates the PlanJSON in place (assignee + stretch_flag).
 """
 from __future__ import annotations
 
+from app import scoring
 from app.contracts import PlanJSON
 
-_RANK = {"low": 0, "medium": 1, "high": 2}
+_RANK = {"low": 0, "medium": 1, "high": 2}  # kept here — routing.py imports it
 
 
 def assign_developers(plan: PlanJSON, skill_dev: dict[str, list[dict]]) -> None:
     for epic in plan.epics:
         for issue in epic.issues:
-            candidates = skill_dev.get(issue.required_skill, [])
-            need = _RANK[issue.risk]
-            chosen: dict | None = None
-            for c in candidates:  # already best-first by vector score
-                if _RANK.get(c.get("trust_level", "low"), 0) >= need:
-                    chosen = c
-                    break
-            if chosen is None and candidates:  # no one trusted enough → most-trusted available
-                chosen = max(candidates, key=lambda c: _RANK.get(c.get("trust_level", "low"), 0))
-            if chosen:
-                issue.assignee = chosen.get("gitlab_username")
+            chosen, s, below = scoring.best_assignment(issue, skill_dev.get(issue.required_skill, []))
+            if chosen is None:
+                continue
+            issue.assignee = chosen.get("gitlab_username")
+            lane = issue.lane or issue.discipline
+            out_of_lane = chosen.get("discipline") != lane
+            if below or out_of_lane:
+                why = f"no prior {lane}" if out_of_lane else f"low match ({s})"
+                issue.stretch_flag = f"{chosen.get('name', 'dev')} — scored stretch · {why}"

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "quantapay-2024",
+    "brief_text": "QuantaPay — a consumer fintech app for recurring payments and subscriptions. Stripe-based billing with subscription tiers, invoices, and webhooks; secure account auth with JWT and TOTP two-factor; PCI-aware payment flows. The reusable assets are the Stripe payment + subscription engine and the auth/2FA module.",
+    "tech_stack": { "frontend": "React", "backend": "Node + Express", "db": "PostgreSQL", "infra": "Docker + GitLab CI" },
+    "total_estimate_days": 24,
+    "actual_days": 26,
+    "outcome_notes": "Shipped +2d. Stripe webhook idempotency and dunning were the tricky parts; the JWT+TOTP auth module is battle-tested and has been reused since.",
+    "tags": ["payments", "stripe", "subscriptions", "billing", "auth", "2fa", "jwt", "fintech"],
+    "web_url": ""
+  },
+  {
+    "name": "traillog-2025",
+    "brief_text": "TrailLog — last-mile delivery and fleet tracking for a courier startup. Live driver geolocation on a map with ETA to the customer, route history backed by PostGIS, and a notification dispatcher that fans out status changes over push and SMS. Realtime is the whole point. The reusable assets are the realtime map/geolocation tracking and the multi-channel notification dispatcher.",
+    "tech_stack": { "frontend": "React Native", "backend": "FastAPI (Python)", "db": "PostgreSQL + PostGIS", "infra": "Docker + Redis" },
+    "total_estimate_days": 30,
+    "actual_days": 33,
+    "outcome_notes": "Shipped +3d. WebSocket fan-out + PostGIS geo-queries are the reusable core; notifications were abstracted cleanly across push and SMS providers.",
+    "tags": ["maps", "geolocation", "tracking", "realtime", "websockets", "notifications", "push", "sms", "logistics", "postgis"],
+    "web_url": ""
+  },
+  {
+    "name": "deskhr-2025",
+    "brief_text": "DeskHR — a workforce and HR SaaS for shift-based teams. Role-based dashboards with analytics (utilization, headcount, cost), and a scheduling/calendar engine for shifts, availability, and conflict resolution. The reusable assets are the role-dashboard + analytics layer and the calendar/scheduling engine.",
+    "tech_stack": { "frontend": "Next.js", "backend": "Django (Python)", "db": "PostgreSQL", "infra": "Google Cloud Run" },
+    "total_estimate_days": 28,
+    "actual_days": 28,
+    "outcome_notes": "On estimate. Dashboards and scheduling are the reusable assets; RBAC and the calendar conflict-resolution logic took the most effort.",
+    "tags": ["dashboard", "analytics", "rbac", "scheduling", "calendar", "reporting", "saas", "hr"],
+    "web_url": ""
+  }
+]

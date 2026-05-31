@@ -23,10 +23,10 @@ interface MascotProps {
 export function Mascot({
   size = 120,
   expression = "happy",
-  color = "var(--orange)",
+  color = "var(--ink-fill)",
   style = {},
   className = "",
-  outline = "var(--ink)",
+  outline = "var(--text-primary)",
   strokeWidth = 5,
 }: MascotProps) {
   const eyeSet: Record<Expression, { l: ReactNode; r: ReactNode }> = {
@@ -85,8 +85,8 @@ export function Mascot({
 /* Tiny inline mark (logo lock-up) */
 export function MascotMark({
   size = 28,
-  color = "var(--orange)",
-  outline = "var(--ink)",
+  color = "var(--ink-fill)",
+  outline = "var(--text-primary)",
 }: {
   size?: number;
   color?: string;
@@ -105,9 +105,9 @@ export function MascotMark({
 /* Logo lock-up: mark + wordmark. markColor tints both the mark and the "0". */
 export function Sprint0Logo({
   size = 24,
-  color = "var(--ink)",
-  markColor = "var(--orange)",
-  markOutline = "var(--ink)",
+  color = "var(--text-primary)",
+  markColor = "var(--ink-fill)",
+  markOutline = "var(--text-primary)",
 }: {
   size?: number;
   color?: string;
@@ -119,7 +119,7 @@ export function Sprint0Logo({
       <MascotMark size={size + 6} color={markColor} outline={markOutline} />
       <span
         style={{
-          fontFamily: "var(--font-display)",
+          fontFamily: "var(--font-ui)",
           fontWeight: 800,
           fontSize: size,
           letterSpacing: "-0.03em",

@@ -12,7 +12,7 @@ from app.rag import record_merge
 
 
 async def main() -> None:
-    name = f"baton-handoff-{int(time.time())}"
+    name = f"sprint0-handoff-{int(time.time())}"
     print(f"scaffolding '{name}' with handoff…")
     res = execute_plan(CANNED_PLAN, project_name=name)  # with_handoff=True
     pid = res["project_id"]
@@ -29,7 +29,7 @@ async def main() -> None:
     rec = await record_merge("kira", "backend:websockets", 0.9)
     hist = rec.get("history", [])
     print(f"✅ passport @{rec.get('gitlab_username')} ({rec.get('trust_level')}): {len(hist)} legs, last = {hist[-1] if hist else '—'}")
-    assert any(h.get("via") == "baton-merge" for h in hist), "expected the merge to be recorded"
+    assert any(h.get("via") == "sprint0-merge" for h in hist), "expected the merge to be recorded"
 
     print(f"reset: {gl.reset_demo()}")
     print("\n✅ Idea 2 slices work: .vscode micro-context branches · QA-only issue · reject→re-route · passport-on-merge")

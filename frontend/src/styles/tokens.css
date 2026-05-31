@@ -1,0 +1,45 @@
+/* sprint0 — design tokens. "sprint0 × Linear": monochrome warm-grey, warm-ink action color,
+ * NO orange (the brand spark is retired), Geist + Geist Mono, hairline borders, subtle shadows.
+ * (The legacy alias-shim is gone as of P8 — every file references these tokens directly.) */
+
+:root {
+  /* Neutrals — warm-grey ramp */
+  --bg-base: #FCFCFB; --bg-app: #F4F3F0; --bg-secondary: #EEEDE9; --bg-tertiary: #E7E5E0;
+  --bg-elevated: #FFFFFF; --bg-hover: #EFEEEA; --bg-active: #E8E6E1;
+
+  /* Borders — hairline, warm */
+  --border-subtle: #F1EFEB; --border: #E3E1DB; --border-strong: #D5D2CA;
+
+  /* Text — warm ink ramp */
+  --text-primary: #1A1714; --text-secondary: #3A352F; --text-tertiary: #6E675E; --text-quaternary: #A8A096;
+
+  /* Ink action (the primary/action color — replaces orange) */
+  --ink-fill: #1F1B17; --ink-fill-hover: #322C26; --ink-fill-press: #15110E;
+
+  /* Functional status — small dots/badges only */
+  --green: #2F8A4E; --blue: #2A6FDB; --amber: #C77800; --red: #D43A3A;
+
+  /* Discipline accents — the only non-status color, as small 6–8px dots */
+  --disc-uiux: #7C5CD6; --disc-backend: #2E9466; --disc-frontend: #3B6FD4; --disc-qa: #C77800; --disc-devops: #57514A;
+
+  /* Type — Geist UI + Geist Mono signature */
+  --font-ui: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* Radius */
+  --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 10px; --r-xl: 12px; --r-pill: 9999px;
+
+  /* Layout */
+  --nav-w: 244px; --panel-w: 300px; --topbar-h: 44px;
+
+  /* Elevation — three black-at-low-opacity levels, never colored */
+  --shadow-1: 0px 3px 6px -2px rgba(20,17,14,0.04), 0px 1px 1px rgba(20,17,14,0.05);
+  --shadow-2: 0px 6px 18px rgba(20,17,14,0.04), 0px 3px 9px rgba(20,17,14,0.05), 0px 1px 1px rgba(20,17,14,0.05);
+  --shadow-3: 0px 9px 48px rgba(20,17,14,0.10), 0px 6px 24px rgba(20,17,14,0.10), 0px 1px 1px rgba(20,17,14,0.05);
+  --shadow-inset: inset 0px 1px 2px rgba(20,17,14,0.06);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.19,1,0.22,1); --ease-quad: cubic-bezier(0.25,0.46,0.45,0.94);
+  --t-quick: 0.10s; --t-reg: 0.22s; --t-slow: 0.35s;
+}
+
