@@ -4,23 +4,22 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { useUI } from "../lib/store";
-import { Mascot } from "../components/Mascot";
-import { Icon } from "../lib/icon";
+import { Icon, ZeroMark } from "../lib/icon";
+import { Button, IconButton, Badge } from "../components/ui";
 import { api } from "../lib/api";
 import type { Member } from "../lib/api";
 
 /* sprint0 — Hire wizard, wired to the real gateway: drop/paste a CV → POST /api/developers
    (Gemini parses it, links the GitLab user, seeds a low-trust passport in Mongo) → the new
    member joins the roster (login + assignment pool). The junior added live in the demo.
-   Form state is React Hook Form + a Zod resolver (file XOR a ≥20-char paste). */
+   Form state is React Hook Form + a Zod resolver (file XOR a ≥20-char paste).
+   sprint0 × Linear: floating white pane, hairline borders, the brand zero (mascot retired). */
 
 const DEMO_JUNIOR_CV = `Jamie Lee — Junior Developer
 1 year of experience, bootcamp graduate (2025).
 Skills: HTML, CSS, JavaScript, basic React, Figma basics.
 Built: a personal portfolio site, a to-do app, and a landing page on a team bootcamp project.
 Keen to grow into UI/UX and frontend work. No production backend or DevOps experience yet.`;
-
-const INFO = { background: "var(--blue)", color: "var(--bg-elevated)", borderColor: "var(--blue)" };
 
 const HireForm = z
   .object({ text: z.string(), file: z.instanceof(File).nullable() })
@@ -52,62 +51,61 @@ export function WizardHire() {
   return (
     <div
       onClick={close}
-      style={{ position: "fixed", inset: 0, background: "rgba(26,20,16,0.5)", backdropFilter: "blur(6px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "pop-in 240ms" }}
+      style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "rgba(26,23,20,0.10)", animation: "s0-fade-in var(--t-quick) both" }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 820, maxHeight: "calc(100vh - 48px)", background: "var(--bg-app)", borderRadius: 24, border: "2px solid var(--text-primary)", boxShadow: "10px 10px 0 var(--text-primary)", display: "flex", flexDirection: "column", overflow: "hidden" }}
+        style={{ width: "100%", maxWidth: 600, maxHeight: "calc(100vh - 48px)", background: "var(--bg-elevated)", borderRadius: "var(--r-lg)", border: "0.5px solid var(--border-strong)", boxShadow: "var(--shadow-3)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "s0-pop-in var(--t-reg) var(--ease-out) both" }}
       >
-        <div style={{ padding: "18px 24px", borderBottom: "1.5px solid var(--border)", background: "var(--bg-elevated)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Mascot size={36} expression={result ? "cheer" : "happy"} />
-            <div>
-              <div className="kicker">Onboard a developer</div>
-              <div style={{ fontWeight: 800, fontSize: 16 }}>Cold-start passport</div>
-            </div>
+        <div style={{ height: "var(--topbar-h)", flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "0 10px 0 16px", borderBottom: "0.5px solid var(--border-subtle)" }}>
+          <ZeroMark size={16} />
+          <div style={{ lineHeight: 1.2 }}>
+            <div className="kicker">Onboard a developer</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.2px" }}>Cold-start passport</div>
           </div>
-          <button onClick={close} style={{ width: 32, height: 32, borderRadius: 8, background: "var(--bg-secondary)", display: "grid", placeItems: "center" }}><Icon name="close" size={18} /></button>
+          <div style={{ flex: 1 }} />
+          <IconButton name="close" title="Close" onClick={close} />
         </div>
 
-        <div style={{ flex: 1, overflow: "auto", padding: 32 }}>
+        <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
           {result ? (
             <ResultCard member={result} />
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div>
-                <div className="display" style={{ fontSize: 32, marginBottom: 6 }}>Drop their CV.</div>
-                <div style={{ fontSize: 15, color: "var(--text-secondary)" }}>sprint0 reads it, links the GitLab account, and seeds a low-trust passport in MongoDB.</div>
+                <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 5px" }}>Drop their CV</h1>
+                <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.55 }}>sprint0 reads it, links the GitLab account, and seeds a low-trust passport in MongoDB.</p>
               </div>
               <label
-                className="card-soft"
-                style={{ padding: 20, border: `2px dashed ${file ? "var(--green)" : "var(--text-quaternary)"}`, borderRadius: 16, textAlign: "center", cursor: "pointer", background: "var(--bg-elevated)" }}
+                style={{ padding: 20, border: `0.5px dashed ${file ? "var(--green)" : "var(--border-strong)"}`, borderRadius: "var(--r-md)", textAlign: "center", cursor: "pointer", background: "var(--bg-secondary)", transition: "border-color var(--t-quick)" }}
               >
                 <input type="file" accept=".pdf,.txt,.md" style={{ display: "none" }}
                   onChange={(e) => { setValue("file", e.target.files?.[0] ?? null, { shouldValidate: true }); setValue("text", "", { shouldValidate: true }); }} />
-                <div style={{ color: file ? "var(--green)" : "var(--text-tertiary)", display: "grid", placeItems: "center" }}><Icon name={file ? "doc" : "upload"} size={26} /></div>
-                <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6 }}>{file ? file.name : "Choose a CV file (PDF / text)"}</div>
+                <div style={{ color: file ? "var(--green)" : "var(--text-tertiary)", display: "grid", placeItems: "center" }}><Icon name={file ? "doc" : "upload"} size={22} /></div>
+                <div style={{ fontSize: 13, fontWeight: 500, marginTop: 7, color: file ? "var(--text-primary)" : "var(--text-secondary)" }}>{file ? file.name : "Choose a CV file (PDF / text)"}</div>
               </label>
-              <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-tertiary)" }}>— or paste the CV —</div>
+              <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--text-quaternary)" }}>or paste the CV</div>
               <textarea
                 {...register("text", { onChange: () => { if (watch("file")) setValue("file", null); } })}
                 placeholder="Paste CV text…"
                 rows={6}
-                style={{ width: "100%", padding: 12, borderRadius: 12, border: "1.5px solid var(--border-strong)", fontFamily: "var(--font-mono)", fontSize: 13, resize: "vertical" }}
+                style={{ width: "100%", padding: 12, borderRadius: "var(--r-md)", border: "0.5px solid var(--border-strong)", background: "var(--bg-elevated)", fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-primary)", resize: "vertical", outline: "none" }}
               />
-              <button onClick={() => { setValue("text", DEMO_JUNIOR_CV, { shouldValidate: true }); setValue("file", null, { shouldValidate: true }); }} className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }}>
-                use the demo junior CV
-              </button>
+              <Button variant="ghost" size="sm" style={{ alignSelf: "flex-start" }}
+                onClick={() => { setValue("text", DEMO_JUNIOR_CV, { shouldValidate: true }); setValue("file", null, { shouldValidate: true }); }}>
+                Use the demo junior CV
+              </Button>
             </div>
           )}
         </div>
 
-        <div style={{ padding: "16px 24px", borderTop: "1.5px solid var(--border)", background: "var(--bg-elevated)", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <div style={{ flexShrink: 0, padding: "12px 16px", borderTop: "0.5px solid var(--border-subtle)", display: "flex", justifyContent: "flex-end", gap: 8 }}>
           {result ? (
-            <button onClick={close} className="btn btn-sm btn-primary">Done →</button>
+            <Button variant="primary" size="md" iconRight="arrowRight" onClick={close}>Done</Button>
           ) : (
-            <button onClick={onboard} disabled={isSubmitting || !isValid} className="btn btn-sm" style={{ ...INFO, border: "2px solid var(--blue)", borderRadius: 999, padding: "9px 16px", fontWeight: 700, opacity: isSubmitting || !isValid ? 0.5 : 1 }}>
-              {isSubmitting ? "Onboarding…" : "Onboard →"}
-            </button>
+            <Button variant="primary" size="md" iconRight="arrowRight" onClick={onboard} disabled={isSubmitting || !isValid}>
+              {isSubmitting ? "Onboarding…" : "Onboard"}
+            </Button>
           )}
         </div>
       </div>
@@ -119,25 +117,30 @@ function ResultCard({ member }: { member: Member }) {
   const linked = member.gitlab_user_id != null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div className="display" style={{ fontSize: 28 }}>{member.name} joined the team.</div>
-      <div className="card-soft" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
-        <Row k="GitLab" v={linked ? `@${member.gitlab_username} · linked ✓ (native assignee)` : `@${member.gitlab_username} · label-only (no matching GitLab account)`} />
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Icon name="check" size={18} style={{ color: "var(--green)" }} />
+        <h1 style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-0.3px", margin: 0 }}>{member.name} joined the team</h1>
+      </div>
+      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 11, background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-1)" }}>
+        <Row k="GitLab" v={linked ? `@${member.gitlab_username} · native assignee` : `@${member.gitlab_username} · label-only (no matching GitLab account)`} ok={linked} />
         <Row k="Role" v={`${member.seniority ?? "junior"} ${member.discipline ?? "developer"}`} />
         <Row k="Trust" v={`${member.trust_level} (cold-start) — grows per-discipline with every merge`} />
         <Row k="Skills" v={member.skills_text} />
       </div>
-      <div style={{ padding: 12, background: "var(--bg-app)", borderRadius: 10, fontSize: 13, color: "var(--text-secondary)" }}>
+      <div style={{ padding: 12, background: "var(--bg-secondary)", borderRadius: "var(--r-md)", fontSize: 12.5, color: "var(--text-tertiary)", lineHeight: 1.55 }}>
         In MongoDB now and in the assignment pool — eligible for the next plan (low-risk first; out-of-discipline work is flagged as a stretch).
       </div>
     </div>
   );
 }
 
-function Row({ k, v }: { k: string; v: string }) {
+function Row({ k, v, ok }: { k: string; v: string; ok?: boolean }) {
   return (
-    <div style={{ display: "flex", gap: 12, fontSize: 13 }}>
-      <span className="mono" style={{ color: "var(--blue)", fontWeight: 800, textTransform: "uppercase", minWidth: 64 }}>{k}</span>
-      <span style={{ flex: 1, color: "var(--text-secondary)" }}>{v}</span>
+    <div style={{ display: "flex", gap: 12, fontSize: 13, alignItems: "baseline" }}>
+      <span className="kicker" style={{ minWidth: 56, flexShrink: 0 }}>{k}</span>
+      <span style={{ flex: 1, color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", gap: 7 }}>
+        {v}{ok && <Badge tone="green">linked</Badge>}
+      </span>
     </div>
   );
 }

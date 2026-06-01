@@ -17,7 +17,7 @@ const PROFILE_STATUS: Record<string, { label: string; tone: BadgeTone }> = {
   proposed: { label: "Proposed", tone: "amber" },
 };
 
-export function Profiles() {
+export function Profiles({ embedded = false }: { embedded?: boolean } = {}) {
   const { profiles, confirmProfile, role } = useApp();
   const [_filter, _setFilter] = useState("all");
   const canConfirm = role === "manager";
@@ -29,12 +29,7 @@ export function Profiles() {
   };
   const proposedCount = groups.proposed.length;
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <ViewChrome breadcrumb={["Team", "Profiles"]}>
-        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{profiles.length} profiles</span>
-      </ViewChrome>
-      <div style={{ flex: 1, overflow: "auto" }}>
+  const content = (
         <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 24px 40px" }}>
           <div style={{ marginBottom: 20 }}>
             <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: 0 }}>The growing taxonomy</h1>
@@ -56,7 +51,15 @@ export function Profiles() {
             {groups.seed.map((p) => <ProfileCard key={p.id} p={p} />)}
           </Section>
         </div>
-      </div>
+  );
+
+  if (embedded) return content;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <ViewChrome breadcrumb={["Team", "Profiles"]}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{profiles.length} profiles</span>
+      </ViewChrome>
+      <div style={{ flex: 1, overflow: "auto" }}>{content}</div>
     </div>
   );
 }

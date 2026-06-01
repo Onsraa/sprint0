@@ -1,7 +1,9 @@
 """Canned fixtures for Phase 1 stubs. Real RAG/Gemini output replaces these in
 Phase 3. Kept schema-valid so the frontend + tests exercise the real contract.
 """
-from app.contracts import DeveloperProfile, PlanJSON
+from app.contracts import (
+    ArchitectureOptions, ClarifiedSpec, DeveloperProfile, ParsedCV, PlanJSON, SolutionSet,
+)
 
 CANNED_PLAN = PlanJSON.model_validate(
     {
@@ -155,3 +157,110 @@ CANNED_DEVELOPERS = [
         history=[],
     ),
 ]
+
+# ── Demo-mode fixtures (Phase 6 hybrid deploy) ──────────────────────────
+# Returned by the gated `generate_*` agents when DEMO_MODE is on, so the public URL
+# runs the full real path (FastAPI → MongoDB MCP retrieval) with canned Gemini output.
+# All themed to the same FinTrack narrative as CANNED_PLAN for a coherent walkthrough.
+
+CANNED_ARCHITECTURES = ArchitectureOptions.model_validate(
+    {
+        "cards": [
+            {
+                "name": "Fast Managed SaaS",
+                "tech_stack": {
+                    "frontend": "React + TypeScript",
+                    "backend": "FastAPI (Python)",
+                    "db": "PostgreSQL (managed)",
+                    "infra": "Docker + GitLab CI",
+                },
+                "summary": "Ship quickly on managed services; least ops, fastest to first demo.",
+                "rationale": "Mirrors LedgerLite (2024) which shipped in 6 weeks; Maria fits auth, Sam fits the dashboard.",
+                "grounded_on": ["LedgerLite (2024)", "BudgetBuddy (2023)"],
+                "fit_to_constraints": "Fast time-to-market, standard reliability, medium scale.",
+            },
+            {
+                "name": "Scalable Event Core",
+                "tech_stack": {
+                    "frontend": "React + TypeScript",
+                    "backend": "FastAPI + event queue",
+                    "db": "PostgreSQL + Redis",
+                    "infra": "Kubernetes + GitLab CI",
+                },
+                "summary": "Queue-backed ingestion for bank-sync spikes; more ops for higher headroom.",
+                "rationale": "BudgetBuddy's webhook backlog hurt under load; a queue absorbs Plaid bursts. Priya fits the infra.",
+                "grounded_on": ["BudgetBuddy (2023)"],
+                "fit_to_constraints": "Higher scalability + reliability; slower to first ship.",
+            },
+        ]
+    }
+)
+
+CANNED_SPEC = ClarifiedSpec.model_validate(
+    {
+        "goal": "A personal-finance SaaS with bank-sync, budgets, and a spending dashboard.",
+        "users": ["Individual savers", "Household budgeters"],
+        "must_haves": [
+            "Secure email/password login",
+            "Bank account sync (Plaid)",
+            "Category-grouped spending dashboard",
+        ],
+        "constraints": ["6-week timeline", "Web-first", "Handles payment data — security-sensitive"],
+        "ambiguities": [
+            {
+                "id": "amb-1",
+                "feature": "Bank sync",
+                "question": "Real bank connectivity or a sandbox for the first release?",
+                "options": ["Plaid production", "Plaid sandbox only", "Manual CSV import"],
+                "resolution": None,
+            },
+            {
+                "id": "amb-2",
+                "feature": "Budgets",
+                "question": "Are budgets per-category, a single overall cap, or both?",
+                "options": ["Per-category", "Single overall cap", "Both"],
+                "resolution": None,
+            },
+        ],
+        "reuse": [
+            {"from_project": "LedgerLite (2024)", "feature": "JWT auth + refresh", "action": "reuse"},
+            {"from_project": "BudgetBuddy (2023)", "feature": "Plaid webhook ingestion", "action": "adapt"},
+        ],
+    }
+)
+
+CANNED_SOLUTIONS = SolutionSet.model_validate(
+    {
+        "discipline": "",  # the server (propose_solutions) stamps the real gate discipline
+        "solutions": [
+            {
+                "source": "memory",
+                "title": "Reuse LedgerLite JWT auth",
+                "summary": "Lift the proven JWT login + refresh-rotation slice from LedgerLite.",
+                "rationale": "Shipped and prod-survived in LedgerLite (2024); least risk for a security-sensitive gate.",
+                "pros": ["Battle-tested", "Fastest path", "Security reviewed"],
+                "cons": ["Slightly dated deps"],
+                "confidence": 82,
+                "grounded_on": ["LedgerLite (2024)"],
+            },
+            {
+                "source": "ai",
+                "title": "Fresh OAuth + passkeys",
+                "summary": "Greenfield auth with social OAuth and WebAuthn passkeys.",
+                "rationale": "Modern UX and fewer passwords, but unproven in our codebase and longer to harden.",
+                "pros": ["Modern UX", "Fewer passwords"],
+                "cons": ["Unproven here", "Longer to harden"],
+                "confidence": 64,
+                "grounded_on": [],
+                "delta_note": "variant of LedgerLite + passkeys",
+            },
+        ],
+    }
+)
+
+CANNED_CV = ParsedCV(
+    name="Nia Petrova",
+    gitlab_username="nia-petrova",
+    skills_text="Python, FastAPI, PostgreSQL, payment integrations, OAuth/JWT auth, Docker, GitLab CI; "
+    "5 years backend, fintech domain.",
+)

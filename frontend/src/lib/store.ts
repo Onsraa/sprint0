@@ -43,6 +43,10 @@ interface UIState {
   liveCloneUrl: string | null;
   setLiveCloneUrl: (url: string | null) => void;
 
+  /** Cross-view project filter (the shared topbar ProjectSwitcher): null = All projects. */
+  projectFilter: number | null;
+  setProjectFilter: (id: number | null) => void;
+
   /** Dev-surface focus. */
   activeIssue: string | null;
   setActiveIssue: (id: string | null) => void;
@@ -70,6 +74,7 @@ const SESSION_DEFAULTS = {
   activeGate: null,
   liveProjectId: null,
   liveCloneUrl: null,
+  projectFilter: null,
   activeIssue: null,
   activeDev: null,
   panelTaskId: null,
@@ -105,6 +110,8 @@ export const useUI = create<UIState>((set) => ({
   setLiveProjectId: (liveProjectId) => set({ liveProjectId }),
   liveCloneUrl: null,
   setLiveCloneUrl: (liveCloneUrl) => set({ liveCloneUrl }),
+  projectFilter: null,
+  setProjectFilter: (projectFilter) => set({ projectFilter }),
 
   activeIssue: null,
   setActiveIssue: (activeIssue) => set({ activeIssue }),

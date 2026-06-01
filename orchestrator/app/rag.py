@@ -19,6 +19,8 @@ from voyageai.error import RateLimitError
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from app import demo
+
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 _URI = os.environ["MONGODB_URI"]
@@ -36,6 +38,10 @@ PP_TEXT_INDEX = os.getenv("PAST_PROJECTS_TEXT_INDEX", "pp_text_index")
 
 _vo = voyageai.Client(api_key=os.environ["VOYAGE_API_KEY"])
 
+# Demo mode: a fixed unit query-vector so `$vectorSearch` runs LIVE against Atlas (the MCP
+# showcase) with ZERO Voyage calls — neutralizes the free-tier 3-req/min limit on public traffic.
+_DEMO_VEC = [1.0 / (_DIMS ** 0.5)] * _DIMS
+
 
 def _embed(texts: list[str], input_type: str = "query") -> list[list[float]]:
     # Voyage free tier (no card) = 3 req/min; back off and retry on rate limits.
@@ -50,11 +56,15 @@ def _embed(texts: list[str], input_type: str = "query") -> list[list[float]]:
 
 
 def embed_query(text: str) -> list[float]:
+    if demo.is_demo():
+        return list(_DEMO_VEC)
     return _embed([text])[0]
 
 
 def embed_queries(texts: list[str]) -> list[list[float]]:
     """Batch embed (one Voyage request) — the free tier is 3 req/min, so never loop."""
+    if demo.is_demo():
+        return [list(_DEMO_VEC) for _ in texts]
     return _embed(texts) if texts else []
 
 

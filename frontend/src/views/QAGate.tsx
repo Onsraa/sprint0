@@ -7,14 +7,16 @@
    Ported pixel-1:1 from the v5 mockup (app/QAGate.jsx). Data source: REAL backend —
    api.qaRun(projectId) drives the checklist; api.rejectIssue reopens+reroutes. The
    scripted QA_RUN/QA_PRODUCERS below are fallback seeds only (before a run is fired). */
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
-import { api, type QAReport } from "../lib/api";
+import { api, type QAReport, type QAQueueEntry } from "../lib/api";
 import { toast } from "sonner";
 import { Icon } from "../lib/icon";
 import { Avatar, Badge, Button, DiscDot } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
+import { ProjectSwitcher } from "../components/ProjectSwitcher";
 
 // Fallback seed shown only before a real run has been triggered. The primary path
 // replaces these items with the live api.qaRun(projectId) result.
@@ -46,15 +48,26 @@ const toLocalItem = (i: QAReport["items"][number]): any => ({
 export function QAGate() {
   const { members, projects } = useApp();
   const liveProjectId = useUI((s) => s.liveProjectId);
+  const projectFilter = useUI((s) => s.projectFilter);
   const byUser = (u: string) => members.find((m: any) => m.username === u);
 
-  const [projectId, setProjectId] = useState<number | null>(liveProjectId ?? projects[0]?.project_id ?? null);
+  // cross-project QA queue — every project with acceptance work outstanding (the Tester is no longer
+  // locked to one project). The ProjectSwitcher narrows it; selecting a row scopes the acceptance below.
+  const { data: queueResp } = useQuery({ queryKey: ["qaQueue"], queryFn: () => api.qaQueue() });
+  const queue: QAQueueEntry[] = queueResp?.queue ?? [];
+  const queueShown = projectFilter == null ? queue : queue.filter((e) => e.project_id === projectFilter);
+
+  const [projectId, setProjectId] = useState<number | null>(projectFilter ?? liveProjectId ?? null);
   const [ran, setRan] = useState(false);
   const [running, setRunning] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [rejecting, setRejecting] = useState<string | null>(null); // issue_id being rejected
   const [flagging, setFlagging] = useState(false);
   const [blocks, setBlocks] = useState<any[]>([]); // failing-dep flags holding the gate
+
+  // follow the topbar ProjectSwitcher; otherwise default to the top queue entry once it loads
+  useEffect(() => { if (projectFilter != null && projectFilter !== projectId) { setProjectId(projectFilter); setRan(false); setItems([]); setRejecting(null); } }, [projectFilter, projectId]);
+  useEffect(() => { if (projectId == null && queue.length) setProjectId(queue[0].project_id); }, [queue, projectId]);
 
   const project = projects.find((p: any) => p.project_id === projectId);
   // Before a run, fall back to the scripted seed so the strip/checklist still render.
@@ -101,25 +114,25 @@ export function QAGate() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <ViewChrome breadcrumb={[project?.name ?? "QA", "QA gate"]}>
+      <ViewChrome breadcrumb={[project?.name ?? "QA", "Tester"]}>
         <Badge tone={gateBlocked ? "red" : "green"}>{gateBlocked ? "gate blocked" : "gate open"}</Badge>
         <Badge tone="outline" mono>{ran ? `${total} checks` : QA_RUN.plan}</Badge>
+        <ProjectSwitcher />
       </ViewChrome>
 
       <div style={{ flex: 1, overflow: "auto" }}>
         <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 28px 56px" }}>
-          {/* project picker */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
-            <span className="kicker" style={{ fontSize: 10 }}>Project</span>
-            {projects.length === 0 ? (
-              <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>No projects yet.</span>
-            ) : projects.map((p: any) => (
-              <button key={p.project_id} onClick={() => { setProjectId(p.project_id); setRan(false); setItems([]); setRejecting(null); }}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 28, padding: "0 11px", borderRadius: "var(--r-pill)",
-                  border: `0.5px solid ${projectId === p.project_id ? "var(--text-primary)" : "var(--border)"}`,
-                  background: projectId === p.project_id ? "var(--bg-active)" : "var(--bg-elevated)", fontSize: 12, fontWeight: 500 }}>
-                {p.name}
-              </button>
+          {/* cross-project QA queue — pick a project's acceptance to run */}
+          <div className="kicker" style={{ fontSize: 10, marginBottom: 10 }}>QA queue · acceptance across projects</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 22 }}>
+            {queueShown.length === 0 ? (
+              <div style={{ padding: "13px 14px", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)",
+                background: "var(--bg-secondary)", fontSize: 12.5, color: "var(--text-tertiary)" }}>
+                {projectFilter != null ? "This project's accept gate has no outstanding QA." : "No projects need QA right now."}
+              </div>
+            ) : queueShown.map((e) => (
+              <QueueRow key={e.project_id} e={e} active={projectId === e.project_id}
+                onClick={() => { setProjectId(e.project_id); setRan(false); setItems([]); setRejecting(null); }} />
             ))}
           </div>
 
@@ -182,6 +195,34 @@ export function QAGate() {
         </div>
       </div>
     </div>
+  );
+}
+
+/* one cross-project QA queue row — a project whose accept gate still has work. */
+function QueueRow({ e, active, onClick }: { e: QAQueueEntry; active: boolean; onClick: () => void }) {
+  const [h, setH] = useState(false);
+  const statusTone = e.qa_status === "blocked" ? "red" : e.qa_status === "changes_requested" ? "amber"
+    : e.qa_status === "ratified" || e.qa_status === "auto_passed" ? "green" : "outline";
+  return (
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", textAlign: "left", width: "100%",
+        borderRadius: "var(--r-lg)", background: "var(--bg-elevated)",
+        border: `0.5px solid ${active ? "var(--text-primary)" : "var(--border)"}`,
+        boxShadow: active || h ? "var(--shadow-2)" : "var(--shadow-1)", transition: "box-shadow var(--t-quick), border-color var(--t-quick)" }}>
+      <span style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center",
+        background: e.baton ? "var(--ink-fill)" : "var(--bg-secondary)", color: e.baton ? "#fff" : "var(--text-tertiary)" }}>
+        <Icon name="qa" size={12} />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.project_name}</div>
+        <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>
+          {e.issue_count} {e.issue_count === 1 ? "check" : "checks"}{e.awaiting_reqa.length ? ` · ${e.awaiting_reqa.length} re-QA` : ""}
+        </div>
+      </div>
+      {e.baton && <Badge tone="ink"><Icon name="flag" size={10} />baton</Badge>}
+      <Badge tone={statusTone as never} mono>{e.qa_status}</Badge>
+      <Icon name="chevronRight" size={15} style={{ color: "var(--text-quaternary)" }} />
+    </button>
   );
 }
 

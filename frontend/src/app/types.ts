@@ -6,7 +6,7 @@ export type Role = "manager" | "uiux" | "backend" | "frontend" | "qa";
    which a lead drops into. Derived from Role. */
 export type Mode = "manager" | "dev";
 
-export type ManagerView = "today" | "dashboard" | "work" | "team" | "relay" | "relays" | "queue" | "ratify" | "portfolio" | "attributions" | "codegraph" | "profiles" | "inbox";
+export type ManagerView = "today" | "dashboard" | "work" | "team" | "relay" | "relays" | "queue" | "ratify" | "portfolio" | "attributions" | "codegraph" | "profiles" | "inbox" | "settings";
 export type DevView = "work" | "today" | "relays" | "issue" | "passport" | "ratify" | "qa" | "queue" | "portfolio" | "inbox";
 export type View = ManagerView | DevView;
 export type WizardKind = "brief" | "hire";

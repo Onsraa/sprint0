@@ -32,25 +32,18 @@ export function CommandPalette() {
   const go = (to: string): (() => void) => () => navigate({ to: to as "/" }); // cast: routes registered at runtime
   const isManager = role === "manager";
 
-  const navigateCmds: Cmd[] = isManager
-    ? [
-        { id: "inbox", label: "Go to Inbox", icon: "inbox", run: go("/inbox") },
-        { id: "work", label: "Go to My Work", icon: "board", run: go("/work") },
-        { id: "projects", label: "Go to Projects", icon: "projects", run: go("/dashboard") },
-        { id: "relay", label: "Go to Relay", icon: "relay", run: go("/relays") },
-        { id: "ratify", label: "Go to Ratify queue", icon: "ratify", run: go("/queue") },
-        { id: "team", label: "Go to Team", icon: "team", run: go("/team") },
-        { id: "profiles", label: "Go to Profiles", icon: "profiles", run: go("/profiles") },
-        { id: "merges", label: "Go to Merges", icon: "merges", run: go("/attributions") },
-        { id: "codegraph", label: "Go to Code graph", icon: "codegraph", run: go("/codegraph") },
-        { id: "portfolio", label: "Go to Portfolio", icon: "portfolio", run: go("/portfolio") },
-      ]
-    : [
-        { id: "inbox", label: "Go to Inbox", icon: "inbox", run: go("/inbox") },
-        { id: "work", label: "Go to My Work", icon: "board", run: go("/work") },
-        { id: "ratify", label: "Go to Ratify", icon: "ratify", run: go("/queue") },
-        { id: "portfolio", label: "Go to Portfolio", icon: "portfolio", run: go("/portfolio") },
-      ];
+  const baseNav: Cmd[] = [
+    { id: "today", label: "Go to Today", icon: "today", run: go("/today") },
+    { id: "relays", label: "Go to Relays", icon: "pool", run: go("/relays") },
+    { id: "inbox", label: "Go to Inbox", icon: "inbox", run: go("/inbox") },
+    { id: "work", label: "Go to My Work", icon: "board", run: go("/work") },
+    { id: "projects", label: "Go to Projects", icon: "projects", run: go("/dashboard") },
+    { id: "team", label: "Go to Team", icon: "team", run: go("/team") },
+    { id: "portfolio", label: "Go to Decisions", icon: "portfolio", run: go("/portfolio") },
+  ];
+  const navigateCmds: Cmd[] = role === "qa"
+    ? [...baseNav, { id: "qagate", label: "Go to Tester", icon: "qa", run: go("/qa") }]
+    : baseNav;
 
   const createCmds: Cmd[] = isManager
     ? [

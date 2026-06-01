@@ -12,6 +12,7 @@ import {
 } from "../../components/ui";
 import { useApp } from "../../app/useApp";
 import { useUI } from "../../lib/store";
+import { ProjectSwitcher } from "../../components/ProjectSwitcher";
 import { KindSurface } from "../KindSurface";
 import type { Member, WorkTask } from "../../lib/api";
 
@@ -52,9 +53,11 @@ export function WorkHub() {
   const byUser = (u: string | null | undefined) => members.find((m) => m.username === u);
   const [tasks, setTasks] = useState<AnyTask[]>(() => allTasks.map((t) => ({ ...t })));
   const [scope, setScope] = useState(role === "manager" ? "team" : "me"); // me | team
+  const [personFilter, setPersonFilter] = useState<string | null>(null); // @person assignee filter
   const [mode, setMode] = useState<"board" | "list" | "timeline">("board");
   const [selected, setSelected] = useState<string | null>(null);
   const [exec, setExec] = useState<string | null>(null); // §25 open the code-focus execution surface
+  const projectFilter = useUI((s) => s.projectFilter); // shared cross-view project filter (null = All)
 
   // keep local board state in sync if the adapter's task list changes
   useEffect(() => { setTasks(allTasks.map((t) => ({ ...t }))); }, [allTasks]);
@@ -68,7 +71,10 @@ export function WorkHub() {
     setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, status: status as WorkTask["status"] } : t)));
   }, []);
 
-  const shown = scope === "me" ? tasks.filter((t) => t.assignee === me.username) : tasks;
+  const shown = tasks.filter((t) =>
+    (scope === "me" ? t.assignee === me.username : true) &&
+    (projectFilter == null || (t.project ?? t.project_id) === projectFilter) &&
+    (personFilter == null || t.assignee === personFilter));
   const sel = tasks.find((t) => t.id === selected) || null;
   const execTask = tasks.find((t) => t.id === exec) || null;
   // developers/qa open their card straight into the execution surface
@@ -91,7 +97,7 @@ export function WorkHub() {
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <ScopeBar scope={scope} setScope={setScope} count={shown.length} />
+          <ScopeBar scope={scope} setScope={setScope} count={shown.length} members={members} personFilter={personFilter} setPersonFilter={setPersonFilter} byUser={byUser} />
           {role !== "manager" && <FocusBanner tasks={tasks} onOpen={setExec} />}
           <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {mode === "board" && <Board tasks={shown} onMove={move} onOpen={openCard} selected={selected} byUser={byUser} />}
@@ -134,19 +140,69 @@ function FocusBanner({ tasks, onOpen }: { tasks: AnyTask[]; onOpen: (id: string)
   );
 }
 
-function ScopeBar({ scope, setScope, count }: { scope: string; setScope: (s: string) => void; count: number }) {
+function ScopeBar({ scope, setScope, count, members, personFilter, setPersonFilter, byUser }: {
+  scope: string; setScope: (s: string) => void; count: number; members: Member[];
+  personFilter: string | null; setPersonFilter: (u: string | null) => void;
+  byUser: (u: string | null | undefined) => Member | undefined;
+}) {
   return (
     <div style={{ height: 40, flexShrink: 0, display: "flex", alignItems: "center", gap: 6, padding: "0 12px",
       borderBottom: "0.5px solid var(--border-subtle)" }}>
       <Tab active={scope === "me"} onClick={() => setScope("me")}>My work</Tab>
       <Tab active={scope === "team"} onClick={() => setScope("team")}>Team</Tab>
-      <button style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 28, padding: "0 10px",
-        borderRadius: "var(--r-pill)", fontSize: 12, fontWeight: 500, color: "var(--text-tertiary)" }}>
-        <Icon name="team" size={13} /> @person <Icon name="chevronDown" size={12} />
-      </button>
+      <PersonFilter members={members} value={personFilter} onChange={setPersonFilter} byUser={byUser} />
       <div style={{ flex: 1 }} />
       <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{count} tasks</span>
+      <ProjectSwitcher />
     </div>
+  );
+}
+
+/* @person assignee filter — a dropdown of roster members (the button previously had no handler). */
+function PersonFilter({ members, value, onChange, byUser }: {
+  members: Member[]; value: string | null; onChange: (u: string | null) => void;
+  byUser: (u: string | null | undefined) => Member | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [h, setH] = useState(false);
+  const sel = value ? byUser(value) : null;
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen((o) => !o)} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+        style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 28, padding: "0 10px",
+          borderRadius: "var(--r-pill)", fontSize: 12, fontWeight: 500,
+          color: value ? "var(--text-primary)" : "var(--text-tertiary)",
+          background: open || h || value ? "var(--bg-hover)" : "transparent",
+          border: `0.5px solid ${value ? "var(--border-strong)" : "transparent"}` }}>
+        <Icon name="team" size={13} /> {sel ? (sel.name ?? "").split(" ")[0] : "@person"} <Icon name="chevronDown" size={12} />
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+          <div style={{ position: "absolute", top: 32, left: 0, width: 224, zIndex: 61, background: "var(--bg-elevated)",
+            border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-3)",
+            padding: 6, animation: "s0-pop-in var(--t-reg) var(--ease-out) both", maxHeight: 320, overflowY: "auto" }}>
+            <PersonRow label="Everyone" active={value == null} onClick={() => { onChange(null); setOpen(false); }} />
+            {members.map((m) => (
+              <PersonRow key={m.username} label={m.name ?? m.username} name={m.name} active={value === m.username}
+                onClick={() => { onChange(m.username); setOpen(false); }} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+function PersonRow({ label, name, active, onClick }: { label: string; name?: string; active: boolean; onClick: () => void }) {
+  const [h, setH] = useState(false);
+  return (
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", height: 32, padding: "0 8px",
+        borderRadius: "var(--r-md)", textAlign: "left", background: active || h ? "var(--bg-hover)" : "transparent" }}>
+      {name ? <Avatar name={name} size={20} /> : <span style={{ width: 20, height: 20, display: "grid", placeItems: "center" }}><Icon name="team" size={13} style={{ color: "var(--text-tertiary)" }} /></span>}
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      {active && <Icon name="check" size={14} style={{ color: "var(--text-primary)" }} />}
+    </button>
   );
 }
 
@@ -434,7 +490,7 @@ function TaskPanel({ task: t, onClose, onScope, tasks, byUser }: {
           <PanelRow icon="flag" label="Priority" value={<span style={{ color: PRIORITY_META[t.priority ?? "normal"].color, fontWeight: 500 }}>{PRIORITY_META[t.priority ?? "normal"].label}</span>} />
           <PanelRow icon="load" label="Risk" value={<Badge tone={RISK_META[t.risk ?? "low"].tone}>{RISK_META[t.risk ?? "low"].label}</Badge>} />
           <PanelRow icon="clock" label="Estimate" value={<span className="mono" style={{ fontSize: 12.5 }}>{estOf(t)} days</span>} />
-          <PanelRow icon="projects" label="Project" value={projects.find((p) => p.project_id === (t.project ?? t.project_id))?.name} />
+          <PanelRow icon="projects" label="Project" value={projects.find((p) => p.project_id === (t.project ?? t.project_id))?.name ?? <span className="mono" style={{ color: "var(--text-quaternary)" }}>#{t.project ?? t.project_id ?? "—"}</span>} />
         </div>
 
         <div style={{ height: 1, background: "var(--border-subtle)", margin: "4px 0 16px" }} />

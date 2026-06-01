@@ -21,6 +21,7 @@ from app.contracts import (
     ArchitectureOptions, ClarifiedSpec, ConflictVerdict, DecisionCardPass1, ParsedCV, PlanJSON,
     QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
 )
+from app import canned, demo
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -86,10 +87,14 @@ async def _run_agent(agent: Agent, prompt: str) -> str:
 
 
 async def generate_plan(prompt: str) -> PlanJSON:
+    if demo.is_demo():
+        return canned.CANNED_PLAN.model_copy(deep=True)
     return PlanJSON.model_validate_json(await _run_agent(planner_agent, prompt))
 
 
 async def generate_architectures(prompt: str) -> ArchitectureOptions:
+    if demo.is_demo():
+        return canned.CANNED_ARCHITECTURES.model_copy(deep=True)
     return ArchitectureOptions.model_validate_json(await _run_agent(architect_agent, prompt))
 
 
@@ -112,6 +117,8 @@ clarify_agent = Agent(name="sprint0_clarify", model=MODEL, instruction=INSTRUCTI
 
 
 async def generate_clarification(prompt: str) -> ClarifiedSpec:
+    if demo.is_demo():
+        return canned.CANNED_SPEC.model_copy(deep=True)
     return ClarifiedSpec.model_validate_json(await _run_agent(clarify_agent, prompt))
 
 
@@ -125,6 +132,8 @@ onboard_agent = Agent(name="sprint0_onboard", model=MODEL, instruction=INSTRUCTI
 
 
 async def generate_cv_profile(cv_text: str) -> ParsedCV:
+    if demo.is_demo():
+        return canned.CANNED_CV.model_copy(deep=True)
     return ParsedCV.model_validate_json(await _run_agent(onboard_agent, cv_text))
 
 
@@ -226,6 +235,8 @@ solutions_agent = Agent(name="sprint0_solutions", model=MODEL, instruction=INSTR
 
 
 async def generate_solutions(prompt: str) -> SolutionSet:
+    if demo.is_demo():
+        return canned.CANNED_SOLUTIONS.model_copy(deep=True)
     return SolutionSet.model_validate_json(await _run_agent(solutions_agent, prompt))
 
 

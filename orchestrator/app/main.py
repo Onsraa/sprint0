@@ -23,12 +23,12 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
+from app import auth, demo, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
-    PlanRequest, ProjectRecord, QAReport, RatifyRequest, RelayState, Task, UserSubscription,
+    PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, DecisionCard, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
@@ -54,11 +54,34 @@ from app.reason import (
 )
 
 app = FastAPI(title="sprint0", version="0.4.0")
+
+
+class _LiveGateMiddleware:
+    """Per-request demo/live flag from the `X-Sprint0-Live` header. Pure ASGI (not BaseHTTPMiddleware)
+    so the contextvar it sets is visible to the endpoint + the agent calls in the same task. Covers
+    every route, including the unauthenticated ones, with no endpoint signature changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            supplied = None
+            for k, v in scope.get("headers", []):
+                if k == b"x-sprint0-live":
+                    supplied = v.decode("latin-1")
+                    break
+            demo.set_live(demo.token_ok(supplied))
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_LiveGateMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173", "http://127.0.0.1:5173",
         "http://localhost:5174", "http://127.0.0.1:5174",
+        *([os.environ["FRONTEND_ORIGIN"]] if os.getenv("FRONTEND_ORIGIN") else []),
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -423,6 +446,33 @@ async def list_relays(member: DeveloperProfile = Depends(auth.current_member)) -
     return {"count": len(out), "relays": out}
 
 
+@app.get("/api/qa/queue", response_model=QAQueue)
+async def qa_queue(_: DeveloperProfile = Depends(auth.current_member)) -> QAQueue:
+    """Cross-project Tester queue: every dispatched project with QA work outstanding. QA runs off the
+    live plan (PROJECTS — persisted + rebuilt on startup); the relay state (RELAYS, if still active this
+    session) supplies the accept-gate status + baton. So a tester sees all their acceptance work across
+    projects in one place, not one locked project."""
+    plan_id_by_name: dict[str, str] = {}
+    for plan_id, plan in PLANS.items():
+        plan_id_by_name.setdefault(plan.project_name, plan_id)
+    entries: list[QAQueueEntry] = []
+    for pid, plan in PROJECTS.items():
+        plan_id = plan_id_by_name.get(plan.project_name, "")
+        state = RELAYS.get(plan_id) if plan_id else None
+        qa_gate = next((g for g in state.gates if g.discipline == "qa"), None) if state else None
+        status = qa_gate.status if qa_gate else "pending"
+        reqa = sorted(REQA.get(pid, set()))
+        if status in ("ratified", "auto_passed") and not reqa:
+            continue  # accepted and nothing reopened → no outstanding QA
+        entries.append(QAQueueEntry(
+            project_id=pid, project_name=plan.project_name, plan_id=plan_id,
+            qa_status=status, baton=bool(state and "qa" in state.baton),
+            issue_count=sum(len(e.issues) for e in plan.epics), awaiting_reqa=reqa,
+        ))
+    entries.sort(key=lambda e: (e.baton, e.issue_count), reverse=True)
+    return QAQueue(count=len(entries), queue=entries)
+
+
 @app.get("/api/projects")
 async def list_projects(_: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """All repos in the demo group (real source of truth). A repo with a ProjectRecord is
@@ -464,6 +514,12 @@ async def list_projects(_: DeveloperProfile = Depends(auth.current_member)) -> d
         else:  # any other live repo
             out.append({"project_id": pid, "name": name, "web_url": repo["web_url"], "kind": "active",
                         "status": None, "last_activity_at": repo["last_activity_at"]})
+    # Union: a sprint0-managed project (ProjectRecord + materialized tasks) must resolve even if GitLab no
+    # longer lists its repo (demo reset / free-tier cap) — else its tasks orphan with a blank project.
+    seen = {p["project_id"] for p in out}
+    for pid, rec in records.items():
+        if pid not in seen:
+            out.append({**rec, "kind": "active"})
     return {"count": len(out), "projects": out}
 
 

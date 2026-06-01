@@ -58,6 +58,8 @@ import type {
   ProjectSummary,
   QAItemResult,
   QAReport,
+  QAQueue,
+  QAQueueEntry,
   QAVerdict,
   QueueItem,
   RejectResult,
@@ -131,6 +133,8 @@ export type {
   ProjectSummary,
   QAItemResult,
   QAReport,
+  QAQueue,
+  QAQueueEntry,
   QAVerdict,
   QueueItem,
   RejectResult,
@@ -188,10 +192,46 @@ export const token = {
   },
 };
 
-/** Headers carrying the session token (when present). */
+const LIVE_TOKEN_KEY = "sprint0_live_token";
+
+/** Live-mode unlock token, set by the `?unlock=` magic link. Presence ⇒ this tab runs LIVE
+ * (real Vertex + GitLab); absence ⇒ the public DEMO path on a demo-gated deploy. */
+export const live = {
+  get(): string | null {
+    try {
+      return sessionStorage.getItem(LIVE_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  },
+  set(value: string): void {
+    try {
+      sessionStorage.setItem(LIVE_TOKEN_KEY, value);
+    } catch {
+      /* ignore disabled storage */
+    }
+  },
+  clear(): void {
+    try {
+      sessionStorage.removeItem(LIVE_TOKEN_KEY);
+    } catch {
+      /* ignore */
+    }
+  },
+  active(): boolean {
+    return !!live.get();
+  },
+};
+
+/** Headers carrying the session token (and the live-unlock token when present). */
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const t = token.get();
-  return { ...(extra ?? {}), ...(t ? { "X-Sprint0-User": t } : {}) };
+  const lt = live.get();
+  return {
+    ...(extra ?? {}),
+    ...(t ? { "X-Sprint0-User": t } : {}),
+    ...(lt ? { "X-Sprint0-Live": lt } : {}),
+  };
 }
 
 /* ── Wire types (mirror orchestrator/app/contracts.py) ───────────────── */
@@ -573,6 +613,10 @@ export const api = {
   /* QA */
   qaRun(projectId: number): Promise<QAReport> {
     return jpost(`/api/projects/${projectId}/qa/run`);
+  },
+  // cross-project Tester queue: every project with QA work outstanding (mirrors /api/relays)
+  qaQueue(): Promise<QAQueue> {
+    return jget("/api/qa/queue", S.QAQueue);
   },
   rejectIssue(
     projectId: number,

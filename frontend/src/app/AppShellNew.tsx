@@ -26,25 +26,24 @@ export const DEMO_PERSONAS = [
 ];
 
 /* nav items carry a `roles` allowlist + capability flags — per-role chrome. */
+/* v4 two-plane: the SPINE reads first (Today · Relays) → Do → Know → Utility.
+   Code Graph + Merges + standalone Profiles are CUT (routes stay, unlinked); Projects + Team
+   are now universal; capability Profiles fold into Team's "Capabilities" tab. Tester replaces
+   QA gate. Devs/managers reach Contract from the Today "Start here" card, not a standing item. */
 const NAV = [
-  { section: null as string | null, items: [
+  { section: "Spine", items: [
     { id: "today", label: "Today", icon: "today", kbd: ["G", "D"], roles: ["manager", "developer", "qa"] },
     { id: "relays", label: "Relays", icon: "pool", kbd: ["G", "L"], roles: ["manager", "developer", "qa"] },
   ] },
   { section: "Do", items: [
     { id: "mywork", label: "My Work", icon: "board", kbd: ["G", "W"], roles: ["manager", "developer", "qa"] },
-    { id: "relay", label: "Ratify your slice", icon: "ratify", kbd: ["G", "R"], roles: ["developer"] },
-    { id: "qagate", label: "QA gate", icon: "qa", kbd: ["G", "Q"], roles: ["qa"] },
-    { id: "ratify", label: "Ratify", icon: "ratify", kbd: ["G", "T"], roles: ["manager"] },
+    { id: "qagate", label: "Tester", icon: "qa", kbd: ["G", "Q"], roles: ["qa"] },
   ] },
   { section: "Know", items: [
-    { id: "projects", label: "Projects", icon: "projects", kbd: ["G", "P"], roles: ["manager"] },
-    { id: "portfolio", label: "Portfolio", icon: "portfolio", roles: ["manager", "developer", "qa"] },
+    { id: "projects", label: "Projects", icon: "projects", kbd: ["G", "P"], roles: ["manager", "developer", "qa"] },
+    { id: "team", label: "Team", icon: "team", roles: ["manager", "developer", "qa"] },
+    { id: "portfolio", label: "Decisions", icon: "portfolio", roles: ["manager", "developer", "qa"] },
     { id: "passport", label: "Passport", icon: "passport", roles: ["developer", "qa"] },
-    { id: "team", label: "Team", icon: "team", roles: ["manager"] },
-    { id: "codegraph", label: "Code Graph", icon: "merges", roles: ["manager"] },
-    { id: "merges", label: "Merges", icon: "link", roles: ["manager"] },
-    { id: "profiles", label: "Profiles", icon: "passport", roles: ["manager"] },
   ] },
   { section: "Utility", items: [
     { id: "inbox", label: "Inbox", icon: "inbox", kbd: ["G", "I"], roles: ["manager", "developer", "qa"] },

@@ -447,6 +447,22 @@ class QAReport(BaseModel):
     tester: Optional[TesterPick] = None                # the best-by-passport verifier for this gate
 
 
+class QAQueueEntry(BaseModel):
+    """One project/relay with QA work outstanding — a row in the cross-project Tester queue."""
+    project_id: int
+    project_name: str
+    plan_id: str
+    qa_status: str                                          # the qa gate's status
+    baton: bool = False                                     # qa holds the baton (it's this gate's turn)
+    issue_count: int = 0                                    # issues in the accept stage
+    awaiting_reqa: list[int] = Field(default_factory=list)  # reopened iids awaiting re-QA
+
+
+class QAQueue(BaseModel):
+    count: int = 0
+    queue: list[QAQueueEntry] = Field(default_factory=list)
+
+
 # ── REST request bodies (intake / relay / mid-prod) ──
 class ClarifyResolution(BaseModel):
     answers: dict[str, str]  # ambiguity id → resolution text

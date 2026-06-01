@@ -7,8 +7,10 @@ appends to an existing project instead of scaffolding a new one.
 """
 from __future__ import annotations
 
+import os
+
 from app import gitlab as gl
-from app import handoff, policy, team
+from app import demo, handoff, policy, team
 from app.contracts import Issue, PlanJSON
 
 _TYPE_COLOR = {"backend": "#2A6FDB", "frontend": "#F4511E", "db": "#0F8E5C", "devops": "#7C3AED", "design": "#D97706"}
@@ -135,6 +137,14 @@ def _invite_assignees(project_id: int, plan: PlanJSON) -> None:
 
 
 def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: bool = True) -> dict:
+    if demo.is_demo():  # public demo: no real GitLab writes — point at a pre-made showcase project
+        n = sum(len(e.issues) for e in plan.epics)
+        return {
+            "web_url": os.getenv("DEMO_SHOWCASE_URL", "https://gitlab.com/sprint0-demo"),
+            "clone_url": "", "project_id": int(os.getenv("DEMO_SHOWCASE_PID", "0")),
+            "default_branch": "main", "issues_created": n, "context_branches": n,
+            "qa_issue_iid": None, "demo_stub": True,
+        }
     project_name = project_name or plan.project_name
     scaf = gl.create_project_scaffold(project_name, labels=_plan_labels(plan))
     pid = scaf["project_id"]
@@ -175,6 +185,9 @@ def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: 
 
 def extend_project(plan: PlanJSON, project_id: int, default_branch: str = "main") -> dict:
     """Mid-prod: append a delta plan's issues + focus branches to an EXISTING project."""
+    if demo.is_demo():  # public demo: no real GitLab writes
+        n = sum(len(e.issues) for e in plan.epics)
+        return {"issues_created": n, "context_branches": n, "demo_stub": True}
     clone_url = gl.get_project(project_id).get("http_url_to_repo", "")
     gl.create_labels(project_id, _plan_labels(plan))
     _invite_assignees(project_id, plan)

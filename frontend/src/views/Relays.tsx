@@ -8,6 +8,7 @@ import { useState } from "react";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { ViewChrome } from "../components/ViewChrome";
+import { ProjectSwitcher } from "../components/ProjectSwitcher";
 import { Button, Tab, Badge, DiscDot, DISC } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { GATE_META } from "./RatifyPanel";
@@ -120,13 +121,16 @@ function RelayRow({ r, rank, onOpen }: { r: RelaySummary; rank: number; onOpen: 
 }
 
 export function Relays() {
-  const { relaySummaries, role, me, setView }: any = useApp();
+  const { relaySummaries, role, me, setView, projects }: any = useApp();
   const setPlanId = useUI((s) => s.setPlanId);
   const setActiveGate = useUI((s) => s.setActiveGate);
+  const projectFilter = useUI((s) => s.projectFilter);
+  const selName = (projects as any[]).find((p) => p.project_id === projectFilter)?.name ?? null;
   const all: RelaySummary[] = relaySummaries ?? [];
-  const mine = role === "manager"
+  const roleFiltered = role === "manager"
     ? all
     : all.filter((r) => r.gates.some((g) => g.discipline === me?.discipline) || r.baton.includes(me?.discipline));
+  const mine = selName ? roleFiltered.filter((r) => r.project === selName) : roleFiltered;
   const relays = [...mine].sort((a, b) => relayScore(b) - relayScore(a));
   const awaiting = relays.filter((r) => r.baton.length > 0).length;
 
@@ -144,6 +148,7 @@ export function Relays() {
           <Tab active={true}>By relay</Tab>
         </div>
         <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{relays.length} active</span>
+        <ProjectSwitcher />
       </ViewChrome>
 
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>

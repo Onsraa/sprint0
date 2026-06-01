@@ -4,8 +4,9 @@
 import { useState } from "react";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
-import { Avatar, Badge, Button, DiscDot, DISC, LoadMeter, TrustDot } from "../components/ui";
+import { Avatar, Badge, Button, DiscDot, DISC, LoadMeter, Tab, TrustDot } from "../components/ui";
 import { useApp } from "../app/useApp";
+import { Profiles } from "./Profiles";
 import type { Member } from "../lib/api";
 
 // real Member uses gitlab_username / trust_level; the mock used gitlab / trust.
@@ -19,6 +20,7 @@ const ORPHAN_GAP = "uiux";
 
 export function TeamView() {
   const { chrome, subs, members } = useApp();
+  const [tab, setTab] = useState<"roster" | "capabilities">("roster");
   const gap = ORPHAN_GAP;
   // strongest non-uiux candidate by trust as the stretch suggestion (mock had cov.stretch_candidates[0]).
   const stretch =
@@ -29,9 +31,16 @@ export function TeamView() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <ViewChrome breadcrumb={["Studio", "Team"]}>
+        <div style={{ display: "flex", gap: 6, marginRight: 6 }}>
+          <Tab active={tab === "roster"} onClick={() => setTab("roster")}>Roster</Tab>
+          <Tab active={tab === "capabilities"} onClick={() => setTab("capabilities")}>Capabilities</Tab>
+        </div>
         <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", marginRight: 6 }}>watching {subs.watching.length} · watchers {subs.watchers.length}</span>
         {chrome.canOnboard && <Button variant="primary" size="sm" icon="plus">Onboard a dev</Button>}
       </ViewChrome>
+      {tab === "capabilities" ? (
+        <div style={{ flex: 1, overflow: "auto" }}><Profiles embedded /></div>
+      ) : (
       <div style={{ flex: 1, overflow: "auto" }}>
         {/* staffing gap banner */}
         <div style={{ margin: "16px 20px 0", border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: "13px 14px", background: "var(--bg-secondary)", display: "flex", alignItems: "center", gap: 10 }}>
@@ -52,6 +61,7 @@ export function TeamView() {
         </div>
         {members.map((m) => <TeamRow key={m.username} m={m} />)}
       </div>
+      )}
     </div>
   );
 }

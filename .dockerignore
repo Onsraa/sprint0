@@ -1,0 +1,16 @@
+# Keep the build context small + fast — the image only needs pyproject/uv.lock + orchestrator/ + scripts/.
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+frontend
+docs
+seed
+secrets
+.env
+.env.*
+*.md
+.superpowers
+.DS_Store
+.mcp.json

@@ -269,6 +269,14 @@ export const QAReport = z.object({
   tester: TesterPick.nullish(),    // best-by-passport verifier for this gate
 });
 export type QAReport = z.infer<typeof QAReport>;
+export const QAQueueEntry = z.object({   // one project/relay with QA work outstanding (cross-project Tester queue)
+  project_id: z.number(), project_name: z.string(), plan_id: z.string(),
+  qa_status: z.string(), baton: z.boolean(),
+  issue_count: z.number(), awaiting_reqa: z.array(z.number()),
+});
+export type QAQueueEntry = z.infer<typeof QAQueueEntry>;
+export const QAQueue = z.object({ count: z.number(), queue: z.array(QAQueueEntry) });
+export type QAQueue = z.infer<typeof QAQueue>;
 
 // Reuse-or-Innovate (the Contract spine): per-gate solution options the lead selects.
 // Every field is always serialized by the backend (Pydantic defaults), so these are required.
