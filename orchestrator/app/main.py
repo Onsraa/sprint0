@@ -468,7 +468,7 @@ async def list_projects(_: DeveloperProfile = Depends(auth.current_member)) -> d
 
 
 @app.post("/api/briefs")
-async def create_brief(text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None)) -> dict:
+async def create_brief(text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None), _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     content = (text or "").strip()
     if file is not None:
         raw = await file.read()
@@ -562,7 +562,7 @@ async def _persist_draft_tasks(plan: PlanJSON, plan_id: str) -> None:
 
 
 @app.post("/api/briefs/{brief_id}/plan")
-async def make_plan(brief_id: str, req: Optional[PlanRequest] = None) -> dict:
+async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
     req = req or PlanRequest()
@@ -842,7 +842,7 @@ async def gate_solutions(
 
 
 @app.post("/api/plans/{plan_id}/approve")
-async def approve_plan(plan_id: str, req: ApproveRequest) -> dict:
+async def approve_plan(plan_id: str, req: ApproveRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     plan = req.edits or PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
@@ -883,7 +883,7 @@ async def dispatch_preview(plan_id: str) -> dict:
 
 
 @app.post("/api/plans/{plan_id}/dispatch")
-async def dispatch_plan(plan_id: str, req: DispatchRequest) -> dict:
+async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     """Scaffold (or, for a delta plan, extend) once the relay clears. Persists a ProjectRecord."""
     plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
     if plan is None or state is None:
@@ -964,7 +964,7 @@ async def reject_issue(project_id: int, iid: int, req: RejectRequest) -> dict:
 
 
 @app.post("/api/projects/{project_id}/features")
-async def add_feature(project_id: int, req: FeatureRequest) -> dict:
+async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     """Mid-prod: a feature brief → delta plan grounded on the live project → its own relay.
     Ratify + dispatch as usual; dispatch then EXTENDS this project instead of scaffolding."""
     record = await get_project_record(project_id)
@@ -1326,7 +1326,7 @@ async def reject_reschedule(proposal_id: str, member: DeveloperProfile = Depends
 
 
 @app.post("/api/projects/{project_id}/qa/run", response_model=QAReport)
-async def qa_run(project_id: int) -> QAReport:
+async def qa_run(project_id: int, _: DeveloperProfile = Depends(auth.current_member)) -> QAReport:
     """Layered QA: the QA-agent prefills the acceptance checklist; reopened items are flagged."""
     plan = PROJECTS.get(project_id)
     if plan is None:
@@ -1372,7 +1372,7 @@ async def _validate_project_decisions(project_name: str) -> int:
 
 
 @app.post("/api/projects/{project_id}/close")
-async def close(project_id: int, req: CloseRequest) -> dict:
+async def close(project_id: int, req: CloseRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     """Post-mortem: write the shipped project into agency memory; mark the record closed. Outcome
     Validation fires here — this project's decisions become outcome_validated + owners notified."""
     record = await get_project_record(project_id)
@@ -1748,7 +1748,7 @@ async def list_developers() -> list[DeveloperProfile]:
 
 
 @app.post("/api/developers", response_model=DeveloperProfile)
-async def add_developer(text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None)) -> DeveloperProfile:
+async def add_developer(text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None), _: DeveloperProfile = Depends(auth.current_manager)) -> DeveloperProfile:
     """Cold-Start onboarding: drop a CV (text or PDF) → parse → upsert (Trust: Low)."""
     cv = (text or "").strip()
     if file is not None:

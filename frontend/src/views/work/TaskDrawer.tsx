@@ -135,16 +135,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
               <div style={{ fontWeight: 800, fontSize: 18, lineHeight: 1.35 }}>{detail.title}</div>
             </div>
 
-            {detail.redacted ? (
-              <>
-                <div style={{ marginBottom: 12 }}>
-                  <StatusChip status={detail.status} />
-                </div>
-                <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
-                  You don't have access to this task's detail.
-                </div>
-              </>
-            ) : (
+            {(
               <>
                 {/* Status chip + discipline */}
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
@@ -290,7 +281,7 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                 )}
 
                 {/* Kind-specific execution surface (shared component — same as dev view + ratify panel) */}
-                {!detail.redacted && (
+                {(
                   <div style={{ marginBottom: 20 }}>
                     <KindSurface work={detail} />
                   </div>
