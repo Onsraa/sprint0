@@ -44,13 +44,19 @@ def _anchor_date(anchor: str) -> date:
     return next_workday(datetime.fromisoformat(anchor.replace("Z", "+00:00")).date())
 
 
+_PRI = {"urgent": 0, "high": 1, "normal": 2, "low": 3}   # lower rank = scheduled first
+
+
 def _topo(tasks: list[Task]) -> list[Task]:
-    """Kahn's topological sort by depends_on; ignores deps outside this set; cycle-safe."""
+    """Kahn's topological sort by depends_on; among READY tasks, higher priority schedules first
+    (urgent→low) so urgent work claims a person's calendar ahead of lower-priority work. The ordering
+    IS the (bounded) preemption — no recursion. Stable: equal priority keeps insertion order. Cycle-safe."""
     by_id = {t.id: t for t in tasks}
     indeg = {t.id: sum(1 for d in t.depends_on if d in by_id) for t in tasks}
     queue = [t for t in tasks if indeg[t.id] == 0]
     order, seen = [], set()
     while queue:
+        queue.sort(key=lambda t: _PRI.get(t.priority, 2))  # stable → ties keep insertion order
         t = queue.pop(0)
         order.append(t); seen.add(t.id)
         for u in tasks:
@@ -81,6 +87,8 @@ def _pack(tasks: list[Task], cap: dict[str, float], load: dict[str, int], anchor
     for t in _topo(tasks):
         a = t.assignee or ""
         blk = frozenset(avail_map.get(a, ()))
+        if t.status == "done":
+            continue  # completed work draws no future capacity and imposes no scheduling floor on dependents
         if t.id in frozen_ids and t.scheduled_start and t.scheduled_end:
             end = date.fromisoformat(t.scheduled_end)
             end_of[t.id] = end
@@ -110,7 +118,9 @@ def schedule_tasks(tasks: list[Task], members: list[DeveloperProfile], anchor: s
     anchor_d = _anchor_date(anchor)
     cap = {m.username: capacity_of(m) for m in members}
     load = {m.username: m.load for m in members}
-    frozen = {t.id for t in tasks if t.pinned and t.scheduled_start and t.scheduled_end}
+    # in_progress work is protected like a pin: it keeps its slot + reserves capacity, so urgent
+    # planned work bumps only UNSTARTED lower-priority tasks, never active work.
+    frozen = {t.id for t in tasks if (t.pinned or t.status == "in_progress") and t.scheduled_start and t.scheduled_end}
     return _pack(tasks, cap, load, anchor_d, availability or {}, frozen, {})
 
 
@@ -145,7 +155,7 @@ def reflow(tasks: list[Task], members: list[DeveloperProfile], anchor: str,
     load = {m.username: m.load for m in members}
     affected = _affected_set(tasks, set(changed_ids))
     frozen = {t.id for t in tasks
-              if (t.id not in affected or t.pinned) and t.scheduled_start and t.scheduled_end}
+              if (t.id not in affected or t.pinned or t.status == "in_progress") and t.scheduled_start and t.scheduled_end}
     floors = {t.id: date.fromisoformat(t.scheduled_start)
               for t in tasks if t.id in affected and not t.pinned and t.scheduled_start}
     ordered = sorted(tasks, key=lambda t: t.scheduled_start or "9999")  # stable per-person packing

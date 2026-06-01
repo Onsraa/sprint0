@@ -15,6 +15,7 @@ import { Wizard } from "../wizard/Wizard";
 import { CommandPalette } from "../features/palette/CommandPalette";
 import { useNotificationsWS } from "../features/notify/useNotifications";
 import { useHealth } from "../features/health/useHealth";
+import { useWorkspace } from "../features/workspace/useWorkspace";
 
 /* The demo roster shown in the persona switcher (the 5 real seeded accounts). */
 export const DEMO_PERSONAS = [
@@ -26,26 +27,26 @@ export const DEMO_PERSONAS = [
 ];
 
 /* nav items carry a `roles` allowlist + capability flags — per-role chrome. */
-/* v4 two-plane: the SPINE reads first (Today · Relays) → Do → Know → Utility.
+/* v4 two-plane: the Overview group reads first (Today · Relays) → Work → Explore → System.
    Code Graph + Merges + standalone Profiles are CUT (routes stay, unlinked); Projects + Team
    are now universal; capability Profiles fold into Team's "Capabilities" tab. Tester replaces
    QA gate. Devs/managers reach Contract from the Today "Start here" card, not a standing item. */
 const NAV = [
-  { section: "Spine", items: [
+  { section: "Overview", items: [
     { id: "today", label: "Today", icon: "today", kbd: ["G", "D"], roles: ["manager", "developer", "qa"] },
     { id: "relays", label: "Relays", icon: "pool", kbd: ["G", "L"], roles: ["manager", "developer", "qa"] },
   ] },
-  { section: "Do", items: [
+  { section: "Work", items: [
     { id: "mywork", label: "My Work", icon: "board", kbd: ["G", "W"], roles: ["manager", "developer", "qa"] },
     { id: "qagate", label: "Tester", icon: "qa", kbd: ["G", "Q"], roles: ["qa"] },
   ] },
-  { section: "Know", items: [
+  { section: "Explore", items: [
     { id: "projects", label: "Projects", icon: "projects", kbd: ["G", "P"], roles: ["manager", "developer", "qa"] },
     { id: "team", label: "Team", icon: "team", roles: ["manager", "developer", "qa"] },
     { id: "portfolio", label: "Decisions", icon: "portfolio", roles: ["manager", "developer", "qa"] },
     { id: "passport", label: "Passport", icon: "passport", roles: ["developer", "qa"] },
   ] },
-  { section: "Utility", items: [
+  { section: "System", items: [
     { id: "inbox", label: "Inbox", icon: "inbox", kbd: ["G", "I"], roles: ["manager", "developer", "qa"] },
     { id: "settings", label: "Settings", icon: "settings", roles: ["manager"] },
   ] },
@@ -120,6 +121,7 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
 
 function Workspace() {
   const { me, switchPersona } = useApp();
+  const workspace = useWorkspace();
   const [open, setOpen] = useState(false);
   const [h, setH] = useState(false);
   return (
@@ -127,7 +129,7 @@ function Workspace() {
       <button onClick={() => setOpen((o) => !o)} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
         style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", width: "100%", background: open || h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
         <FullLogo size={17} />
-        <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· Studio</span>
+        <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· {workspace}</span>
         <div style={{ flex: 1 }} />
         <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
       </button>

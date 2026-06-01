@@ -29,7 +29,7 @@ from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
-    ContextScope, DecisionCard, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
+    ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
 from app.agent import DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card
@@ -105,6 +105,7 @@ PLANS: dict[str, PlanJSON] = {}
 RELAYS: dict[str, RelayState] = {}
 RESULTS: dict[str, dict] = {}
 DELTA_TARGET: dict[str, int] = {}  # plan_id → existing project_id (mid-prod delta plans extend, not create)
+DELTA_PRIORITY: dict[str, str] = {}  # plan_id → feature priority (urgent → its tasks preempt planned work)
 PROJECTS: dict[int, PlanJSON] = {}  # project_id → live plan (for QA review + mid-prod, this session)
 REQA: dict[int, set] = {}  # project_id → reopened issue iids awaiting re-QA (the reject→fix→re-QA loop)
 SOLUTIONS: dict[tuple[str, str], SolutionSet] = {}  # (plan_id, discipline) → cached reuse-or-innovate set (lazy)
@@ -523,6 +524,16 @@ async def list_projects(_: DeveloperProfile = Depends(auth.current_member)) -> d
     return {"count": len(out), "projects": out}
 
 
+@app.get("/api/workspace")
+async def workspace(_: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The workspace label = the GitLab demo group's display name, for the sidebar + breadcrumbs.
+    Best-effort: falls back to the configured group path if GitLab is unreachable."""
+    try:
+        return await run_in_threadpool(gitlab.group_info)
+    except Exception:
+        return {"name": gitlab.DEMO_GROUP, "path": gitlab.DEMO_GROUP, "web_url": ""}
+
+
 @app.post("/api/briefs")
 async def create_brief(text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None), _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     content = (text or "").strip()
@@ -612,7 +623,12 @@ async def _persist_draft_tasks(plan: PlanJSON, plan_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         pid = _plan_pid(plan_id)
         await delete_tasks_for_project(pid)
-        await save_tasks([t.model_dump() for t in tasklib.materialize_tasks(plan, pid, now)])
+        objs = tasklib.materialize_tasks(plan, pid, now)
+        pri = DELTA_PRIORITY.get(plan_id)
+        if pri:
+            for o in objs:
+                o.priority = pri  # the feature's urgency rides on its tasks → drives the cascade in the preview
+        await save_tasks([o.model_dump() for o in objs])
     except Exception:
         pass  # mirrors save_project_record — never fail planning over persistence
 
@@ -978,12 +994,30 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
         await delete_tasks_for_project(_plan_pid(plan_id))  # drop this plan's placeholder draft tasks
         iid_by_title = {i.get("title"): i.get("iid") for i in result.get("issues", [])}
         objs = tasklib.materialize_tasks(plan, real_pid, now)
+        feat_pri = DELTA_PRIORITY.get(plan_id)
         for o in objs:
             o.status = "in_progress"
             o.gitlab_issue_iid = iid_by_title.get(o.title)
+            if feat_pri:
+                o.priority = feat_pri
         await team.ensure_loaded()
-        scheduler.schedule_tasks(objs, team.all_members(), now)  # compute scheduled_start/end
+        avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+        scheduler.schedule_tasks(objs, team.all_members(), now, availability=avail)  # availability-aware
         await save_tasks([o.model_dump() for o in objs])
+        # Tier A: re-pack the whole project (existing + new) around REAL availability — new work now
+        # respects the team's calendar + roadmap instead of being scheduled in isolation.
+        prior = {d["id"]: (d.get("scheduled_start"), d.get("scheduled_end")) for d in await tasks_for_project(real_pid)}
+        await _reschedule_project(real_pid)
+        if plan_id in DELTA_TARGET:  # a feature shifted the existing roadmap → propose the impact to the manager
+            after = await tasks_for_project(real_pid)
+            moved = [d for d in after if (d.get("scheduled_start"), d.get("scheduled_end")) != prior.get(d["id"])]
+            ev = ChangeEvent(id=f"evt_{uuid.uuid4().hex[:8]}", kind="scope_change", project_id=real_pid,
+                             payload={"feature": plan.project_name}, created_at=now)
+            try:
+                await save_event(ev.model_dump())
+            except Exception:
+                pass
+            await _maybe_strategize(ev, moved, prior)
     except Exception:
         pass  # never block dispatch on task persistence
     RESULTS[plan_id] = result
@@ -1031,8 +1065,94 @@ async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile 
     PLANS[plan_id] = plan
     RELAYS[plan_id] = relay.build_relay(plan)
     DELTA_TARGET[plan_id] = project_id
+    DELTA_PRIORITY[plan_id] = req.priority
     await _persist_draft_tasks(plan, plan_id)
     return {"plan_id": plan_id, "project_id": project_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
+
+
+@app.post("/api/plans/{plan_id}/reschedule-preview")
+async def reschedule_preview(plan_id: str, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Tier C dry-run: schedule a delta plan's draft tasks against the LIVE project WITHOUT persisting,
+    returning the impact (existing tasks pushed + who picks up load) so the wizard shows consequences
+    BEFORE dispatch. Deterministic — zero AI tokens."""
+    pid = DELTA_TARGET.get(plan_id)
+    if pid is None:
+        raise HTTPException(404, "not a delta plan — nothing live to preview against")
+    existing = [Task(**d) for d in await tasks_for_project(pid)]
+    drafts = [Task(**d) for d in await tasks_for_project(_plan_pid(plan_id))]
+    for d in drafts:
+        d.project_id = pid  # share the project's assignee calendar (in-memory only; never saved)
+    prior = {t.id: t.scheduled_end for t in existing}
+    await team.ensure_loaded()
+    members = team.all_members()
+    avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+    scheduler.schedule_tasks(existing + drafts, members, datetime.now(timezone.utc).isoformat(), availability=avail)
+    moved = [{"task_id": t.id, "title": t.title, "assignee": t.assignee, "old_end": prior.get(t.id), "new_end": t.scheduled_end}
+             for t in existing if t.scheduled_end != prior.get(t.id)]
+    by_user = {m.username: m for m in members}
+    load: dict[str, float] = {}
+    for d in drafts:
+        if d.assignee:
+            load[d.assignee] = load.get(d.assignee, 0.0) + d.estimate_days
+    overloaded = [{"user": u, "name": (by_user[u].name if u in by_user else u), "added_days": round(days, 1)}
+                  for u, days in sorted(load.items(), key=lambda x: -x[1])]
+    return {"pushed": len(moved), "moved": moved[:12], "overloaded": overloaded, "feature_tasks": len(drafts)}
+
+
+class QuickTaskRequest(BaseModel):
+    title: str
+    discipline: Discipline
+    estimate_days: float = 1.0
+    priority: Literal["low", "normal", "high", "urgent"] = "normal"
+    assignee: Optional[str] = None
+    depends_on: list[str] = []
+
+
+@app.post("/api/projects/{project_id}/tasks")
+async def create_task(project_id: int, req: QuickTaskRequest, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Tier D ad-hoc quick-add: a manager or the discipline lead adds a task. It still flows through the
+    engine — auto-routed by load, scheduled + reflowed (an urgent one cascades) — tagged with human
+    provenance (assigned_by = the creator), never a side-door ticket."""
+    if not (member.role == "manager" or member.discipline == req.discipline):
+        raise HTTPException(403, "only the manager or the discipline lead can add a task here")
+    await team.ensure_loaded()
+    devs = team.all_members()
+    assignee = req.assignee
+    if not assignee:  # auto-route: lowest-load dev in the discipline
+        cand = min((m for m in devs if m.discipline == req.discipline and m.load < 100), key=lambda m: m.load, default=None)
+        assignee = cand.username if cand else None
+    now = datetime.now(timezone.utc).isoformat()
+    t = Task(id=f"adhoc_{uuid.uuid4().hex[:8]}", project_id=project_id, title=req.title, description="",
+             discipline=req.discipline, assignee=assignee, assigned_by=member.username,
+             estimate_days=req.estimate_days, priority=req.priority, depends_on=req.depends_on,
+             status="planned", context_scope=ContextScope(files=[]), created_at=now, updated_at=now)
+    await save_tasks([t.model_dump()])
+    await _reschedule_project(project_id)  # the ad-hoc task reflows + cascades like any other work
+    if assignee and assignee != member.username:
+        await notify(assignee, "task_assigned", f"Task added to you: {t.title}",
+                     body=f"@{member.username} added '{t.title}' ({req.discipline}).",
+                     ref={"task_id": t.id, "project_id": project_id})
+    return (await get_task(t.id)) or t.model_dump()
+
+
+class SuggestRequest(BaseModel):
+    title: str
+
+
+@app.post("/api/tasks/suggest")
+async def suggest_task(req: SuggestRequest, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Opt-in quick-add helper: infer discipline / estimate / priority from a task title. Deterministic
+    keyword heuristic — zero AI cost (swap in a Gemini agent later if smarter inference is wanted)."""
+    s = req.title.lower()
+    disc = ("uiux" if any(k in s for k in ("design", "figma", "ui/ux", "wireframe", "mockup")) else
+            "qa" if any(k in s for k in ("test", "qa", "acceptance", "e2e", "regression")) else
+            "devops" if any(k in s for k in ("deploy", " ci", "cd ", "infra", "pipeline", "docker", "k8s", "terraform")) else
+            "frontend" if any(k in s for k in ("page", "component", "css", "screen", "button", "form", "modal")) else
+            "backend")
+    pri = ("urgent" if any(k in s for k in ("urgent", "asap", "critical", "hotfix", "p0", "outage")) else
+           "high" if any(k in s for k in ("important", "high priority", "p1")) else "normal")
+    est = 3.0 if any(k in s for k in ("refactor", "migration", "rewrite", "redesign")) else 1.0
+    return {"discipline": disc, "estimate_days": est, "priority": pri}
 
 
 # ── Work hub (Phase A): Tasks aggregate + per-task edit/claim/status ──
@@ -1150,7 +1270,47 @@ async def task_status(task_id: str, status: str, member: DeveloperProfile = Depe
     except ValueError as e:
         raise HTTPException(400, str(e))
     await update_task(task_id, updated.model_dump())
+    if updated.status != t.status:
+        await _on_task_status_change(updated, t.status, member)
     return updated.model_dump()
+
+
+async def _on_task_status_change(t: Task, prev: str, actor: DeveloperProfile) -> None:
+    """Side effects of a status change: reflow the project on Done (completed work frees capacity →
+    downstream re-packs) and notify reviewers / manager / dependents. Best-effort — never raises."""
+    try:
+        if t.status == "done":
+            ev = ChangeEvent(id=f"evt_{uuid.uuid4().hex[:8]}", kind="task_done", task_id=t.id,
+                             project_id=t.project_id, user_id=t.assignee,
+                             created_at=datetime.now(timezone.utc).isoformat())
+            try:
+                await save_event(ev.model_dump())
+            except Exception:
+                pass
+            await _reschedule_project(t.project_id)
+        await team.ensure_loaded()
+        members = team.all_members()
+        if t.status == "in_review":
+            reviewers = [m for m in members if m.discipline == "qa"] or [m for m in members if m.role == "manager"]
+            for r in reviewers:
+                if r.username != actor.username:
+                    await notify(r.username, "ratify_needed", f"Ready for review: {t.title}",
+                                 body=f"@{actor.username} moved '{t.title}' to In Review.",
+                                 ref={"task_id": t.id, "project_id": t.project_id}, actionable=True)
+        elif t.status == "done":
+            mgr = next((m for m in members if m.role == "manager"), None)
+            if mgr and mgr.username != actor.username:
+                await notify(mgr.username, "task_completed", f"Task done: {t.title}",
+                             body=f"@{actor.username} marked '{t.title}' done.",
+                             ref={"task_id": t.id, "project_id": t.project_id})
+            for d in await tasks_for_project(t.project_id):
+                dt = Task(**d)
+                if t.id in (dt.depends_on or []) and dt.assignee and dt.assignee != actor.username:
+                    await notify(dt.assignee, "task_assigned", f"Unblocked: {dt.title}",
+                                 body=f"'{t.title}' is done — {dt.title} can start.",
+                                 ref={"task_id": dt.id, "project_id": t.project_id})
+    except Exception:
+        pass
 
 
 @app.post("/api/tasks/{task_id}/pin")

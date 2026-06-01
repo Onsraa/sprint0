@@ -458,6 +458,16 @@ export const api = {
   reassignTask(taskId: string, assignee: string): Promise<WorkTask> {
     return jpost(`/api/tasks/${taskId}/reassign?assignee=${encodeURIComponent(assignee)}`);
   },
+  // Tier D — ad-hoc quick-add (engine-routed) + opt-in suggest + Tier C feature impact preview
+  createTask(projectId: number, body: { title: string; discipline: string; estimate_days?: number; priority?: string; assignee?: string; depends_on?: string[] }): Promise<WorkTask> {
+    return jpost(`/api/projects/${projectId}/tasks`, body);
+  },
+  suggestTask(title: string): Promise<{ discipline: string; estimate_days: number; priority: string }> {
+    return jpost(`/api/tasks/suggest`, { title });
+  },
+  featurePreview(planId: string): Promise<{ pushed: number; moved: { task_id: string; title: string; assignee: string | null; old_end: string | null; new_end: string | null }[]; overloaded: { user: string; name: string; added_days: number }[]; feature_tasks: number }> {
+    return jpost(`/api/plans/${planId}/reschedule-preview`);
+  },
   /** Lock (or unlock) a task's dates so the reflow engine never moves it (Reclaim-style lock). */
   pinTask(taskId: string, pinned: boolean): Promise<WorkTask> {
     return jpost(`/api/tasks/${taskId}/pin?pinned=${pinned}`);
@@ -617,6 +627,10 @@ export const api = {
   // cross-project Tester queue: every project with QA work outstanding (mirrors /api/relays)
   qaQueue(): Promise<QAQueue> {
     return jget("/api/qa/queue", S.QAQueue);
+  },
+  // dynamic workspace label — the GitLab demo group's display name (sidebar + breadcrumbs)
+  workspace(): Promise<{ name: string; path: string; web_url: string }> {
+    return jget("/api/workspace");
   },
   rejectIssue(
     projectId: number,

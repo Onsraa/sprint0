@@ -33,6 +33,16 @@ def _group_id(c: httpx.Client, group_path: str) -> int:
     return r.json()["id"]
 
 
+def group_info(group: str | None = None) -> dict:
+    """The demo group's display name + path + url — drives the dynamic workspace label in the UI."""
+    group = group or DEMO_GROUP
+    with _client() as c:
+        r = c.get(f"/groups/{quote(group, safe='')}")
+        r.raise_for_status()
+        g = r.json()
+        return {"name": g.get("name") or g.get("path") or group, "path": g.get("path") or group, "web_url": g.get("web_url", "")}
+
+
 def create_project_scaffold(
     project_name: str, labels: dict[str, str] | None = None, group: str | None = None
 ) -> dict:

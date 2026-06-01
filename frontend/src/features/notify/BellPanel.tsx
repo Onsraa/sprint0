@@ -15,6 +15,10 @@ const NOTIF_META: Record<string, { icon: any; label: string; spark?: boolean }> 
   reschedule_resolved: { icon: "calendar", label: "Reschedule" },
   merge:               { icon: "merges",   label: "Merge" },
   ratify:              { icon: "ratify",   label: "Ratify" },
+  ratify_needed:       { icon: "ratify",   label: "Review",     spark: true },
+  task_assigned:       { icon: "board",    label: "Assigned" },
+  task_completed:      { icon: "check",    label: "Done" },
+  reschedule_proposed: { icon: "calendar", label: "Reschedule", spark: true },
 };
 
 /* ───────── Toast host — bottom-right live stack ───────── */
