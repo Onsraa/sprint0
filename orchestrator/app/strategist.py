@@ -35,7 +35,7 @@ def build_strategy_prompt(event: ChangeEvent, impacted: list[Task],
         ev += f" details={event.payload}"
     tasks = "\n".join(
         f'- {t.id} [{t.discipline}] "{t.title}" assignee=@{t.assignee or "—"} '
-        f"est={t.estimate_days}d sched={t.scheduled_start}→{t.scheduled_end}"
+        f"pri={t.priority} est={t.estimate_days}d sched={t.scheduled_start}→{t.scheduled_end}"
         for t in impacted
     ) or "(none)"
     cands = "\n".join(

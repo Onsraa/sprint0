@@ -2,7 +2,9 @@
    right sub-panel for task detail. Ported pixel-1:1 from the v4 design system's MyWork.jsx; only the
    data source changed (mock TASKS/MEMBERS → the useApp() adapter). NOTE: the mockup MyWork carries no
    "Simulate change" / reflow control, so none is rendered here. */
-import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Icon, type IconName } from "../../lib/icon";
 import { ZeroMark } from "../../lib/icon";
 import { ViewChrome } from "../../components/ViewChrome";
@@ -12,9 +14,11 @@ import {
 } from "../../components/ui";
 import { useApp } from "../../app/useApp";
 import { useUI } from "../../lib/store";
+import { useSetTaskStatus } from "../../features/work/useWork";
 import { ProjectSwitcher } from "../../components/ProjectSwitcher";
 import { KindSurface } from "../KindSurface";
-import type { Member, WorkTask } from "../../lib/api";
+import type { Member, WorkTask, TaskStatus } from "../../lib/api";
+import { api } from "../../lib/api";
 
 /* ── local presentational maps + helpers (ported from data.jsx / data3.jsx) ─────────────────────── */
 const RISK_META: Record<string, { label: string; tone: "red" | "amber" | "neutral" }> = {
@@ -67,9 +71,11 @@ export function WorkHub() {
   const setActiveIssue = useUI((s) => s.setActiveIssue);
   useEffect(() => { if (activeIssue) { setExec(activeIssue); setActiveIssue(null); } }, [activeIssue, setActiveIssue]);
 
+  const setTaskStatus = useSetTaskStatus();
   const move = useCallback((id: string, status: string) => {
-    setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, status: status as WorkTask["status"] } : t)));
-  }, []);
+    setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, status: status as WorkTask["status"] } : t)));  // instant
+    setTaskStatus.mutate({ id, status: status as TaskStatus });  // persist (+ server reflow-on-done + notify)
+  }, [setTaskStatus]);
 
   const shown = tasks.filter((t) =>
     (scope === "me" ? t.assignee === me.username : true) &&
@@ -92,7 +98,7 @@ export function WorkHub() {
         </div>
         <IconButton name="filter" title="Filter" />
         <IconButton name="sort" title="Sort" />
-        <Button variant="primary" size="sm" icon="plus">New</Button>
+        <QuickAdd />
       </ViewChrome>
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
@@ -136,6 +142,75 @@ function FocusBanner({ tasks, onOpen }: { tasks: AnyTask[]; onOpen: (id: string)
         </div>
       </div>
       <Button variant="primary" size="sm" iconRight="arrowRight" onClick={() => onOpen(first.id)}>Open scope</Button>
+    </div>
+  );
+}
+
+const SEL_STYLE: CSSProperties = { flex: 1, height: 30, padding: "0 8px", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)", fontSize: 12.5, background: "var(--bg-elevated)", color: "var(--text-primary)", outline: "none" };
+
+/* Tier D — ad-hoc quick-add (manager + discipline leads). The created task flows through the engine
+   (auto-routed + scheduled + reflowed; an urgent one cascades), tagged with the creator as provenance.
+   Replaces the dead "New" button — freedom WITHOUT a side-door around the ratify-first spine. */
+function QuickAdd() {
+  const { role, me, projects }: any = useApp();
+  const projectFilter = useUI((s) => s.projectFilter);
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [discipline, setDiscipline] = useState<string>(me?.discipline ?? "backend");
+  const [priority, setPriority] = useState("normal");
+  const [est, setEst] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const isLead = role !== "manager";  // a dev/qa lead can only create in their own discipline
+  if (role !== "manager" && !me?.discipline) return null;
+  const target = (projects as any[]).find((p) => p.project_id === projectFilter)
+    ?? (projects as any[]).find((p) => p.kind === "active") ?? (projects as any[])[0];
+  const submit = async () => {
+    if (!title.trim() || !target) return;
+    setBusy(true);
+    try {
+      await api.createTask(target.project_id, { title: title.trim(), discipline: isLead ? me.discipline : discipline, estimate_days: est, priority });
+      qc.invalidateQueries({ queryKey: ["work"] });
+      setTitle(""); setOpen(false);
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Couldn't add the task"); }
+    finally { setBusy(false); }
+  };
+  const suggest = async () => {
+    if (!title.trim()) return;
+    try { const s = await api.suggestTask(title.trim()); if (!isLead) setDiscipline(s.discipline); setPriority(s.priority); setEst(s.estimate_days); }
+    catch { /* suggest is best-effort */ }
+  };
+  return (
+    <div style={{ position: "relative" }}>
+      <Button variant="primary" size="sm" icon="plus" onClick={() => setOpen((o) => !o)}>New</Button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+          <div style={{ position: "absolute", top: 34, right: 0, width: 324, zIndex: 61, background: "var(--bg-elevated)",
+            border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-3)", padding: 12,
+            animation: "s0-pop-in var(--t-reg) var(--ease-out) both", display: "flex", flexDirection: "column", gap: 9 }}>
+            <div className="kicker" style={{ fontSize: 10 }}>Quick add{target ? ` · ${target.name}` : " · no project"}</div>
+            <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title…"
+              onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+              style={{ height: 32, padding: "0 10px", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)",
+                fontSize: 13, outline: "none", background: "var(--bg-elevated)", color: "var(--text-primary)" }} />
+            <div style={{ display: "flex", gap: 6 }}>
+              <select value={isLead ? me.discipline : discipline} disabled={isLead} onChange={(e) => setDiscipline(e.target.value)} style={SEL_STYLE}>
+                {["uiux", "backend", "frontend", "devops", "qa"].map((d) => <option key={d} value={d}>{DISC[d]?.label ?? d}</option>)}
+              </select>
+              <select value={priority} onChange={(e) => setPriority(e.target.value)} style={SEL_STYLE}>
+                {["low", "normal", "high", "urgent"].map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <input type="number" min={0.5} step={0.5} value={est} title="estimate (days)"
+                onChange={(e) => setEst(Number(e.target.value) || 1)} style={{ ...SEL_STYLE, width: 62, flex: "none" }} />
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+              <Button variant="ghost" size="sm" onClick={suggest} disabled={!title.trim()}>✨ Suggest</Button>
+              <Button variant="primary" size="sm" iconRight="arrowRight" onClick={submit} disabled={!title.trim() || !target || busy}>{busy ? "Adding…" : "Add task"}</Button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -491,6 +566,9 @@ function TaskPanel({ task: t, onClose, onScope, tasks, byUser }: {
           <PanelRow icon="load" label="Risk" value={<Badge tone={RISK_META[t.risk ?? "low"].tone}>{RISK_META[t.risk ?? "low"].label}</Badge>} />
           <PanelRow icon="clock" label="Estimate" value={<span className="mono" style={{ fontSize: 12.5 }}>{estOf(t)} days</span>} />
           <PanelRow icon="projects" label="Project" value={projects.find((p) => p.project_id === (t.project ?? t.project_id))?.name ?? <span className="mono" style={{ color: "var(--text-quaternary)" }}>#{t.project ?? t.project_id ?? "—"}</span>} />
+          {t.assigned_by && t.assigned_by !== "ai" && t.assigned_by !== "self" && (
+            <PanelRow icon="team" label="Added by" value={<Badge tone="outline">@{t.assigned_by}</Badge>} />
+          )}
         </div>
 
         <div style={{ height: 1, background: "var(--border-subtle)", margin: "4px 0 16px" }} />

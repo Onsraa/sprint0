@@ -609,6 +609,7 @@ class DispatchRequest(BaseModel):
 class FeatureRequest(BaseModel):  # mid-prod feature add
     text: str
     constraints: Optional[Constraints] = None
+    priority: Literal["low", "normal", "high", "urgent"] = "normal"  # urgent → the feature's tasks preempt planned work
 
 
 # ── Code Graph (roadmap System 4): dependency graph (A) + decision governance (B) + drift ──
