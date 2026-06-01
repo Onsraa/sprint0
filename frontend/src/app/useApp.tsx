@@ -62,7 +62,7 @@ function toMockProject(p: ProjectSummary): any {
   const devs = new Set((p.plan?.epics ?? []).flatMap((e) => e.issues ?? []).map((i) => i.assignee).filter(Boolean)).size;
   return {
     ...p, id: p.project_id, code: initials(p.name), status: p.kind === "reference" ? "shipped" : (p.status || "in_progress"),
-    stack: Object.values(p.tech_stack ?? {}).filter(Boolean), issues, devs, grounded: p.grounded_on ?? [],
+    stack: Object.values(p.tech_stack ?? {}).filter((v) => v && v !== "-"), issues, devs, grounded: p.grounded_on ?? [],
     accent: DISC_ACCENTS[hash(p.name) % DISC_ACCENTS.length], created: p.created_at ?? "", activity: p.last_activity_at ?? "",
   };
 }

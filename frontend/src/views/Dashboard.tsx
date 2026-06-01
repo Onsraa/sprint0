@@ -3,24 +3,16 @@
    (PROJECTS→projects, MEMBERS→members, RELAY.gates→gates, drafts→drafts). v5 adds the drafts section
    (wizard drafts shown above a divider before dispatch) + the s0-rise row stagger. Exported as
    Dashboard for the router. */
-import { useState, Fragment, type CSSProperties } from "react";
-import { Button, IconButton, Tab, Avatar, Badge, DiscDot, DISC } from "../components/ui";
+import { useState } from "react";
+import { Button, IconButton, Tab, Avatar, Badge } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
 import { useApp } from "../app/useApp";
-
-/* GATE_META — ported verbatim from the mockup's data.jsx (panel reads it in MiniRelay). */
-const GATE_META: Record<string, { label: string; tone: string; fg: string }> = {
-  ratified:          { label: "Ratified",          tone: "green",   fg: "var(--green)" },
-  auto_passed:       { label: "Auto-passed",       tone: "blue",    fg: "var(--blue)" },
-  changes_requested: { label: "Changes requested", tone: "amber",   fg: "var(--amber)" },
-  blocked:           { label: "Blocked",           tone: "red",     fg: "var(--red)" },
-  locked:            { label: "Locked",            tone: "neutral", fg: "var(--text-quaternary)" },
-  pending:           { label: "Pending",           tone: "outline", fg: "var(--text-tertiary)" },
-};
+import { useUI } from "../lib/store";
 
 export function Dashboard() {
-  const { setView, projects, members, gates, drafts } = useApp();
+  const { setView, projects, members, drafts } = useApp();
+  const setProjectFilter = useUI((s) => s.setProjectFilter);
   const [filter, setFilter] = useState("all"); // all | drafts | active | shipped | reference
   const [sel, setSel] = useState<any>(null);
 
@@ -95,7 +87,7 @@ export function Dashboard() {
             )}
           </div>
         </div>
-        {selP && <ProjectPanel p={selP} gates={gates} onClose={() => setSel(null)} onResume={() => setView("wizard")} />}
+        {selP && <ProjectPanel p={selP} onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => setView("wizard")} />}
       </div>
     </div>
   );
@@ -164,7 +156,7 @@ function AvatarStack({ n = 0, members }: { n?: number; members: any[] }) {
   );
 }
 
-function ProjectPanel({ p, gates, onClose, onResume }: { p: any; gates: any[]; onClose: () => void; onResume: () => void }) {
+function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRelays: () => void; onClose: () => void; onResume: () => void }) {
   const isRef = p.kind === "reference";
   const isDraft = p.kind === "draft";
   return (
@@ -228,10 +220,9 @@ function ProjectPanel({ p, gates, onClose, onResume }: { p: any; gates: any[]; o
         ) : null}
 
         {!isRef && !isDraft && (
-          <>
-            <div className="kicker" style={{ marginBottom: 8 }}>Relay status</div>
-            <MiniRelay gates={gates} />
-          </>
+          <Button variant="secondary" size="sm" iconRight="arrowRight" style={{ width: "100%" }} onClick={onViewRelays}>
+            View this project's relays
+          </Button>
         )}
       </div>
       {isDraft ? (
@@ -244,32 +235,6 @@ function ProjectPanel({ p, gates, onClose, onResume }: { p: any; gates: any[]; o
           <Button variant="secondary" size="md" onClick={onClose}>Close</Button>
         </div>
       )}
-    </div>
-  );
-}
-function MiniRelay({ gates }: { gates: any[] }) {
-  const order = ["uiux", "backend", "devops", "frontend", "qa"];
-  const statusByDisc: Record<string, string> = Object.fromEntries(gates.map(g => [g.discipline, g.status]));
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "10px 4px" }}>
-      {order.map((d, i) => {
-        const s = statusByDisc[d] || "pending";
-        const done = s === "ratified" || s === "auto_passed";
-        const cr = s === "changes_requested";
-        return (
-          <Fragment key={d}>
-            <div title={`${DISC[d].label} · ${GATE_META[s].label}`} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
-              <span style={{ width: 26, height: 26, borderRadius: "50%", display: "grid", placeItems: "center",
-                background: done ? "var(--green)" : cr ? "var(--amber)" : "var(--bg-secondary)",
-                color: done || cr ? "#fff" : "var(--text-quaternary)", border: "0.5px solid var(--border)" } as CSSProperties}>
-                {done ? <Icon name="ratify" size={13} /> : <DiscDot d={d} size={8} />}
-              </span>
-              <span style={{ fontSize: 9.5, color: "var(--text-quaternary)" }}>{DISC[d].label}</span>
-            </div>
-            {i < order.length - 1 && <span style={{ flex: 1, height: 1, background: "var(--border-strong)", marginTop: -16 }} />}
-          </Fragment>
-        );
-      })}
     </div>
   );
 }

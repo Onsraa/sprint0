@@ -133,12 +133,13 @@ function DecisionDetail({ d, onClose, onVisibility, onReasoning, onDeprecate, on
           <div className="kicker" style={{ marginBottom: 8 }}>Earned strength</div>
           <div style={{ display: "flex", gap: 6 }}>
             {GRADE_ORDER.map((g) => {
-              const m = GRADE_META[g], reached = d.grade ? m.step <= GRADE_META[d.grade].step : false;
-              const proven = d.grade ? GRADE_META[d.grade].proven : false;
+              const eff = d.grade ?? "proposed";   // an ungraded decision sits at the "proposed" baseline
+              const m = GRADE_META[g], reached = m.step <= GRADE_META[eff].step;
+              const proven = GRADE_META[eff].proven;
               return (
                 <div key={g} style={{ flex: 1, textAlign: "center" }}>
                   <div style={{ height: 4, borderRadius: 2, background: reached ? (proven && m.proven ? "var(--text-primary)" : "var(--text-quaternary)") : "var(--bg-tertiary)", marginBottom: 5 }} />
-                  <div style={{ fontSize: 9, color: g === d.grade ? "var(--text-primary)" : "var(--text-quaternary)", fontWeight: g === d.grade ? 600 : 400 }}>{m.label}</div>
+                  <div style={{ fontSize: 9, color: g === eff ? "var(--text-primary)" : "var(--text-quaternary)", fontWeight: g === eff ? 600 : 400 }}>{m.label}</div>
                 </div>
               );
             })}
