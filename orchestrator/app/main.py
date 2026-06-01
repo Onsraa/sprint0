@@ -594,8 +594,9 @@ class DialRequest(BaseModel):
 
 
 @app.post("/api/plans/{plan_id}/relay/auto", response_model=RelayState)
-async def apply_dial(plan_id: str, req: DialRequest) -> RelayState:
-    """Manager sets the Trust Dial → auto-pass every gate whose slice clears trust×risk."""
+async def apply_dial(plan_id: str, req: DialRequest,
+                     _: DeveloperProfile = Depends(auth.current_manager)) -> RelayState:
+    """Manager-only: set the AI-autonomy posture → auto-pass every gate whose slice clears trust×risk."""
     state, plan = RELAYS.get(plan_id), PLANS.get(plan_id)
     if state is None or plan is None:
         raise HTTPException(404, "plan not found")
@@ -983,31 +984,20 @@ class TaskPatch(BaseModel):
     patch: dict
 
 
-def _redact(task: dict, viewer: DeveloperProfile, granted_subjects: set[str] | None = None) -> dict:
-    """Full detail if manager, own task, or a granted viewer of the assignee; else title+status+discipline only."""
-    if (viewer.role == "manager" or task.get("assignee") == viewer.username
-            or (granted_subjects and task.get("assignee") in granted_subjects)):
-        return task
-    return {"id": task["id"], "project_id": task["project_id"], "title": task["title"],
-            "status": task["status"], "discipline": task["discipline"], "assignee": task.get("assignee"),
-            "redacted": True}
-
-
 @app.get("/api/work")
 async def work(scope: str = "me", member: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    """Aggregate of Tasks for the Work hub. scope = me | team | user:<username>."""
+    """Aggregate of Tasks for the Work hub. scope = me | team | user:<username>. Team visibility is OPEN —
+    every logged-in member sees everyone's tasks in full (no consent gating)."""
     try:
         rows = await all_tasks()
     except Exception:
         rows = []
-    granted = {g["subject_id"] for g in await access_grants_for_requester(member.username) if g.get("status") == "granted"}
     if scope == "me":
         rows = [t for t in rows if t.get("assignee") == member.username]
     elif scope.startswith("user:"):
         who = scope.split(":", 1)[1]
-        rows = [_redact(t, member, granted) for t in rows if t.get("assignee") == who]
-    else:  # team
-        rows = [_redact(t, member, granted) for t in rows]
+        rows = [t for t in rows if t.get("assignee") == who]
+    # else: team → every task, full detail
     return {"scope": scope, "count": len(rows), "tasks": rows}
 
 
@@ -1019,12 +1009,12 @@ async def _load_task_or_404(task_id: str) -> Task:
 
 
 @app.get("/api/tasks/{task_id}")
-async def task_detail(task_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+async def task_detail(task_id: str, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Open team visibility — any logged-in member sees a task in full."""
     doc = await get_task(task_id)
     if not doc:
         raise HTTPException(404, "no such task")
-    granted = {g["subject_id"] for g in await access_grants_for_requester(member.username) if g.get("status") == "granted"}
-    return _redact(doc, member, granted)
+    return doc
 
 
 @app.patch("/api/tasks/{task_id}")
