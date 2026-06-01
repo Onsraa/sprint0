@@ -341,6 +341,11 @@ async function fpost<T>(path: string, form: FormData): Promise<T> {
 export const api = {
   base: BASE,
 
+  /* Liveness — REAL backend↔Mongo(MCP) reachability behind the sidebar status dot (not hardcoded) */
+  health(): Promise<{ status: string; service: string; mongo: boolean; ok: boolean }> {
+    return jget("/health");
+  },
+
   /* Auth / identity (per-account) */
   login(username: string): Promise<LoginResponse> {
     return jpost("/api/auth/login", { username });

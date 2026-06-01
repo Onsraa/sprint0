@@ -431,9 +431,20 @@ class QAItemResult(BaseModel):
     disc: Optional[Discipline] = None  # the gate this item belongs to — drives the QA route pills
 
 
+class TesterPick(BaseModel):
+    """Who the AI picks to run the acceptance (Tester) gate — by passport, not job title. Surfaced on
+    the QA report so the Tester panel can show *who* + *why* (best verifier, usually QA, maybe a dev)."""
+    username: str
+    name: str
+    discipline: Optional[Discipline] = None
+    score: float = 0.0
+    reason: str = ""
+
+
 class QAReport(BaseModel):
     items: list[QAItemResult] = Field(default_factory=list)
     reopened: list[int] = Field(default_factory=list)  # iids bounced back to re-QA (set by the endpoint)
+    tester: Optional[TesterPick] = None                # the best-by-passport verifier for this gate
 
 
 # ── REST request bodies (intake / relay / mid-prod) ──

@@ -18,15 +18,5 @@
     "outcome_notes": "Shipped +3d. WebSocket fan-out + PostGIS geo-queries are the reusable core; notifications were abstracted cleanly across push and SMS providers.",
     "tags": ["maps", "geolocation", "tracking", "realtime", "websockets", "notifications", "push", "sms", "logistics", "postgis"],
     "web_url": ""
-  },
-  {
-    "name": "deskhr-2025",
-    "brief_text": "DeskHR — a workforce and HR SaaS for shift-based teams. Role-based dashboards with analytics (utilization, headcount, cost), and a scheduling/calendar engine for shifts, availability, and conflict resolution. The reusable assets are the role-dashboard + analytics layer and the calendar/scheduling engine.",
-    "tech_stack": { "frontend": "Next.js", "backend": "Django (Python)", "db": "PostgreSQL", "infra": "Google Cloud Run" },
-    "total_estimate_days": 28,
-    "actual_days": 28,
-    "outcome_notes": "On estimate. Dashboards and scheduling are the reusable assets; RBAC and the calendar conflict-resolution logic took the most effort.",
-    "tags": ["dashboard", "analytics", "rbac", "scheduling", "calendar", "reporting", "saas", "hr"],
-    "web_url": ""
   }
 ]

@@ -64,9 +64,7 @@
     "client_summary": "Internal billing-ledger revamp — Jean Gabriel's current full-time engagement.",
     "issues": [
       "Migrate invoicing to the new double-entry ledger",
-      "Backfill historical transactions + reconciliation job",
-      "Harden Stripe webhook retries + idempotency",
-      "Cut over reporting to the new ledger schema"
+      "Harden Stripe webhook retries + idempotency"
     ]
   }
 }

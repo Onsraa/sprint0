@@ -1,6 +1,6 @@
 """Clean + seed the agency demo.
 
-Wipes demo data, then creates 3 REAL GitLab repos (QuantaPay / TrailLog / DeskHR) by pushing
+Wipes demo data, then creates 2 REAL GitLab repos (QuantaPay / TrailLog) by pushing
 `seed/agency/<repo>/`, and registers them into MongoDB agency memory:
   - PastProjects  — one grounded summary per project (vector + full-text indexed)
   - CodeChunks    — one chunk per repo file, for chunk-level code-RAG ("find a reusable component")
@@ -209,7 +209,7 @@ def main() -> int:
     except Exception as e:
         print(f"{YEL}   ⚠ full-text index '{PP_TEXT_INDEX}' skipped (M0 cap; hybrid → vector-only for now): {str(e)[:90]}{RST}")
 
-    print(f"\n{GREEN}Agency seeded. 3 repos live + memory (summaries + {len(chunk_docs)} code chunks) in Atlas.{RST}")
+    print(f"\n{GREEN}Agency seeded. {len(projects)} repos live + memory (summaries + {len(chunk_docs)} code chunks) in Atlas.{RST}")
     for p in projects:
         print(f"   {p['name']:18} {p['web_url']}")
     return 0

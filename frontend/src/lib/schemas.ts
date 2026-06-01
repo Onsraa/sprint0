@@ -259,7 +259,14 @@ export const QAItemResult = z.object({
   runner: z.string().nullish(),   // responsible dev (issue.assignee) — reject reroutes here
   disc: z.string().nullish(),     // gate this item belongs to — drives the QA route pills
 });
-export const QAReport = z.object({ items: z.array(QAItemResult), reopened: z.array(z.number()).optional() });
+export const TesterPick = z.object({
+  username: z.string(), name: z.string(), discipline: z.string().nullish(),
+  score: z.number().default(0), reason: z.string().default(""),
+});                                // who the AI picked to run the Tester gate, by passport (+why)
+export const QAReport = z.object({
+  items: z.array(QAItemResult), reopened: z.array(z.number()).optional(),
+  tester: TesterPick.nullish(),    // best-by-passport verifier for this gate
+});
 export type QAReport = z.infer<typeof QAReport>;
 export const RejectResult = z.object({
   issue_iid: z.number(), rerouted_to: z.string().nullable(), awaiting_reqa: z.array(z.number()),

@@ -9,7 +9,7 @@ functions over RelayState — no I/O, so it's trivially testable.
 from __future__ import annotations
 
 from app import routing
-from app.contracts import Gate, IntegrationSignal, Issue, Lane, PlanJSON, RelayState
+from app.contracts import DeveloperProfile, Gate, IntegrationSignal, Issue, Lane, PlanJSON, RelayState, TesterPick
 
 _DONE = {"auto_passed", "ratified"}
 
@@ -174,3 +174,48 @@ def ratify(
 def all_ratified(state: RelayState) -> bool:
     """True when every gate is done — the plan is cleared to dispatch."""
     return all(g.status in _DONE for g in state.gates)
+
+
+_TESTER_TRUST = {"low": 0, "medium": 1, "high": 2}
+_TESTER_SENIORITY = {"junior": 0.5, "mid": 0.7, "senior": 1.0}
+
+
+def best_tester(members: list[DeveloperProfile]) -> TesterPick | None:
+    """Pick the best person to run the acceptance (Tester) gate — by passport, not job title.
+    Verification trust (trust in an 'accept'-lane discipline, i.e. qa today) is the dominant signal;
+    ties break on availability then seniority. Usually the QA, but a strong verifier in another lane
+    can win, and when no developer qualifies it falls back to the manager — the same ownership rule
+    as `_is_qa_owner`, now scored + explainable for the UI."""
+    pool = [m for m in members if m.role == "developer"] or [m for m in members if m.role == "manager"]
+    if not pool:
+        return None
+
+    def accept_trust(m: DeveloperProfile) -> int:
+        for disc, lvl in (m.trust or {}).items():
+            if lane_stage(disc) == "accept":
+                return _TESTER_TRUST.get(lvl, 0)
+        return 0
+
+    def avail(m: DeveloperProfile) -> float:
+        return 1 - min(100, int(m.load or 0)) / 100
+
+    def seniority(m: DeveloperProfile) -> float:
+        return _TESTER_SENIORITY.get(m.seniority, 0.7)
+
+    def in_accept_lane(m: DeveloperProfile) -> int:
+        return 1 if lane_stage(m.discipline or "") == "accept" else 0
+
+    chosen = max(pool, key=lambda m: (accept_trust(m), in_accept_lane(m), avail(m), seniority(m)))
+    at = accept_trust(chosen)
+    lvl_name = {0: "low", 1: "medium", 2: "high"}[at]
+    score = round(0.55 * (at / 2) + 0.25 * avail(chosen) + 0.20 * seniority(chosen), 2)
+    if in_accept_lane(chosen):
+        reason = f"verification trust {lvl_name} · owns the accept lane"
+    elif at:
+        reason = "strongest verification trust on the team"
+    elif chosen.role == "manager":
+        reason = "no verifier on the team — the manager inherits the gate"
+    else:
+        reason = f"no QA seeded — {chosen.seniority} dev, most available to verify"
+    return TesterPick(username=chosen.username, name=chosen.name,
+                      discipline=chosen.discipline, score=score, reason=reason)

@@ -108,9 +108,30 @@ async def _routing_edges() -> list | None:
         return None
 
 
+_HEALTH_MONGO = None
+
+
+def _mongo_ok() -> bool:
+    """Cheap liveness ping of the MCP's backing store (Atlas Local). Lazy, pooled client, 800ms cap —
+    if Mongo is unreachable the MCP path is dead too, so this is the honest signal behind the UI dot."""
+    global _HEALTH_MONGO
+    uri = os.getenv("MONGODB_URI", "")
+    if not uri:
+        return False
+    try:
+        if _HEALTH_MONGO is None:
+            from pymongo import MongoClient
+            _HEALTH_MONGO = MongoClient(uri, serverSelectionTimeoutMS=800)
+        _HEALTH_MONGO.admin.command("ping")
+        return True
+    except Exception:
+        return False
+
+
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "phase": 4, "service": "sprint0"}
+    ok = _mongo_ok()
+    return {"status": "ok" if ok else "degraded", "service": "sprint0", "mongo": ok, "ok": ok}
 
 
 @app.on_event("startup")
@@ -1236,6 +1257,8 @@ async def qa_run(project_id: int) -> QAReport:
         raise HTTPException(404, "no live plan for this project — dispatch it first")
     report = await qa_review(plan)
     report.reopened = sorted(REQA.get(project_id, set()))
+    await team.ensure_loaded()
+    report.tester = relay.best_tester(team.all_members())  # who runs the gate, by passport (+why)
     return report
 
 
