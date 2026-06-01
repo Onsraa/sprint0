@@ -11,7 +11,7 @@ import { useState, useEffect } from "react";
 import { Avatar, Badge, DiscDot, DISC, LoadMeter, TrustDot, Button } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
-import { useApp } from "../app/useApp";
+import { useApp, AUTONOMY_MODES } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { RatifyPanel, TierBadge, GATE_META } from "./RatifyPanel";
 
@@ -52,7 +52,7 @@ const RELAY_INTEGRATION = [
 ];
 
 export function RelayBoard() {
-  const { gates, dial, applyDial, me, role }: any = useApp();
+  const { gates, autonomy, setAutonomy, me, role }: any = useApp();
   const activeGate = useUI((s) => s.activeGate);
   const setActiveGate = useUI((s) => s.setActiveGate);
   const gateOf = (d: string) => gates.find((g: any) => g.discipline === d);
@@ -69,7 +69,7 @@ export function RelayBoard() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <ViewChrome breadcrumb={["Harbor Logistics", "Relay"]}>
-        <TrustDialMini dial={dial} onChange={applyDial} editable={role === "manager"} autoCount={autoCount} total={gates.length} />
+        <AutonomyControl mode={autonomy} onChange={setAutonomy} editable={role === "manager"} />
         <Badge tone="outline" mono>{RELAY_PLAN_ID}</Badge>
       </ViewChrome>
 
@@ -110,19 +110,28 @@ export function RelayBoard() {
   );
 }
 
-/* Inline compact Trust Dial (§10) */
-function TrustDialMini({ dial, onChange, editable }: {
-  dial: number; onChange: (v: number) => void; editable: boolean; autoCount?: number; total?: number;
-}) {
+/* §10 Autonomy — a discrete named posture (manager-only); read-only for leads. Replaces the old 0–100
+   "Trust Dial" — the 3 modes map to the backend dial (~30/60/85). Frees "trust" to mean only the passport. */
+function AutonomyControl({ mode, onChange, editable }: { mode: string; onChange: (m: string) => void; editable: boolean }) {
   return (
-    <div title="Trust Dial — global autonomy sensitivity" style={{ display: "flex", alignItems: "center", gap: 9, height: 28,
-      padding: "0 10px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
-      <Icon name="load" size={14} style={{ color: "var(--text-tertiary)" }} />
-      <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", letterSpacing: "0.04em", textTransform: "uppercase" }}>Trust</span>
-      <input type="range" min="0" max="100" value={dial} disabled={!editable}
-        onChange={e => onChange(+e.target.value)}
-        style={{ width: 96, accentColor: "var(--text-primary)", cursor: editable ? "pointer" : "not-allowed" }} />
-      <span className="mono" style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-primary)", width: 26 }}>{dial}</span>
+    <div title="Autonomy — how aggressively sprint0 auto-ratifies low-risk gates"
+      style={{ display: "flex", alignItems: "center", gap: 8, height: 28 }}>
+      <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", letterSpacing: "0.04em", textTransform: "uppercase" }}>Autonomy</span>
+      <div style={{ display: "flex", gap: 2, padding: 2, borderRadius: "var(--r-md)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
+        {AUTONOMY_MODES.map((m) => {
+          const active = m.id === mode;
+          return (
+            <button key={m.id} title={editable ? m.hint : `${m.hint} · manager sets this`} disabled={!editable}
+              onClick={() => editable && onChange(m.id)}
+              style={{ height: 22, padding: "0 9px", borderRadius: "var(--r-sm)", fontSize: 11.5, fontWeight: 500, whiteSpace: "nowrap",
+                background: active ? "var(--bg-elevated)" : "transparent", color: active ? "var(--text-primary)" : "var(--text-quaternary)",
+                boxShadow: active ? "var(--shadow-1)" : "none", cursor: editable ? "pointer" : "default", transition: "color var(--t-quick)" }}>
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
+      {!editable && <Icon name="lock" size={12} style={{ color: "var(--text-quaternary)" }} />}
     </div>
   );
 }

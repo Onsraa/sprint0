@@ -73,6 +73,16 @@ const toMockAttribution = (a: Attribution): any => ({
 });
 const toMockGate = (g: Gate, relay?: RelayState): any => ({ ...g, baton: !!relay?.baton?.includes(g.discipline as never), depends: g.depends_on ?? [], stretched: false, owner: null });
 
+/* §10 Autonomy — a named risk posture (Cautious/Balanced/Fast) over the backend dial (~30/60/85).
+   Frees the word "trust" to mean only the passport. Manager-only (enforced server-side). */
+export const AUTONOMY_MODES = [
+  { id: "cautious", label: "Cautious", hint: "A human reviews most gates" },
+  { id: "balanced", label: "Balanced", hint: "Auto-pass clearly low-risk gates" },
+  { id: "fast", label: "Fast", hint: "Auto-pass low + medium-risk gates" },
+] as const;
+const AUTONOMY_MAP: Record<string, number> = { cautious: 30, balanced: 60, fast: 85 };
+const dialToMode = (d: number) => (d <= 45 ? "cautious" : d <= 72 ? "balanced" : "fast");
+
 export function useApp() {
   const qc = useQueryClient();
   const { member } = useMe();
@@ -121,6 +131,8 @@ export function useApp() {
   const setDial = useUI((s) => s.setDial);
   const relayAuto = useRelayAuto(planId ?? "");
   const applyDial = (d: number) => { setDial(d); if (planId) relayAuto.mutate(d); };
+  const autonomy = dialToMode(dial);
+  const setAutonomy = (m: string) => applyDial(AUTONOMY_MAP[m] ?? 60);
   const ratifyGate = useRatifyGate(planId ?? "");
   const actGate = (disc: string, status: string) => ratifyGate.mutate({ discipline: disc as never, body: { edits: [], note: "", approve: status === "ratified", reasoning: "", ai_recommendation: "", ai_confidence: null, deviated: false, deviation_reason: "" } as never });
   // reuse-or-innovate: ratify a gate by SELECTING a solution (or a write-your-own). The backend records
@@ -195,7 +207,7 @@ export function useApp() {
   return {
     me, role, chrome, view, setView, switchPersona, members, next,
     notifs, unread, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
-    gates, dial, applyDial, actGate, ratifyWith, cards, staffing, planId, integration, relay,
+    gates, dial, applyDial, autonomy, setAutonomy, actGate, ratifyWith, cards, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,
     profiles, confirmProfile,
