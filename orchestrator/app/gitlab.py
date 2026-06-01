@@ -75,6 +75,7 @@ def list_group_projects(group: str | None = None) -> list[dict]:
                 "seed": SEED_TOPIC in (p.get("topics") or []),
             }
             for p in r.json()
+            if "deletion_scheduled" not in (p.get("name") or "")  # hide repos GitLab is purging (delayed delete)
         ]
 
 
