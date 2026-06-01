@@ -7,11 +7,12 @@
    the useApp() adapter per the port spec; panel-local helpers (TrustDialMini,
    CoverageStrip, GateCard, FlowConnector, IntegrationStrip) are ported verbatim.
    TierBadge + GATE_META are imported from the sibling RatifyPanel.tsx. */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Avatar, Badge, DiscDot, DISC, LoadMeter, TrustDot, Button } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
 import { useApp } from "../app/useApp";
+import { useUI } from "../lib/store";
 import { RatifyPanel, TierBadge, GATE_META } from "./RatifyPanel";
 
 const ROW1 = ["uiux", "backend", "devops"];
@@ -52,12 +53,16 @@ const RELAY_INTEGRATION = [
 
 export function RelayBoard() {
   const { gates, dial, applyDial, me, role }: any = useApp();
+  const activeGate = useUI((s) => s.activeGate);
+  const setActiveGate = useUI((s) => s.setActiveGate);
   const gateOf = (d: string) => gates.find((g: any) => g.discipline === d);
-  // developer/qa land focused on their own gate
+  // developer/qa land focused on their own gate; a Today deep-link can target a specific discipline
   const [sel, setSel] = useState<string>(() => {
+    if (activeGate && gates.some((g: any) => g.discipline === activeGate)) return activeGate;
     if (me.discipline && gates.some((g: any) => g.discipline === me.discipline)) return me.discipline;
     return "backend";
   });
+  useEffect(() => { if (activeGate) { setSel(activeGate); setActiveGate(null); } }, [activeGate, setActiveGate]);
   const selGate = gateOf(sel);
   const autoCount = gates.filter((g: any) => g.tier === "auto_pass").length;
 

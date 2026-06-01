@@ -18,6 +18,8 @@ const LUCIDE_ICONS = {
   portfolio: [["path", { d: "M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" }], ["rect", { width: 20, height: 14, x: 2, y: 6, rx: 2 }]],
   passport: [["path", { d: "M10 2v8l3-3 3 3V2" }], ["path", { d: "M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" }]],
   qa: [["path", { d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" }], ["path", { d: "M12 8v4" }], ["path", { d: "M12 16h.01" }]],
+  today: [["circle", { cx: 12, cy: 12, r: 9 }], ["circle", { cx: 12, cy: 12, r: 4.5 }], ["circle", { cx: 12, cy: 12, r: 0.6, fill: "currentColor", stroke: "none" }]],
+  pool: [["rect", { width: 7, height: 7, x: 3, y: 3, rx: 1.4 }], ["rect", { width: 7, height: 7, x: 14, y: 3, rx: 1.4 }], ["rect", { width: 7, height: 7, x: 3, y: 14, rx: 1.4 }], ["rect", { width: 7, height: 7, x: 14, y: 14, rx: 1.4 }]],
   // actions / chrome
   search: [["circle", { cx: 11, cy: 11, r: 8 }], ["path", { d: "m21 21-4.3-4.3" }]],
   plus: [["path", { d: "M5 12h14" }], ["path", { d: "M12 5v14" }]],

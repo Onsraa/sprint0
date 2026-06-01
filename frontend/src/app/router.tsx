@@ -19,6 +19,8 @@ import { CodeGraph } from "../views/CodeGraph";
 import { Settings } from "../views/Settings";
 import { QAGate } from "../views/QAGate";
 import { Passport } from "../views/Passport";
+import { Today } from "../views/Today";
+import { Relays } from "../views/Relays";
 
 const rootRoute = createRootRoute({
   component: () => <AppShellNew />,
@@ -26,6 +28,8 @@ const rootRoute = createRootRoute({
 
 /** path (= `/${view}`) → the existing panel component. */
 const PANELS: { path: string; component: FC }[] = [
+  { path: "/today", component: Today },
+  { path: "/relays", component: Relays },
   { path: "/inbox", component: InboxPage },
   { path: "/work", component: WorkHub },
   { path: "/dashboard", component: Dashboard },
@@ -46,7 +50,7 @@ const indexRoute = createRoute({
   path: "/",
   // a sensible default; the AppContext role-gate effect redirects to the persona home if invalid.
   // (cast: the router type isn't registered yet inside a route definition.)
-  beforeLoad: () => { throw redirect({ to: "/inbox" as "/" }); },
+  beforeLoad: () => { throw redirect({ to: "/today" as "/" }); },
 });
 
 const panelRoutes = PANELS.map(({ path, component }) =>

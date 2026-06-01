@@ -7,12 +7,12 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { Discipline, Member } from "../../lib/api";
 import type { Mode, Role, View } from "../../app/types";
 
-export const MANAGER_VIEWS: View[] = ["dashboard", "work", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions", "codegraph", "profiles", "inbox"];
-export const DEV_VIEWS: View[] = ["work", "today", "issue", "passport", "ratify", "qa", "queue", "portfolio", "inbox"];
+export const MANAGER_VIEWS: View[] = ["today", "dashboard", "work", "team", "relay", "relays", "queue", "ratify", "portfolio", "attributions", "codegraph", "profiles", "inbox"];
+export const DEV_VIEWS: View[] = ["today", "work", "relays", "issue", "passport", "ratify", "qa", "queue", "portfolio", "inbox"];
 
 /** Where each persona lands on a fresh login. Leads land on the cross-project ratify queue. */
 export const ROLE_HOME: Record<Role, View> = {
-  manager: "dashboard", uiux: "work", backend: "work", frontend: "work", qa: "work",
+  manager: "today", uiux: "today", backend: "today", frontend: "today", qa: "today",
 };
 
 /** Manager → "manager"; a dev's discipline drives the rest (devops → generic dev nav via "backend"). */

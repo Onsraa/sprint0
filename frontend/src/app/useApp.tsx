@@ -3,6 +3,7 @@
  * TanStack Query hooks + Zustand + router — and it TRANSLATES our real Zod shapes into the mock field
  * names the copied panels read (est/by/dep, code/accent/issues, mr_title/candidates, baton/depends…).
  * State stays in Query/Zustand; this just shapes it. Also bridges mockup view-ids ↔ our route paths. */
+import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useMe, useLogin } from "../features/auth/useAuth";
@@ -13,6 +14,7 @@ import { useRelay, useRelayAuto, useRatifyGate, useDecisionCard } from "../featu
 import { useProjects } from "../features/projects/useProjects";
 import { useRoster } from "../features/roster/useRoster";
 import { useWork } from "../features/work/useWork";
+import { rankNext } from "../features/today/rank";
 import { useProfiles, useConfirmProfile } from "../features/profiles/useProfiles";
 import { api } from "../lib/api";
 import { qk } from "../lib/query";
@@ -20,11 +22,12 @@ import type { Member, WorkTask, ProjectSummary, Attribution, Gate, RelayState } 
 
 type MockRole = "manager" | "developer" | "qa";
 const ROLE_CHROME: Record<MockRole, { land: string; canDispatch: boolean; canOnboard: boolean; canGovern: boolean; canRefactor: boolean; seesAllGates: boolean }> = {
-  manager: { land: "inbox", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
-  developer: { land: "relay", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
-  qa: { land: "qagate", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
+  manager: { land: "today", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
+  developer: { land: "today", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
+  qa: { land: "today", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
 };
 const VIEW_TO_ROUTE: Record<string, string> = {
+  today: "today", relays: "relays",
   inbox: "inbox", mywork: "work", projects: "dashboard", relay: "relay", ratify: "queue",
   qagate: "qa", team: "team", profiles: "profiles", codegraph: "codegraph", merges: "attributions",
   portfolio: "portfolio", passport: "passport", settings: "settings",
@@ -85,7 +88,15 @@ export function useApp() {
   const setView = (id: string) => { if (id === "wizard") { setWizardKind("brief"); setWizardOpen(true); return; } setRoute((VIEW_TO_ROUTE[id] ?? id) as never); };
   const login = useLogin();
   const switchPersona = (username: string) => login.mutate(username, {
-    onSuccess: (res) => { qc.invalidateQueries(); const r: MockRole = res.member.role === "manager" ? "manager" : res.member.discipline === "qa" ? "qa" : "developer"; setRoute((VIEW_TO_ROUTE[ROLE_CHROME[r].land] ?? ROLE_CHROME[r].land) as never); },
+    onSuccess: (res) => {
+      // Full identity change: EVICT all prior-persona cache so no stale tasks/queue/inbox blend into
+      // the new persona (the Today list was accumulating across switches because work/inbox/queue keys
+      // aren't user-scoped). clear() wipes `me` too, so re-seed it from the login result immediately.
+      qc.clear();
+      qc.setQueryData(qk.me(), res.member);
+      const r: MockRole = res.member.role === "manager" ? "manager" : res.member.discipline === "qa" ? "qa" : "developer";
+      setRoute((VIEW_TO_ROUTE[ROLE_CHROME[r].land] ?? ROLE_CHROME[r].land) as never);
+    },
   });
   const members = useRoster().map(toMockMember);
 
@@ -125,8 +136,16 @@ export function useApp() {
   const tasks = tasksRaw.map(toMockTask);
   const { projects: projectsRaw } = useProjects();
   const projects = projectsRaw.map(toMockProject);
+  // project_id → human name, so Today task rows show the project name, not the numeric id.
+  const projectNames = useMemo(() => Object.fromEntries(projectsRaw.map((p) => [p.project_id, p.name])), [projectsRaw]);
   const liveProjectId = useUI((s) => s.liveProjectId);
   const { data: queue = [] } = useQuery({ queryKey: qk.myQueue(), queryFn: () => api.myQueue().then((r) => r.items) });
+  // Today spine — ranked next-actions, composed client-side from existing streams (no new endpoint).
+  const { data: myTasksRaw = [] } = useWork("me");
+  const next = useMemo(() => rankNext({
+    role, myDiscipline: member?.discipline ?? null, myUsername: member?.username ?? "",
+    queue, relays: relaySummaries, myTasks: myTasksRaw, needs: inbox?.needs_action ?? [], projectNames,
+  }), [role, member, queue, relaySummaries, myTasksRaw, inbox, projectNames]);
   const drafts = useUI((s) => s.drafts);
   const addDraft = useUI((s) => s.addDraft);
 
@@ -172,7 +191,7 @@ export function useApp() {
   };
 
   return {
-    me, role, chrome, view, setView, switchPersona, members,
+    me, role, chrome, view, setView, switchPersona, members, next,
     notifs, unread, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
     gates, dial, applyDial, actGate, cards, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,

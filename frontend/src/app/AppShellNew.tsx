@@ -14,6 +14,7 @@ import { Landing } from "../views/Landing";
 import { Wizard } from "../wizard/Wizard";
 import { CommandPalette } from "../features/palette/CommandPalette";
 import { useNotificationsWS } from "../features/notify/useNotifications";
+import { useHealth } from "../features/health/useHealth";
 
 /* The demo roster shown in the persona switcher (the 5 real seeded accounts). */
 export const DEMO_PERSONAS = [
@@ -27,23 +28,26 @@ export const DEMO_PERSONAS = [
 /* nav items carry a `roles` allowlist + capability flags — per-role chrome. */
 const NAV = [
   { section: null as string | null, items: [
-    { id: "inbox", label: "Inbox", icon: "inbox", kbd: ["G", "I"], roles: ["manager", "developer", "qa"] },
-    { id: "mywork", label: "My Work", icon: "board", kbd: ["G", "W"], roles: ["manager", "developer", "qa"] },
-    { id: "projects", label: "Projects", icon: "projects", kbd: ["G", "P"], roles: ["manager"] },
+    { id: "today", label: "Today", icon: "today", kbd: ["G", "D"], roles: ["manager", "developer", "qa"] },
+    { id: "relays", label: "Relays", icon: "pool", kbd: ["G", "L"], roles: ["manager", "developer", "qa"] },
   ] },
-  { section: "Team", items: [
-    { id: "relay", label: "Relay", icon: "relay", kbd: ["G", "R"], roles: ["manager"] },
+  { section: "Do", items: [
+    { id: "mywork", label: "My Work", icon: "board", kbd: ["G", "W"], roles: ["manager", "developer", "qa"] },
     { id: "relay", label: "Ratify your slice", icon: "ratify", kbd: ["G", "R"], roles: ["developer"] },
     { id: "qagate", label: "QA gate", icon: "qa", kbd: ["G", "Q"], roles: ["qa"] },
     { id: "ratify", label: "Ratify", icon: "ratify", kbd: ["G", "T"], roles: ["manager"] },
+  ] },
+  { section: "Know", items: [
+    { id: "projects", label: "Projects", icon: "projects", kbd: ["G", "P"], roles: ["manager"] },
+    { id: "portfolio", label: "Portfolio", icon: "portfolio", roles: ["manager", "developer", "qa"] },
+    { id: "passport", label: "Passport", icon: "passport", roles: ["developer", "qa"] },
     { id: "team", label: "Team", icon: "team", roles: ["manager"] },
-    { id: "profiles", label: "Profiles", icon: "passport", roles: ["manager"] },
     { id: "codegraph", label: "Code Graph", icon: "merges", roles: ["manager"] },
     { id: "merges", label: "Merges", icon: "link", roles: ["manager"] },
+    { id: "profiles", label: "Profiles", icon: "passport", roles: ["manager"] },
   ] },
-  { section: "You", items: [
-    { id: "passport", label: "Passport", icon: "passport", roles: ["developer", "qa"] },
-    { id: "portfolio", label: "Portfolio", icon: "portfolio", roles: ["manager", "developer", "qa"] },
+  { section: "Utility", items: [
+    { id: "inbox", label: "Inbox", icon: "inbox", kbd: ["G", "I"], roles: ["manager", "developer", "qa"] },
     { id: "settings", label: "Settings", icon: "settings", roles: ["manager"] },
   ] },
 ] as const;
@@ -180,11 +184,16 @@ function NavItem({ item, active, onClick }: { item: { id: string; label: string;
 
 function SidebarFooter() {
   const { me, role } = useApp();
+  // REAL liveness — green when the gateway reaches Mongo/MCP, red when it can't, amber while checking.
+  const { data: health } = useHealth();
+  const online = health?.ok;
+  const dot = online === true ? "var(--green)" : online === false ? "var(--red)" : "var(--amber)";
+  const label = online === true ? "MCP · online" : online === false ? "MCP · offline" : "MCP · …";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, height: 28, padding: "0 10px" }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)" }} />
-        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>MCP · online</span>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>{label}</span>
       </div>
       <button style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)" }}>
         <Avatar name={me.name ?? "?"} size={22} tone={role === "manager" ? "ink" : undefined} />

@@ -11,6 +11,7 @@ import {
   CapTag, PRIORITY_META,
 } from "../../components/ui";
 import { useApp } from "../../app/useApp";
+import { useUI } from "../../lib/store";
 import { KindSurface } from "../KindSurface";
 import type { Member, WorkTask } from "../../lib/api";
 
@@ -57,6 +58,11 @@ export function WorkHub() {
 
   // keep local board state in sync if the adapter's task list changes
   useEffect(() => { setTasks(allTasks.map((t) => ({ ...t }))); }, [allTasks]);
+
+  // Today "Open scope" deep-link: open the code-focus surface for the requested issue, then clear it.
+  const activeIssue = useUI((s) => s.activeIssue);
+  const setActiveIssue = useUI((s) => s.setActiveIssue);
+  useEffect(() => { if (activeIssue) { setExec(activeIssue); setActiveIssue(null); } }, [activeIssue, setActiveIssue]);
 
   const move = useCallback((id: string, status: string) => {
     setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, status: status as WorkTask["status"] } : t)));
