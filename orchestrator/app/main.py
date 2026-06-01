@@ -869,10 +869,17 @@ class MergeRequest(BaseModel):
 
 @app.post("/api/projects/{project_id}/issues/{iid}/reject")
 async def reject_issue(project_id: int, iid: int, req: RejectRequest) -> dict:
-    """Idea 2: QA reject → reopen + route back to the responsible-layer runner. Flags the issue
-    for re-QA so it re-enters the checklist once the fix is merged."""
+    """Tester reject → reopen + route back to the responsible-layer runner. Flags the issue for re-QA
+    so it re-enters the checklist once the fix is merged. Two-plane: a failed check is a TICKET routed
+    to the runner's profile (never a new relay) — so ping their Inbox to make that routing visible."""
     res = await run_in_threadpool(handoff.reroute, project_id, iid, req.comment, req.to_runner)
     REQA.setdefault(project_id, set()).add(iid)
+    if req.to_runner:  # surface the bounce as an actionable ticket on the runner's Inbox + watchers
+        await notify(req.to_runner, "qa_failed", f"Tester bounced an item back to you (#{iid})",
+                     body=(req.comment or "An acceptance check failed — reopened for a fix.")[:300],
+                     ref={"project_id": project_id, "iid": iid}, actionable=True)
+        await notify_watchers(req.to_runner, "qa_failed", f"@{req.to_runner} got a Tester reject: #{iid}",
+                              ref={"project_id": project_id, "iid": iid})
     return {**res, "awaiting_reqa": sorted(REQA[project_id])}
 
 
