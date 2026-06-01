@@ -26,6 +26,17 @@ export function useDecisionCard(planId: string | null, discipline: Discipline | 
   });
 }
 
+/** Reuse-or-innovate: a gate's solution set (memory + fresh + write-your-own). Lazy + cached server-side. */
+export function useGateSolutions(planId: string | null, discipline: Discipline | null) {
+  return useQuery({
+    queryKey: ["solutions", planId, discipline] as const,
+    queryFn: () => api.gateSolutions(planId!, discipline!),
+    enabled: !!planId && !!discipline,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
 type RatifyBody = Parameters<typeof api.ratify>[2];
 
 export function useRatifyGate(planId: string) {

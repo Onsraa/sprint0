@@ -479,6 +479,7 @@ export const api = {
     body: {
       edits?: Issue[]; note?: string; approve?: boolean; reasoning?: string;
       ai_recommendation?: string; ai_confidence?: number | null; deviated?: boolean; deviation_reason?: string;
+      chosen_solution?: SolutionCard;  // reuse-or-innovate: the selected (or write-your-own) solution
     },
   ): Promise<RelayState> {
     return jpost(`/api/plans/${planId}/ratify/${discipline}`, body);

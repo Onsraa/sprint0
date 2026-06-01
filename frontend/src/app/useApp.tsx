@@ -123,6 +123,9 @@ export function useApp() {
   const applyDial = (d: number) => { setDial(d); if (planId) relayAuto.mutate(d); };
   const ratifyGate = useRatifyGate(planId ?? "");
   const actGate = (disc: string, status: string) => ratifyGate.mutate({ discipline: disc as never, body: { edits: [], note: "", approve: status === "ratified", reasoning: "", ai_recommendation: "", ai_confidence: null, deviated: false, deviation_reason: "" } as never });
+  // reuse-or-innovate: ratify a gate by SELECTING a solution (or a write-your-own). The backend records
+  // the choice on the Decision + (for a user solution) regenerates the gate's issue + flags cross-gate overlap.
+  const ratifyWith = (disc: string, chosen_solution: any, note = "") => ratifyGate.mutate({ discipline: disc as never, body: { approve: true, note, reasoning: note, chosen_solution } as never });
   // per-gate Decision Cards (5 fixed disciplines)
   const cBack = useDecisionCard(planId, "backend"); const cFront = useDecisionCard(planId, "frontend");
   const cUiux = useDecisionCard(planId, "uiux"); const cQa = useDecisionCard(planId, "qa"); const cDev = useDecisionCard(planId, "devops");
@@ -192,7 +195,7 @@ export function useApp() {
   return {
     me, role, chrome, view, setView, switchPersona, members, next,
     notifs, unread, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
-    gates, dial, applyDial, actGate, cards, staffing, planId, integration, relay,
+    gates, dial, applyDial, actGate, ratifyWith, cards, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,
     profiles, confirmProfile,
