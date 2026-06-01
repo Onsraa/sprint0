@@ -89,11 +89,10 @@ export function useApp() {
   const login = useLogin();
   const switchPersona = (username: string) => login.mutate(username, {
     onSuccess: (res) => {
-      // Full identity change: EVICT all prior-persona cache so no stale tasks/queue/inbox blend into
-      // the new persona (the Today list was accumulating across switches because work/inbox/queue keys
-      // aren't user-scoped). clear() wipes `me` too, so re-seed it from the login result immediately.
-      qc.clear();
-      qc.setQueryData(qk.me(), res.member);
+      // Full identity change: EVICT every prior-persona cache (work/inbox/queue/relays/decisions keys
+      // aren't user-scoped, so the Today list was blending across switches) but KEEP `me` — useLogin
+      // already re-seeded it from this login result, so this predicate avoids a null-member frame.
+      qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "me" });
       const r: MockRole = res.member.role === "manager" ? "manager" : res.member.discipline === "qa" ? "qa" : "developer";
       setRoute((VIEW_TO_ROUTE[ROLE_CHROME[r].land] ?? ROLE_CHROME[r].land) as never);
     },

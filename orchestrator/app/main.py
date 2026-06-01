@@ -23,13 +23,14 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, staffing, strategist, tasks as tasklib, team
+from app import auth, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, DecisionCard, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
+    SolutionCard, SolutionSet,
 )
 from app.agent import DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card
 from app.execute import execute_plan, extend_project
@@ -49,7 +50,7 @@ from app.rag import (
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
-    qa_review, reconcile_links, run_brief,
+    propose_solutions, qa_review, reconcile_links, regenerate_slice, run_brief,
 )
 
 app = FastAPI(title="sprint0", version="0.4.0")
@@ -83,6 +84,8 @@ RESULTS: dict[str, dict] = {}
 DELTA_TARGET: dict[str, int] = {}  # plan_id → existing project_id (mid-prod delta plans extend, not create)
 PROJECTS: dict[int, PlanJSON] = {}  # project_id → live plan (for QA review + mid-prod, this session)
 REQA: dict[int, set] = {}  # project_id → reopened issue iids awaiting re-QA (the reject→fix→re-QA loop)
+SOLUTIONS: dict[tuple[str, str], SolutionSet] = {}  # (plan_id, discipline) → cached reuse-or-innovate set (lazy)
+CHOSEN: dict[tuple[str, str], SolutionCard] = {}    # (plan_id, discipline) → the ratified solution pick
 
 
 def _dev_trust() -> dict[str, dict]:
@@ -617,17 +620,58 @@ async def ratify_gate(
     if next(g.status for g in state.gates if g.discipline == discipline) == "blocked":
         raise HTTPException(409, "gate is blocked by an open integration failure — mark it api-ok first")
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
-    if req.approve:  # capture a durable Decision record (reasoning memory) — only on approval
+    chosen = req.chosen_solution
+    if req.approve:  # capture the pick + a durable Decision record (reasoning memory) — only on approval
         sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
+        if chosen is not None:  # reuse-or-innovate: record the pick
+            CHOSEN[(plan_id, discipline)] = chosen
+            pre_files = soln.gate_slice_files(plan, discipline)  # footprint before the choice
+            if chosen.source == "user":  # write-your-own → the AI rewrites THIS gate's issues to match
+                try:
+                    regen = await regenerate_slice(sl, discipline, chosen)  # type: ignore[arg-type]
+                    patch = {r.id: r for r in regen.issues}
+                    for i in sl:
+                        r = patch.get(i.id)
+                        if r and r.title:
+                            i.title = r.title
+                        if r and r.description:
+                            i.description = r.description
+                        if r and r.files:
+                            i.context_scope.files = r.files
+                except Exception:
+                    pass  # best-effort; the choice is still recorded
+                SOLUTIONS.pop((plan_id, discipline), None)  # cached set is stale after a rewrite
+            # Cross-gate impact: ONLY when the choice ADDED files (a user rewrite) that touch another gate.
+            # A memory/ai pick changes no files → never bounces another discipline's already-ratified gate.
+            added = sorted(soln.gate_slice_files(plan, discipline) - pre_files)
+            if added:
+                await team.ensure_loaded()
+                for d in soln.cross_gate_overlap(plan, discipline, added):
+                    for g in state.gates:
+                        if g.discipline == d and g.status in ("ratified", "auto_passed"):
+                            g.status = "changes_requested"
+                            g.note = f"re-ratify — {discipline}'s chosen solution now touches your slice"
+                    owner = next((m.username for m in team.all_members() if m.discipline == d), None)
+                    if owner:
+                        await notify(owner, "ratify_needed",
+                                     f"Re-ratify {d}: {discipline}'s choice now touches your slice",
+                                     ref={"plan_id": plan_id, "discipline": d}, actionable=True)
+                relay._recompute_baton(state)  # bounced gates re-enter the baton
         now = datetime.now(timezone.utc).isoformat()
+        deviated = req.deviated or (chosen is not None and chosen.source == "user")
+        rec = ("; ".join(i.title for i in sl))[:100]
+        if chosen is not None:
+            rec = (f"[{chosen.source}] {chosen.title} — " + rec)[:100]
         dec = Decision(
             id=f"dec_{uuid.uuid4().hex[:8]}", owner_id=member.username, domain=discipline,  # type: ignore[arg-type]
             context_tags=sorted({i.required_skill for i in sl if i.required_skill}),
-            recommendation=("; ".join(i.title for i in sl))[:100],
+            recommendation=rec,
             reasoning=req.reasoning, project_id=plan_id, project_name=plan.project_name,
             issue_ids=[i.id for i in sl],
-            ai_proposal_at_time=req.ai_recommendation or None, confidence_at_time=req.ai_confidence,
-            deviation_from_ai=req.deviated, deviation_reason=req.deviation_reason or None,
+            ai_proposal_at_time=(req.ai_recommendation or (chosen.title if chosen else None) or None),
+            confidence_at_time=(req.ai_confidence if req.ai_confidence is not None else (chosen.confidence if chosen else None)),
+            deviation_from_ai=deviated,
+            deviation_reason=(req.deviation_reason or (chosen.summary if (chosen and chosen.source == "user") else "")) or None,
             created_at=now, updated_at=now,
         )
         try:
@@ -759,6 +803,41 @@ async def plan_staffing(plan_id: str) -> dict:
         raise HTTPException(404, "plan not found")
     await team.ensure_loaded()
     return {"coverage": staffing.coverage(plan, team.all_members())}
+
+
+@app.get("/api/plans/{plan_id}/gates/{discipline}/solutions", response_model=SolutionSet)
+async def gate_solutions(
+    plan_id: str, discipline: str, member: DeveloperProfile = Depends(auth.current_member),
+) -> SolutionSet:
+    """Reuse-or-innovate (the Contract spine): lazily generate — then cache — the solution set for ONE gate:
+    a memory-grounded option + 1-2 fresh AI options + a write-your-own slot. One LLM call per gate, ever."""
+    plan = PLANS.get(plan_id)
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    key = (plan_id, discipline)
+    if key in SOLUTIONS:
+        return SOLUTIONS[key]
+    slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
+    if not slice_issues:
+        raise HTTPException(404, "no slice for this discipline in the plan")
+    try:
+        sset = await propose_solutions(plan, discipline)  # MongoDB MCP grounding + one Gemini call
+    except Exception:  # a transient model/DB error must NOT 500 the Contract — degrade to a stub + user slot
+        sset = SolutionSet(solutions=[SolutionCard(
+            source="ai", title="Define this slice",
+            summary="AI proposal unavailable — describe the approach, or write your own.")])
+    slice_files = soln.gate_slice_files(plan, discipline)
+    dependents: dict[str, list[str]] = {}
+    pid = DELTA_TARGET.get(plan_id)  # the code graph exists only for a dispatched repo (delta flow)
+    if pid is not None:
+        try:
+            edges = [GraphEdge(**e) for e in await graph_edges(str(pid))]
+            dependents = {f: graph.dependents_of(f, edges) for f in slice_files}
+        except Exception:
+            dependents = {}
+    sset = soln.finalize_solution_set(sset, discipline, soln.impacted_files(slice_files, dependents))
+    SOLUTIONS[key] = sset
+    return sset
 
 
 @app.post("/api/plans/{plan_id}/approve")

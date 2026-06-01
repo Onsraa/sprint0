@@ -65,6 +65,9 @@ import type {
   RelaySummary,
   Reliability,
   RescheduleProposal,
+  SolutionCard,
+  SolutionSet,
+  TesterPick,
   RescheduleStrategy,
   ReuseItem,
   Risk,
@@ -135,6 +138,9 @@ export type {
   RelaySummary,
   Reliability,
   RescheduleProposal,
+  SolutionCard,
+  SolutionSet,
+  TesterPick,
   RescheduleStrategy,
   ReuseItem,
   Risk,
@@ -556,6 +562,11 @@ export const api = {
     body: { text: string; constraints?: Constraints | null },
   ): Promise<FeaturePlanResponse> {
     return jpost(`/api/projects/${projectId}/features`, body);
+  },
+
+  /* Reuse-or-Innovate: a gate's solution options (memory + fresh + write-your-own), lazy + cached */
+  gateSolutions(planId: string, discipline: string): Promise<SolutionSet> {
+    return jget(`/api/plans/${planId}/gates/${discipline}/solutions`, S.SolutionSet);
   },
 
   /* QA */

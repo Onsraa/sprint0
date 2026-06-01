@@ -263,11 +263,34 @@ export const TesterPick = z.object({
   username: z.string(), name: z.string(), discipline: z.string().nullish(),
   score: z.number().default(0), reason: z.string().default(""),
 });                                // who the AI picked to run the Tester gate, by passport (+why)
+export type TesterPick = z.infer<typeof TesterPick>;
 export const QAReport = z.object({
   items: z.array(QAItemResult), reopened: z.array(z.number()).optional(),
   tester: TesterPick.nullish(),    // best-by-passport verifier for this gate
 });
 export type QAReport = z.infer<typeof QAReport>;
+
+// Reuse-or-Innovate (the Contract spine): per-gate solution options the lead selects.
+// Every field is always serialized by the backend (Pydantic defaults), so these are required.
+export const SolutionCard = z.object({
+  id: z.string(),
+  source: z.enum(["memory", "ai", "user"]),
+  title: z.string(),
+  summary: z.string(),
+  rationale: z.string(),
+  pros: z.array(z.string()),
+  cons: z.array(z.string()),
+  confidence: z.number(),
+  grounded_on: z.array(z.string()),   // past project(s) reused (memory source)
+  delta_note: z.string(),             // "variant of X + Δ" when a fresh option ≈ memory
+  impacted_files: z.array(z.string()),
+});
+export type SolutionCard = z.infer<typeof SolutionCard>;
+export const SolutionSet = z.object({
+  discipline: z.string(),
+  solutions: z.array(SolutionCard),
+});
+export type SolutionSet = z.infer<typeof SolutionSet>;
 export const RejectResult = z.object({
   issue_iid: z.number(), rerouted_to: z.string().nullable(), awaiting_reqa: z.array(z.number()),
 });

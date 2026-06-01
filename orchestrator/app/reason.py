@@ -11,9 +11,10 @@ from datetime import datetime, timezone
 
 from app.agent import (
     generate_architectures, generate_clarification, generate_cv_profile, generate_plan, generate_qa_report,
+    generate_regen, generate_solutions,
 )
 from app.assign import assign_developers
-from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, PlanJSON, QAReport, TechStack
+from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
 from app.rag import (
     DEV_COLL, DEV_INDEX, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
     all_profiles, embed_document, embed_queries, embed_query, record_postmortem, save_profile,
@@ -89,6 +90,54 @@ async def clarify_brief(brief_text: str, constraints: Constraints | None = None)
         f"Produce the clarified spec: extraction, 2-4 ambiguity cards, and reuse proposals."
     )
     return await generate_clarification(prompt)
+
+
+async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None) -> SolutionSet:
+    """Reuse-or-innovate for ONE gate: a memory-grounded option + 1-2 fresh (dedup-checked) options, in a
+    SINGLE LLM call. The server adds ids, impacted files, and the user write-your-own slot."""
+    slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
+    if not slice_issues:
+        return SolutionSet(discipline=discipline, solutions=[])
+    slice_text = "\n".join(
+        f"- {i.title}: {(i.description or '')[:160]} (files: {', '.join(i.context_scope.files)})"
+        for i in slice_issues
+    )
+    query = f"{plan.project_name} · {discipline}: " + "; ".join(i.title for i in slice_issues)
+    qv = embed_query(query)
+    async with MongoMCP() as m:
+        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, query, k=3, projection=_PP_PROJECTION)
+        try:
+            code = await m.code_search(qv, k=5)
+        except Exception:
+            code = []
+    prompt = (
+        f"FEATURE: {plan.project_name}\n"
+        f"GATE DISCIPLINE: {discipline}\n\n"
+        f"THE SLICE (issues this gate delivers):\n{slice_text}\n\n"
+        f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
+        f"SIMILAR PAST PROJECTS (agency memory — reuse what worked):\n{_format_past(past)}\n\n"
+        f"REUSABLE CODE (chunk-level):\n{_format_code(code)}\n\n"
+        f"Propose 2-3 grounded solutions for THIS gate."
+    )
+    sset = await generate_solutions(prompt)
+    sset.discipline = discipline
+    return sset
+
+
+async def regenerate_slice(issues: list, discipline: str, user_solution) -> RegeneratedSlice:
+    """Rewrite a gate's issues to match a user-WRITTEN solution (no memory — just the user's intent). One
+    LLM call; the caller applies the patches to the plan and recomputes impacted files."""
+    cur = "\n".join(
+        f"- id={i.id} | {i.title}: {(i.description or '')[:140]} (files: {', '.join(i.context_scope.files)})"
+        for i in issues
+    )
+    prompt = (
+        f"GATE DISCIPLINE: {discipline}\n\n"
+        f"CURRENT ISSUES:\n{cur}\n\n"
+        f"USER'S SOLUTION: {user_solution.title} — {user_solution.summary}\n{user_solution.rationale}\n\n"
+        f"Rewrite each issue to implement the user's solution. Keep each id."
+    )
+    return await generate_regen(prompt)
 
 
 def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | None,

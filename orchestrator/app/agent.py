@@ -19,7 +19,7 @@ from google.genai import types
 
 from app.contracts import (
     ArchitectureOptions, ClarifiedSpec, ConflictVerdict, DecisionCardPass1, ParsedCV, PlanJSON,
-    QAReport, RescheduleStrategy,
+    QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
 )
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
@@ -204,3 +204,39 @@ conflict_agent = Agent(name="sprint0_conflict", model=MODEL, instruction=INSTRUC
 
 async def generate_conflict(prompt: str) -> ConflictVerdict:
     return ConflictVerdict.model_validate_json(await _run_agent(conflict_agent, prompt))
+
+
+# ── Reuse-or-Innovate (the Contract spine): per-gate solution options ──
+INSTRUCTION_SOLUTIONS = """You propose competing SOLUTIONS for ONE discipline gate of a feature (its \
+"Contract"). You are given the FEATURE, the gate's DISCIPLINE, THE SLICE (the issues this gate delivers), \
+the manager's CONSTRAINTS, SIMILAR PAST PROJECTS from agency memory, and REUSABLE CODE.
+
+Return 2-3 options in `solutions`:
+- EXACTLY ONE with source="memory" IF a past project genuinely fits — reuse what worked; put the project \
+name(s) in `grounded_on` and name the reused asset in the title (e.g. "Reuse QuantaPay Stripe auth").
+- ONE or TWO with source="ai" — a fresh approach you would design from scratch. If a fresh option is \
+essentially the same as the memory one, set `delta_note` to "variant of <project> + <what differs>".
+- NEVER output source="user" (that slot is the human's, added by the server).
+
+For each: a short `title` (<=7 words), a one-line `summary`, a `rationale` (<=200 chars), <=3 `pros` and \
+<=3 `cons` (each <=8 words), and an HONEST `confidence` 0-100 (do NOT inflate; below 60 is valid). Leave \
+`id` and `impacted_files` empty — the server fills them. Output structured data only, no prose."""
+
+solutions_agent = Agent(name="sprint0_solutions", model=MODEL, instruction=INSTRUCTION_SOLUTIONS, output_schema=SolutionSet)
+
+
+async def generate_solutions(prompt: str) -> SolutionSet:
+    return SolutionSet.model_validate_json(await _run_agent(solutions_agent, prompt))
+
+
+INSTRUCTION_REGEN = """A lead chose to WRITE THEIR OWN solution for a gate instead of the AI's options. \
+Given the gate's CURRENT ISSUES and the USER'S SOLUTION, rewrite each issue to implement the user's \
+approach: update its `title`, a short markdown `description`, and the `files` it should touch (2-3). Keep \
+each issue's `id` EXACTLY as given. Be faithful to the user's intent; never invent extra work. Output \
+structured data only, no prose."""
+
+regen_agent = Agent(name="sprint0_regen", model=MODEL, instruction=INSTRUCTION_REGEN, output_schema=RegeneratedSlice)
+
+
+async def generate_regen(prompt: str) -> RegeneratedSlice:
+    return RegeneratedSlice.model_validate_json(await _run_agent(regen_agent, prompt))

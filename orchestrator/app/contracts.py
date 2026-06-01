@@ -512,6 +512,67 @@ class DecisionCard(BaseModel):
     conflict_reason: Optional[str] = None
 
 
+# ── Reuse-or-Innovate solutions (the Contract spine): per-gate choice the lead ratifies ──
+class SolutionCard(BaseModel):
+    """One ratifiable solution for a Contract gate. Validator-truncated so the AI emits concise data,
+    never prose. `id`/`impacted_files` are server-assigned; the LLM sets the rest (source ∈ memory|ai;
+    the `user` write-your-own slot is built server-side)."""
+    id: str = ""
+    source: Literal["memory", "ai", "user"] = "ai"
+    title: str = ""
+    summary: str = ""
+    rationale: str = ""
+    pros: list[str] = Field(default_factory=list)
+    cons: list[str] = Field(default_factory=list)
+    confidence: int = 50
+    grounded_on: list[str] = Field(default_factory=list)   # past-project name(s) reused (memory source)
+    delta_note: str = ""                                   # "variant of X + <delta>" when fresh ≈ memory
+    impacted_files: list[str] = Field(default_factory=list)  # server-computed (context_scope ∪ graph deps)
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, v: str) -> str:
+        return _trunc_words(v, 7)
+
+    @field_validator("summary", "delta_note")
+    @classmethod
+    def _line(cls, v: str) -> str:
+        return (v or "")[:140]
+
+    @field_validator("rationale")
+    @classmethod
+    def _rat(cls, v: str) -> str:
+        return (v or "")[:200]
+
+    @field_validator("confidence")
+    @classmethod
+    def _conf(cls, v: int) -> int:
+        return max(0, min(100, int(v)))
+
+    @field_validator("pros", "cons")
+    @classmethod
+    def _items(cls, v: list[str]) -> list[str]:
+        return [_trunc_words(x, 8) for x in (v or [])[:3]]
+
+
+class SolutionSet(BaseModel):
+    """All solutions for one gate — one LLM call generates them. `discipline` is server-set."""
+    discipline: str = ""
+    solutions: list[SolutionCard] = Field(default_factory=list)
+
+
+class RegenIssue(BaseModel):
+    id: str
+    title: str = ""
+    description: str = ""
+    files: list[str] = Field(default_factory=list)
+
+
+class RegeneratedSlice(BaseModel):
+    """The AI's rewrite of a gate's issues to match a user-WRITTEN solution (the reactive beat)."""
+    issues: list[RegenIssue] = Field(default_factory=list)
+
+
 class RatifyRequest(BaseModel):
     edits: Optional[list[Issue]] = None  # the lead's adjusted slice; None = accept the draft as-is
     note: str = ""
@@ -522,6 +583,7 @@ class RatifyRequest(BaseModel):
     ai_confidence: Optional[int] = None
     deviated: bool = False
     deviation_reason: str = ""
+    chosen_solution: Optional[SolutionCard] = None  # the reuse-or-innovate pick (or write-your-own)
 
 
 class DispatchRequest(BaseModel):

@@ -205,7 +205,7 @@ def best_tester(members: list[DeveloperProfile]) -> TesterPick | None:
     def in_accept_lane(m: DeveloperProfile) -> int:
         return 1 if lane_stage(m.discipline or "") == "accept" else 0
 
-    chosen = max(pool, key=lambda m: (accept_trust(m), in_accept_lane(m), avail(m), seniority(m)))
+    chosen = max(pool, key=lambda m: (accept_trust(m), in_accept_lane(m), avail(m), seniority(m), m.username))
     at = accept_trust(chosen)
     lvl_name = {0: "low", 1: "medium", 2: "high"}[at]
     score = round(0.55 * (at / 2) + 0.25 * avail(chosen) + 0.20 * seniority(chosen), 2)
