@@ -47,6 +47,10 @@ interface UIState {
   projectFilter: number | null;
   setProjectFilter: (id: number | null) => void;
 
+  /** Relays person filter (PersonSwitcher): review a watched person's relays. null = your own scope. */
+  personFilter: string | null;
+  setPersonFilter: (u: string | null) => void;
+
   /** Dev-surface focus. */
   activeIssue: string | null;
   setActiveIssue: (id: string | null) => void;
@@ -113,6 +117,8 @@ export const useUI = create<UIState>((set) => ({
   setLiveCloneUrl: (liveCloneUrl) => set({ liveCloneUrl }),
   projectFilter: null,
   setProjectFilter: (projectFilter) => set({ projectFilter }),
+  personFilter: null,
+  setPersonFilter: (personFilter) => set({ personFilter }),
 
   activeIssue: null,
   setActiveIssue: (activeIssue) => set({ activeIssue }),

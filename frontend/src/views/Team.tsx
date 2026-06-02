@@ -3,7 +3,8 @@
    MEMBERS/STAFFING/SUBSCRIPTIONS → the useApp() adapter). Reads the live store. */
 import { useState } from "react";
 import { ViewChrome } from "../components/ViewChrome";
-import { Avatar, Badge, Button, DiscDot, DISC, LoadMeter, Tab, TrustDot } from "../components/ui";
+import { Availability, Avatar, Badge, Button, DiscDot, DISC, Tab, TrustDot } from "../components/ui";
+import { Icon } from "../lib/icon";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useApp } from "../app/useApp";
@@ -58,11 +59,14 @@ export function TeamView() {
           {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus" onClick={openHire}>Onboard</Button>}
         </div>
 
+        <WatchersStrip />
+
         <div style={{ display: "flex", alignItems: "center", height: 30, padding: "0 20px", marginTop: 12, borderBottom: "0.5px solid var(--border-subtle)", position: "sticky", top: 0, background: "var(--bg-elevated)", zIndex: 1 }}>
           <span className="kicker" style={{ flex: 1 }}>Member</span>
           <span className="kicker" style={{ width: 110 }}>Discipline</span>
           <span className="kicker" style={{ width: 110 }}>Trust</span>
-          <span className="kicker" style={{ width: 110 }}>Load</span>
+          <span className="kicker" style={{ width: 160 }}>Availability</span>
+          <span className="kicker" style={{ width: 96, textAlign: "right" }}>Watch</span>
         </div>
         {members.map((m) => <TeamRow key={m.username} m={m} />)}
       </div>
@@ -89,7 +93,65 @@ function TeamRow({ m }: { m: Member }) {
       <div style={{ width: 110, display: "flex", alignItems: "center", gap: 6 }}>
         <TrustDot level={trustOf(m)} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)", textTransform: "capitalize" }}>{trustOf(m)}</span>
       </div>
-      <div style={{ width: 110 }}><LoadMeter value={m.load} /></div>
+      <div style={{ width: 160 }}><Availability a={m.availability} /></div>
+      <div style={{ width: 96, display: "flex", justifyContent: "flex-end" }}>
+        {!isSelf && <WatchControl username={m.username} />}
+      </div>
+    </div>
+  );
+}
+
+/* §6 Watch — a consent-based access grant (request → they accept → granted). The one key to a watched
+   person's Contracts (senior↔intern peer review). Backend: POST /api/access/requests + the grant flow. */
+function WatchControl({ username }: { username: string }) {
+  const { watchStatus, requestWatch, unwatch, members }: any = useApp();
+  const status: "none" | "pending" | "active" = watchStatus(username);
+  const [h, setH] = useState(false);
+  const name = members.find((m: any) => m.username === username)?.name?.split(" ")[0] || ("@" + username);
+  const cfg = {
+    none:    { icon: "eye"   as const, label: "Watch",     title: `Request to watch ${name} — they'll be asked to accept`, onClick: () => requestWatch(username) },
+    pending: { icon: "clock" as const, label: "Requested", title: `Waiting on ${name} to accept · click to cancel`,        onClick: () => unwatch(username) },
+    active:  { icon: "check" as const, label: "Watching",  title: `Watching ${name} · click to stop`,                      onClick: () => unwatch(username) },
+  }[status];
+  return (
+    <button onClick={(e) => { e.stopPropagation(); cfg.onClick(); }} title={cfg.title}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 24, padding: "0 9px", borderRadius: "var(--r-md)", fontSize: 11.5, fontWeight: 500,
+        border: status === "pending" ? "0.5px dashed var(--border-strong)" : "0.5px solid var(--border-strong)",
+        background: status === "active" ? "var(--bg-active)" : h ? "var(--bg-hover)" : "var(--bg-elevated)",
+        color: status === "none" ? "var(--text-tertiary)" : "var(--text-primary)", transition: "background var(--t-quick)" }}>
+      <Icon name={cfg.icon} size={12} />{cfg.label}
+    </button>
+  );
+}
+
+/* §6 "Watching you" — who has a granted Watch on YOU; revoke inline. */
+function WatchersStrip() {
+  const { subs, me, removeWatcher, members }: any = useApp();
+  const byUser = (u: string) => members.find((m: any) => m.username === u);
+  const list: string[] = (subs.watchers ?? []).filter((u: string) => u !== me.username);
+  if (!list.length) return null;
+  return (
+    <div style={{ margin: "12px 20px 0", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "9px 12px",
+      borderRadius: "var(--r-lg)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+        <Icon name="eye" size={14} style={{ color: "var(--text-tertiary)" }} />
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>Watching you</span>
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{list.length}</span>
+      </span>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {list.map((u) => { const m = byUser(u); const first = m?.name?.split(" ")[0] || ("@" + u); return (
+          <span key={u} style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 28, padding: "0 4px 0 7px", borderRadius: "var(--r-pill)",
+            background: "var(--bg-elevated)", border: "0.5px solid var(--border)" }}>
+            <Avatar name={m?.name || u} size={18} />
+            <span style={{ fontSize: 12, fontWeight: 500 }}>{first}</span>
+            <button onClick={() => removeWatcher(u)} title={`Revoke access — ${first} stops seeing your Contracts`}
+              style={{ width: 19, height: 19, display: "grid", placeItems: "center", borderRadius: "50%", background: "transparent", color: "var(--text-quaternary)" }}>
+              <Icon name="close" size={12} />
+            </button>
+          </span>
+        ); })}
+      </div>
     </div>
   );
 }

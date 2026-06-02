@@ -9,7 +9,7 @@ import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { ViewChrome } from "../components/ViewChrome";
 import { ProjectSwitcher } from "../components/ProjectSwitcher";
-import { Button, Tab, Badge, DiscDot, DISC } from "../components/ui";
+import { Avatar, Button, Tab, Badge, DiscDot, DISC } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { GATE_META } from "./RatifyPanel";
 import { blocksForGate } from "../features/today/rank";
@@ -121,22 +121,33 @@ function RelayRow({ r, rank, onOpen }: { r: RelaySummary; rank: number; onOpen: 
 }
 
 export function Relays() {
-  const { relaySummaries, role, me, setView, projects }: any = useApp();
+  const { relaySummaries, role, me, setView, projects, members, personFilter, setPersonFilter }: any = useApp();
   const setPlanId = useUI((s) => s.setPlanId);
   const setActiveGate = useUI((s) => s.setActiveGate);
   const projectFilter = useUI((s) => s.projectFilter);
   const selName = (projects as any[]).find((p) => p.project_id === projectFilter)?.name ?? null;
   const all: RelaySummary[] = relaySummaries ?? [];
-  const roleFiltered = role === "manager"
-    ? all
-    : all.filter((r) => r.gates.some((g) => g.discipline === me?.discipline) || r.baton.includes(me?.discipline));
-  const mine = selName ? roleFiltered.filter((r) => r.project === selName) : roleFiltered;
+  // a granted Watch lets you review a teammate's relays — scope to their lane (the backend has no per-gate
+  // assignee; one dev per discipline in the demo makes the lane filter exact). Else your own role filter.
+  const watched = personFilter ? members.find((m: any) => m.username === personFilter) : null;
+  const onLane = (r: RelaySummary, d?: Discipline) => !!d && (r.gates.some((g) => g.discipline === d) || r.baton.includes(d));
+  const base = watched
+    ? all.filter((r) => onLane(r, watched.discipline))
+    : role === "manager" ? all : all.filter((r) => onLane(r, me?.discipline));
+  const mine = selName ? base.filter((r) => r.project === selName) : base;
   const relays = [...mine].sort((a, b) => relayScore(b) - relayScore(a));
   const awaiting = relays.filter((r) => r.baton.length > 0).length;
+  const firstName = watched ? String(watched.name).split(" ")[0] : "";
 
-  // Managers open the full RelayBoard; devs/leads land on their ratify queue (/relay isn't a dev route).
+  // Peer-review: when scoped to a watched person, open the board on THEIR gate read-only (the granted Watch
+  // un-gates that Contract). Otherwise managers open the full RelayBoard; devs land on their ratify queue.
   const openRelay = (r: RelaySummary, gate?: Discipline) => {
     setPlanId(r.plan_id);
+    if (watched?.discipline) {
+      setActiveGate(watched.discipline);
+      setView("relay");
+      return;
+    }
     if (gate) setActiveGate(gate);
     setView(role === "manager" ? "relay" : "ratify");
   };
@@ -150,30 +161,106 @@ export function Relays() {
         </div>
         <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{relays.length} active</span>
         <ProjectSwitcher />
+        <PersonSwitcher />
       </ViewChrome>
 
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <div style={{ maxWidth: 860, margin: "0 auto", padding: "26px 28px 56px" }}>
           <div style={{ marginBottom: 4 }}>
             <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: 0 }}>
-              {role === "manager" ? "Every relay, ranked" : "Your relays, ranked"}
+              {watched ? `${firstName}'s relays, ranked` : role === "manager" ? "Every relay, ranked" : "Your relays, ranked"}
             </h1>
-            <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
-              The cross-project ratification board · <span className="mono" style={{ color: "var(--text-secondary)" }}>{"{UI/UX ∥ Backend ∥ DevOps} → Frontend → QA"}</span>.
-              The hottest front — most blocked, baton waiting — floats to the top. <b style={{ color: "var(--text-primary)" }}>{awaiting}</b> await a call.
+            <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: "5px 0 0", lineHeight: 1.5 }}>
+              Hottest front first — <b style={{ color: "var(--text-primary)" }}>{awaiting}</b> await a call.
             </p>
           </div>
+
+          {watched && <PeerReviewBanner m={watched} onClear={() => setPersonFilter(null)} />}
 
           <DagLegend />
 
           {relays.length === 0 && (
-            <div style={{ padding: 28, textAlign: "center", color: "var(--text-quaternary)", fontSize: 13, marginTop: 18 }}>No active relays.</div>
+            <div style={{ padding: 28, textAlign: "center", color: "var(--text-quaternary)", fontSize: 13, marginTop: 18 }}>
+              {watched ? `No active relay ${firstName} is on.` : "No active relays."}
+            </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 18 }}>
             {relays.map((r, i) => <RelayRow key={r.plan_id} r={r} rank={i + 1} onOpen={openRelay} />)}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* Person picker beside the project picker — review a WATCHED person's relays. Populated from the people
+   who granted you a Watch (the access key); selecting one scopes the board to their relays read-only. */
+function PersonSwitcher() {
+  const { me, personFilter, setPersonFilter, watchedPeople, members }: any = useApp();
+  const byUser = (u: string) => members.find((m: any) => m.username === u);
+  const [open, setOpen] = useState(false);
+  const sel = personFilter ? byUser(personFilter) : null;
+  const any = (watchedPeople ?? []).length > 0;
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => any && setOpen((o) => !o)} title={any ? "Review a watched person's relays" : "No granted Watches yet"}
+        style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 28, padding: "0 8px 0 7px", borderRadius: "var(--r-md)", fontSize: 12.5, fontWeight: 500,
+          background: sel ? "var(--bg-active)" : "var(--bg-elevated)", border: `0.5px solid ${sel ? "var(--text-primary)" : "var(--border)"}`,
+          color: any ? "var(--text-secondary)" : "var(--text-quaternary)", boxShadow: "var(--shadow-1)", cursor: any ? "pointer" : "default", opacity: any ? 1 : 0.7 }}>
+        {sel
+          ? <><Avatar name={sel.name} size={17} />{String(sel.name).split(" ")[0]}<Badge tone="outline" mono><Icon name="eye" size={9} />watch</Badge></>
+          : <><Icon name="eye" size={14} style={{ color: "var(--text-tertiary)" }} />Anyone you watch</>}
+        <Icon name="chevronDown" size={13} style={{ color: "var(--text-quaternary)" }} />
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 50 }} />
+          <div style={{ position: "absolute", top: 34, left: 0, width: 264, zIndex: 51, background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-3)", overflow: "hidden" }}>
+            <div className="kicker" style={{ padding: "10px 12px 6px" }}>Review via a granted Watch</div>
+            <div style={{ padding: 6, paddingTop: 0 }}>
+              <PersonRow active={!sel} onClick={() => { setPersonFilter(null); setOpen(false); }} glyph={<Avatar name={me.name} size={22} tone={me.role === "manager" ? "ink" : undefined} />} title="Your own scope" sub="relays you're on" />
+              {(watchedPeople ?? []).map((u: string) => { const m = byUser(u); return (
+                <PersonRow key={u} active={sel?.username === u} onClick={() => { setPersonFilter(u); setOpen(false); }} glyph={<Avatar name={m?.name} size={22} />} title={m?.name ?? u} sub={m?.discipline ? `${DISC[m.discipline as keyof typeof DISC]?.label} · read-only` : "read-only"} />
+              ); })}
+            </div>
+            <div style={{ padding: "8px 12px", borderTop: "0.5px solid var(--border-subtle)" }}>
+              <span style={{ fontSize: 11, color: "var(--text-quaternary)", lineHeight: 1.45 }}>Only people who granted you a Watch appear here.</span>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PersonRow({ active, onClick, glyph, title, sub }: { active: boolean; onClick: () => void; glyph: any; title: string; sub: string }) {
+  const [h, setH] = useState(false);
+  return (
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "7px 8px", borderRadius: "var(--r-md)", background: active || h ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>
+      {glyph}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+        <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)" }}>{sub}</div>
+      </div>
+      {active && <Icon name="check" size={15} style={{ color: "var(--text-primary)" }} />}
+    </button>
+  );
+}
+
+/* Context strip when reviewing someone else's board (read-only, via a granted Watch). */
+function PeerReviewBanner({ m, onClear }: { m: any; onClear: () => void }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 14, padding: "11px 13px", borderRadius: "var(--r-lg)", background: "var(--bg-secondary)", border: "0.5px solid var(--text-primary)" }}>
+      <Avatar name={m.name} size={26} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
+          Reviewing {String(m.name).split(" ")[0]}'s relays
+          <Badge tone="outline" mono><Icon name="eye" size={10} />read-only · Watch</Badge>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 1 }}>Their Contracts open read-only — you review the call, not make it.</div>
+      </div>
+      <Button variant="secondary" size="sm" icon="close" onClick={onClear}>Back to yours</Button>
     </div>
   );
 }

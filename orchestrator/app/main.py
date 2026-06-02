@@ -463,6 +463,7 @@ async def list_access(member: DeveloperProfile = Depends(auth.current_member)) -
         "i_can_see": [g for g in mine if g.get("status") == "granted"],
         "can_see_me": [g for g in watching if g.get("status") == "granted"],
         "pending_in": [g for g in watching if g.get("status") == "pending"],
+        "pending_out": [g for g in mine if g.get("status") == "pending"],  # my outgoing requests awaiting accept (drives the "Requested" state)
     }
 
 
@@ -943,6 +944,22 @@ async def plan_staffing(plan_id: str) -> dict:
     return {"coverage": staffing.coverage(plan, team.all_members())}
 
 
+async def _can_read_contract(member: DeveloperProfile, discipline: str) -> bool:
+    """Contract visibility: a gate's Contract (solutions + decision card) is private to the gate OWNER (the
+    dev in that lane), the MANAGER, or anyone holding a GRANTED Watch on the owner. Tickets stay fully open —
+    this gates only the Contract reads (the per-gate reuse-or-innovate set + decision card)."""
+    if member.role == "manager":
+        return True
+    if member.discipline == discipline:
+        return True
+    owner = next((m.username for m in team.all_members() if m.discipline == discipline), None)
+    if owner:
+        for g in await access_grants_for_requester(member.username):
+            if g.get("subject_id") == owner and g.get("status") == "granted":
+                return True
+    return False
+
+
 @app.get("/api/plans/{plan_id}/gates/{discipline}/solutions", response_model=SolutionSet)
 async def gate_solutions(
     plan_id: str, discipline: str, member: DeveloperProfile = Depends(auth.current_member),
@@ -952,6 +969,8 @@ async def gate_solutions(
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
+    if not await _can_read_contract(member, discipline):
+        return SolutionSet(discipline=discipline, solutions=[])  # private — owner / manager / granted Watch only
     key = (plan_id, discipline)
     if key in SOLUTIONS:
         return SOLUTIONS[key]
@@ -1411,9 +1430,13 @@ async def _reschedule_project(project_id: int) -> int:
         objs = [Task(**d) for d in docs]
         await team.ensure_loaded()
         avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+        # Full re-solve is intentional here (a reassignment must reclaim the old owner's freed capacity —
+        # reflow's minimal-perturbation floor would not), but only persist the tasks whose dates moved.
+        prior = {o.id: (o.scheduled_start, o.scheduled_end) for o in objs}
         scheduler.schedule_tasks(objs, team.all_members(), datetime.now(timezone.utc).isoformat(), availability=avail)
         for o in objs:
-            await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
+            if (o.scheduled_start, o.scheduled_end) != prior[o.id]:
+                await update_task(o.id, {"scheduled_start": o.scheduled_start, "scheduled_end": o.scheduled_end})
         return len(objs)
     except Exception:
         return 0  # never fail an assignment over the recompute
@@ -1783,6 +1806,8 @@ async def decision_card_for_gate(plan_id: str, discipline: str,
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
+    if not await _can_read_contract(member, discipline):  # Contract is private — redacted for non-owner/manager/watcher
+        return {"card": None, "signal": "grey", "low_confidence": True, "past": {"own": [], "team": []}, "error": "private"}
     sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
     tags = sorted({i.required_skill for i in sl if i.required_skill})
     ctx = (sl[0].title if sl else discipline)[:50]

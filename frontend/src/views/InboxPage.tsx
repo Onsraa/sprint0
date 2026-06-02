@@ -24,6 +24,15 @@ const NOTIF_META: Record<string, { icon: any; label: string; spark?: boolean }> 
   reschedule_proposed: { icon: "calendar", label: "Reschedule", spark: true },
 };
 
+/* concise notification timestamp → "DD-MM-YYYY at HH:MM" (was a raw ISO string). */
+function fmtNotifTime(t?: string): string {
+  if (!t) return "";
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return t;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()} at ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /* §5 reschedule strategy action → label + flagged (needs manual handling) */
 const RESCHEDULE_ACTION: Record<string, { label: string; flagged: boolean }> = {
   shift:    { label: "Right-shift", flagged: false },
@@ -34,7 +43,7 @@ const RESCHEDULE_ACTION: Record<string, { label: string; flagged: boolean }> = {
 
 /* ───────── Inbox ───────── */
 export function InboxPage() {
-  const { notifs, markAllRead, setView } = useApp();
+  const { notifs, markAllRead, setView, accessRequests, acceptAccess, rejectAccess } = useApp();
   const [sel, setSel] = useState<string | null>(notifs[0]?.id || null);
   const [snoozed, setSnoozed] = useState<Set<string>>(() => new Set());
   const NEEDS = ["ratify", "ratify_needed", "blocked", "reschedule", "reschedule_proposed"];
@@ -50,7 +59,8 @@ export function InboxPage() {
       </ViewChrome>
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={{ width: 380, flexShrink: 0, borderRight: "0.5px solid var(--border)", overflow: "auto" }}>
-          <Group label="Needs your action" count={needs.length}>
+          <Group label="Needs your action" count={needs.length + accessRequests.length}>
+            {accessRequests.map((r: any) => <AccessRequestRow key={r.ref?.grant_id} r={r} onAccept={() => acceptAccess(r.ref.grant_id)} onReject={() => rejectAccess(r.ref.grant_id)} />)}
             {needs.map((n: any) => <InboxRow key={n.id} n={n} active={selN?.id === n.id} onClick={() => setSel(n.id)} />)}
           </Group>
           <Group label="Notifications" count={other.length}>
@@ -63,6 +73,21 @@ export function InboxPage() {
             : <InboxDetail n={selN} go={setView} onSnooze={() => snooze(selN.id)} />)}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* §6 incoming Watch request — accept (grant access to your Contracts) or reject. Backend access-grant flow. */
+function AccessRequestRow({ r, onAccept, onReject }: { r: any; onAccept: () => void; onReject: () => void }) {
+  return (
+    <div style={{ display: "flex", gap: 11, padding: "11px 16px", borderBottom: "0.5px solid var(--border-subtle)", alignItems: "center" }}>
+      <span style={{ marginTop: 1, color: "var(--text-primary)" }}><Icon name="eye" size={16} /></span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>wants to watch your Contracts — accept to grant a peer-review Watch.</div>
+      </div>
+      <Button variant="primary" size="sm" onClick={onAccept}>Accept</Button>
+      <Button variant="ghost" size="sm" onClick={onReject}>Reject</Button>
     </div>
   );
 }
@@ -91,7 +116,7 @@ function InboxRow({ n, active, onClick }: { n: any; active: boolean; onClick: ()
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {n.unread && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-primary)", flexShrink: 0 }} />}
           <span style={{ fontSize: 13, fontWeight: n.unread ? 500 : 450, color: "var(--text-primary)", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.title}</span>
-          <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{n.time}</span>
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{fmtNotifTime(n.time)}</span>
         </div>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.body}</div>
       </div>
@@ -100,7 +125,14 @@ function InboxRow({ n, active, onClick }: { n: any; active: boolean; onClick: ()
 }
 
 function InboxDetail({ n, go, onSnooze }: { n: any; go: (v: string) => void; onSnooze: () => void }) {
+  const { members }: any = useApp();
   const meta = NOTIF_META[n.kind] || NOTIF_META.assigned;
+  // notifications carry no structured actor — pull the @username from the title. Title shows the NAME;
+  // the byline carries the @username + a concise timestamp.
+  const actorUser: string | null = (n.who && n.who !== "ai") ? n.who : (String(n.title || "").match(/@(\S+)/)?.[1] ?? null);
+  const actorName: string | undefined = members.find((m: any) => m.username === actorUser)?.name;
+  const title = actorUser && actorName ? String(n.title).replace(`@${actorUser}`, actorName) : n.title;
+  const byline = actorUser ? `@${actorUser}` : (n.who === "ai" ? "sprint0" : "");
   return (
     <div style={{ maxWidth: 560, animation: "s0-fade-in var(--t-reg) both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
@@ -109,11 +141,11 @@ function InboxDetail({ n, go, onSnooze }: { n: any; go: (v: string) => void; onS
           <Icon name={meta.icon} size={17} />
         </span>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.3px", margin: 0 }}>{n.title}</h1>
-          <div className="mono" style={{ fontSize: 11.5, color: "var(--text-quaternary)", marginTop: 2 }}>{n.who === "ai" ? "sprint0" : "@" + n.who} · {n.time}</div>
+          <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.3px", margin: 0 }}>{title}</h1>
+          <div className="mono" style={{ fontSize: 11.5, color: "var(--text-quaternary)", marginTop: 2 }}>{byline}{byline ? " · " : ""}{fmtNotifTime(n.time)}</div>
         </div>
       </div>
-      <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text-secondary)" }}>{n.body}.</p>
+      {n.body && <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text-secondary)" }}>{n.body}</p>}
       {n.kind === "ratify" && (
         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
           <Button variant="primary" size="md" icon="relay" onClick={() => go("relay")}>Open in Relay</Button>

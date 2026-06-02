@@ -687,7 +687,7 @@ export const api = {
   requestAccess(subjectId: string): Promise<AccessGrant> { return jpost("/api/access/requests", { subject_id: subjectId }); },
   acceptAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/requests/${grantId}/accept`); },
   rejectAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/requests/${grantId}/reject`); },
-  listAccess(): Promise<{ i_can_see: AccessGrant[]; can_see_me: AccessGrant[]; pending_in: AccessGrant[] }> { return jget("/api/access"); },
+  listAccess(): Promise<{ i_can_see: AccessGrant[]; can_see_me: AccessGrant[]; pending_in: AccessGrant[]; pending_out: AccessGrant[] }> { return jget("/api/access"); },
   revokeAccess(grantId: string): Promise<AccessGrant> { return jdelete(`/api/access/${grantId}`); },
   muteAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/${grantId}/mute`); },
 

@@ -186,12 +186,34 @@ export function useApp() {
   const confirm = useConfirmProfile();
   const confirmProfile = (id: string) => confirm.mutate(id);
 
-  // subscriptions
-  const { data: subs = { watching: [], watchers: [] } } = useQuery({ queryKey: ["subscriptions"], queryFn: () => api.listSubscriptions() });
-  const invSubs = () => qc.invalidateQueries({ queryKey: ["subscriptions"] });
-  const isWatching = (u: string) => (subs.watching ?? []).some((w: { subject_id?: string; username?: string }) => (w.subject_id ?? w.username) === u);
-  const watch = (u: string) => { api.subscribe(u).then(invSubs); };
-  const unwatch = (u: string) => { api.unsubscribe(u).then(invSubs); };
+  // Watch = consent-based access grants (request → subject accepts → granted). The Contract-visibility key:
+  // a granted Watch un-gates a watched person's Contracts (tickets stay open). Drives the Relays person-picker.
+  const { data: access = { i_can_see: [], can_see_me: [], pending_in: [], pending_out: [] } } = useQuery({ queryKey: ["access"], queryFn: () => api.listAccess() });
+  const invAccess = () => qc.invalidateQueries({ queryKey: ["access"] });
+  const subs = useMemo(() => ({
+    watching: (access.i_can_see ?? []).map((g) => g.subject_id),     // people I watch (granted)
+    watchers: (access.can_see_me ?? []).map((g) => g.requester_id),  // people watching me (granted)
+  }), [access]);
+  const watchedPeople = subs.watching;
+  const watchStatus = (u: string): "none" | "pending" | "active" =>
+    (access.i_can_see ?? []).some((g) => g.subject_id === u) ? "active"
+      : (access.pending_out ?? []).some((g) => g.subject_id === u) ? "pending" : "none";
+  const isWatching = (u: string) => watchStatus(u) === "active";
+  const requestWatch = (u: string) => { api.requestAccess(u).then(invAccess); };
+  const unwatch = (u: string) => {  // cancel my pending request OR stop an active watch
+    const g = [...(access.i_can_see ?? []), ...(access.pending_out ?? [])].find((x) => x.subject_id === u);
+    if (g) api.revokeAccess(g.id).then(invAccess);
+  };
+  const removeWatcher = (u: string) => {  // revoke someone who watches me
+    const g = (access.can_see_me ?? []).find((x) => x.requester_id === u);
+    if (g) api.revokeAccess(g.id).then(invAccess);
+  };
+  const personFilter = useUI((s) => s.personFilter);
+  const setPersonFilter = useUI((s) => s.setPersonFilter);
+  // incoming Watch requests awaiting MY accept (the consent step) → drive the Inbox accept/reject.
+  const accessRequests = useMemo(() => (inbox?.needs_action ?? []).filter((n) => n.kind === "access_request"), [inbox]);
+  const acceptAccess = (grantId: string) => { api.acceptAccess(grantId).then(() => { qc.invalidateQueries({ queryKey: qk.inbox() }); invAccess(); }); };
+  const rejectAccess = (grantId: string) => { api.rejectAccess(grantId).then(() => { qc.invalidateQueries({ queryKey: qk.inbox() }); invAccess(); }); };
 
   // reschedule proposal (first pending, from the inbox)
   const proposalNeed = (inbox?.needs_action ?? []).find((n) => n.kind === "reschedule");
@@ -220,7 +242,8 @@ export function useApp() {
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,
     profiles, confirmProfile,
-    subs, isWatching, watch, unwatch,
+    subs, isWatching, watchStatus, requestWatch, unwatch, removeWatcher, watchedPeople, personFilter, setPersonFilter,
+    accessRequests, acceptAccess, rejectAccess,
     proposal, resolveProposal,
     attributions, resolveAttribution,
     drift, scheduleRefactor,

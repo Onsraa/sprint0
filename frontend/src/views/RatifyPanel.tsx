@@ -272,7 +272,7 @@ function SolutionsBlock({ planId, disc, interactive, choice, onPick, onWriteOwn,
 
 /* Right sub-panel: the feature frame · the solution choice · the slice · forward-only ratify. */
 export function RatifyPanel({ g }: { g: any }) {
-  const { me, chrome, members, planId, ratifyWith }: any = useApp();
+  const { me, chrome, members, planId, ratifyWith, personFilter }: any = useApp();
   const byUser = (u: string) => members?.find((m: any) => m.username === u);
   const meta = GATE_META[g.status];
   // the real slice — this plan's issues for this discipline (shared ["plan", planId] query, cached across gates)
@@ -378,7 +378,7 @@ export function RatifyPanel({ g }: { g: any }) {
         {!ownsThisGate && !done && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)", marginBottom: 16 }}>
             <Icon name="eye" size={14} style={{ color: "var(--text-tertiary)" }} />
-            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>This isn't your gate — {byUser(g.owner)?.name?.split(" ")[0] || "the owner"} makes the call. You're viewing.</span>
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{personFilter ? "Reviewing this Contract via your Watch — read-only, you can't make the call." : `This isn't your gate — ${byUser(g.owner)?.name?.split(" ")[0] || "the owner"} makes the call. You're viewing.`}</span>
           </div>
         )}
       </div>
