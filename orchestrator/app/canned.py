@@ -2,7 +2,8 @@
 Phase 3. Kept schema-valid so the frontend + tests exercise the real contract.
 """
 from app.contracts import (
-    ArchitectureOptions, ClarifiedSpec, DeveloperProfile, ParsedCV, PlanJSON, SolutionSet,
+    ArchitectureOptions, ClarifiedSpec, ConflictVerdict, Decision, DecisionCardPass1, DeveloperProfile,
+    Notification, ParsedCV, PlanJSON, ProjectRecord, QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
 )
 
 CANNED_PLAN = PlanJSON.model_validate(
@@ -158,6 +159,60 @@ CANNED_DEVELOPERS = [
     ),
 ]
 
+# The DEMO_MODE login roster — mirrors the 5 real seed accounts the frontend picker offers, so login,
+# assignee resolution, and relay-lead resolution all line up. uiux stays an orphan gap (no uiux dev),
+# which keeps the Team staffing banner truthful.
+CANNED_ROSTER = [
+    DeveloperProfile(
+        name="Teddy", username="Onsraa", gitlab_username="Onsraa",
+        skills_text="Delivery management, planning, stakeholder comms.",
+        role="manager", seniority="senior", trust_level="high",
+    ),
+    DeveloperProfile(
+        name="Jean Gabriel", username="sprint0-se", gitlab_username="sprint0-se",
+        skills_text="Python, FastAPI, auth, OAuth/JWT, payment integrations, Postgres",
+        role="developer", discipline="backend", seniority="senior", trust_level="high",
+        trust={"backend": "high", "devops": "medium"}, load=60,
+        history=[{"task_type": "backend:auth", "score": 0.92}],
+    ),
+    DeveloperProfile(
+        name="Tony Stark", username="sprint0-sse", gitlab_username="sprint0-sse",
+        skills_text="Docker, GitLab CI, Kubernetes, observability, Postgres migrations",
+        role="developer", discipline="devops", seniority="senior", trust_level="high",
+        trust={"devops": "high", "backend": "high"}, load=20,
+        history=[{"task_type": "devops:ci", "score": 0.88}],
+    ),
+    DeveloperProfile(
+        name="Sam Dupont", username="sprint0-fe", gitlab_username="sprint0-fe",
+        skills_text="React, TypeScript, forms, dataviz, accessibility",
+        role="developer", discipline="frontend", seniority="mid", trust_level="medium",
+        trust={"frontend": "medium"}, load=30,
+        history=[{"task_type": "frontend:forms", "score": 0.81}],
+    ),
+    DeveloperProfile(
+        name="Pascal Alice", username="sprint0-qa", gitlab_username="sprint0-qa",
+        skills_text="QA automation, Playwright, acceptance testing, edge cases",
+        role="developer", discipline="qa", seniority="mid", trust_level="medium",
+        trust={"qa": "medium"}, load=10,
+        history=[{"task_type": "qa:acceptance", "score": 0.80}],
+    ),
+]
+
+
+def _seat_plan(plan: PlanJSON) -> PlanJSON:
+    """Map a plan's draft assignees onto the demo login roster by discipline, so the plan, the relay,
+    and the Work board all show the same people (the canned plan ships maria/sam/priya placeholders)."""
+    p = plan.model_copy(deep=True)
+    owner = {m.discipline: m.username for m in CANNED_ROSTER if m.role == "developer" and m.discipline}
+    for epic in p.epics:
+        for i in epic.issues:
+            if owner.get(i.discipline):
+                i.assignee = owner[i.discipline]
+    return p
+
+
+DEMO_PLAN = _seat_plan(CANNED_PLAN)  # the roster-seated working copy seed_demo + CANNED_PROJECTS both use
+
 # ── Demo-mode fixtures (Phase 6 hybrid deploy) ──────────────────────────
 # Returned by the gated `generate_*` agents when DEMO_MODE is on, so the public URL
 # runs the full real path (FastAPI → MongoDB MCP retrieval) with canned Gemini output.
@@ -263,4 +318,120 @@ CANNED_CV = ParsedCV(
     gitlab_username="nia-petrova",
     skills_text="Python, FastAPI, PostgreSQL, payment integrations, OAuth/JWT auth, Docker, GitLab CI; "
     "5 years backend, fintech domain.",
+    suggested_discipline="backend",
 )
+
+# The 5 agents reachable from the public UI that were hitting Vertex live (QA gate, reschedule
+# strategist, Decision Card, conflict pass, user-solution regen). Themed to the FinTrack narrative.
+CANNED_QA_REPORT = QAReport.model_validate(
+    {
+        "items": [
+            {"issue_id": "E1-1", "title": "JWT login + refresh endpoint", "verdict": "needs_human",
+             "note": "Auth on payment data — a human should eyeball token rotation on staging.",
+             "runner": "sprint0-se", "disc": "backend"},
+            {"issue_id": "E3-1", "title": "Monthly spend chart", "verdict": "pass",
+             "note": "Straightforward dataviz, low risk.", "runner": "sprint0-fe", "disc": "frontend"},
+            {"issue_id": "E3-2", "title": "CI pipeline + Docker build", "verdict": "pass",
+             "note": "Standard GitLab CI: lint, test, build image.", "runner": "sprint0-sse", "disc": "devops"},
+        ],
+        "reopened": [],
+        "tester": {"username": "sprint0-qa", "name": "Pascal Alice", "discipline": "qa",
+                   "score": 0.86, "reason": "owns the accept lane — verification trust medium"},
+    }
+)
+
+CANNED_STRATEGY = RescheduleStrategy(
+    action="right_shift",
+    target_task_ids=[],
+    rationale="Minor slip; let the affected tasks slide rather than reassign mid-flight.",
+    confidence=74,
+    impact_summary="The dashboard chart shifts about two days; no owner or scope change.",
+)
+
+CANNED_DECISION_CARD = DecisionCardPass1.model_validate(
+    {
+        "domain": "backend",
+        "context": "JWT auth for payment data",
+        "recommendation": "Reuse LedgerLite JWT with refresh rotation",
+        "confidence": 78,
+        "pros": ["Battle-tested in prod", "Fastest secure path", "Already security reviewed"],
+        "cons": ["Slightly dated deps", "Less modern UX"],
+    }
+)
+
+CANNED_CONFLICT = ConflictVerdict(conflict=False, conflict_reason="")
+
+CANNED_REGEN = RegeneratedSlice.model_validate(
+    {
+        "issues": [
+            {"id": "E1-1", "title": "Custom session auth (team-written)",
+             "description": "Implement the lead's own session-cookie auth in place of the AI options.",
+             "files": ["src/api/auth.py", "src/api/session.py"]},
+        ]
+    }
+)
+
+# ── Demo workspace data (served by the gated read endpoints when DEMO_MODE is on) ──
+# seed_demo() materializes CANNED_PLAN under this id so the active project, its relay, and its
+# tasks all line up; CANNED_PROJECTS surfaces the same project + the two memory references it reused.
+DEMO_PROJECT_ID = 4201
+DEMO_PLAN_ID = "demo-fintrack"
+
+_FINTRACK_RECORD = ProjectRecord(
+    project_id=DEMO_PROJECT_ID, name="FinTrack",
+    web_url="https://gitlab.com/sprint0-demo/fintrack",
+    tech_stack=DEMO_PLAN.tech_stack, grounded_on=DEMO_PLAN.grounded_on,
+    plan=DEMO_PLAN, status="in_progress",
+)
+
+CANNED_PROJECTS = [
+    {**_FINTRACK_RECORD.model_dump(), "kind": "active", "last_activity_at": "2026-05-31T16:00:00Z"},
+    {"project_id": 4187, "name": "LedgerLite", "web_url": "https://gitlab.com/sprint0-demo/ledgerlite",
+     "kind": "reference", "status": "shipped",
+     "tech_stack": {"frontend": "React + TypeScript", "backend": "FastAPI (Python)", "db": "PostgreSQL",
+                    "infra": "Docker + GitLab CI"},
+     "tags": ["fintech", "auth", "jwt"],
+     "summary": "Personal ledger; JWT auth + refresh-rotation shipped in 6 weeks. Reused by FinTrack.",
+     "last_activity_at": "2026-04-12T10:00:00Z"},
+    {"project_id": 4163, "name": "BudgetBuddy", "web_url": "https://gitlab.com/sprint0-demo/budgetbuddy",
+     "kind": "reference", "status": "shipped",
+     "tech_stack": {"frontend": "React", "backend": "FastAPI + event queue", "db": "PostgreSQL + Redis",
+                    "infra": "Kubernetes + GitLab CI"},
+     "tags": ["fintech", "plaid", "ingestion"],
+     "summary": "Budgeting app; Plaid webhook ingestion (queue-backed). Adapted by FinTrack.",
+     "last_activity_at": "2026-03-02T10:00:00Z"},
+]
+
+CANNED_DECISIONS = [
+    Decision(
+        id="dec_demo_1", owner_id="Onsraa", domain="backend",
+        context_tags=["auth", "jwt"], recommendation="Reuse LedgerLite JWT auth + refresh rotation",
+        reasoning="Security-sensitive gate; LedgerLite's slice shipped and survived prod, so reuse beats a rebuild.",
+        project_id=DEMO_PLAN_ID, project_name="FinTrack", issue_ids=["E1-1", "E1-2"],
+        outcome_validated=True, visibility="team", grade="prod_survived",
+        merged=True, qa_passed=True, days_clean=21,
+        created_at="2026-05-20T10:00:00Z", updated_at="2026-05-31T10:00:00Z",
+    ).model_dump(),
+    Decision(
+        id="dec_demo_2", owner_id="Onsraa", domain="frontend",
+        context_tags=["dataviz"], recommendation="Fresh category spend chart (no reuse fit)",
+        reasoning="No past dashboard slice matched the brief, so a focused category chart was built from scratch.",
+        project_id=DEMO_PLAN_ID, project_name="FinTrack", issue_ids=["E3-1"],
+        outcome_validated=True, visibility="team", grade="shipped",
+        merged=True, qa_passed=True, days_clean=4,
+        created_at="2026-05-25T10:00:00Z", updated_at="2026-05-30T10:00:00Z",
+    ).model_dump(),
+]
+
+CANNED_INBOX = [
+    Notification(id="ntf_demo_1", user_id="Onsraa", type="project_shipped",
+        title="FinTrack reached the acceptance gate",
+        body="The relay cleared build + integration; QA holds the baton.",
+        ref={"plan_id": DEMO_PLAN_ID}, read=False, created_at="2026-05-31T15:30:00Z").model_dump(),
+    Notification(id="ntf_demo_2", user_id="Onsraa", type="task_completed",
+        title="Maria Chen completed JWT login + refresh",
+        ref={"project_id": DEMO_PROJECT_ID}, read=False, created_at="2026-05-31T14:00:00Z").model_dump(),
+    Notification(id="ntf_demo_3", user_id="Onsraa", type="reschedule_proposed",
+        title="AI proposed a right-shift after a re-estimate", actionable=True,
+        ref={}, read=True, created_at="2026-05-30T09:00:00Z").model_dump(),
+]

@@ -219,11 +219,26 @@ export const PRIORITY_META: Record<string, { label: string; color: string }> = {
   low: { label: "Low", color: "var(--text-quaternary)" },
 };
 
+// Pretty-print a machine skill/capability tag for humans: "backend:django,scheduling" → "Django · Scheduling",
+// "stripe-webhooks" → "Stripe Webhooks", "db:postgresql" → "PostgreSQL". Keeps every topic (no info lost).
+const TAG_CASE: Record<string, string> = {
+  postgresql: "PostgreSQL", postgis: "PostGIS", jwt: "JWT", oauth: "OAuth", ci: "CI", cd: "CD", api: "API",
+  ui: "UI", ux: "UX", uiux: "UI/UX", devops: "DevOps", db: "DB", css: "CSS", html: "HTML", sql: "SQL",
+  aws: "AWS", gcp: "GCP", k8s: "K8s", ml: "ML", nlp: "NLP", sdk: "SDK", graphql: "GraphQL",
+  websocket: "WebSocket", websockets: "WebSockets", webhooks: "Webhooks", webhook: "Webhook", saas: "SaaS", ios: "iOS",
+};
+const prettyToken = (t: string) => TAG_CASE[t.toLowerCase()] ?? (t ? t[0].toUpperCase() + t.slice(1) : t);
+export function prettyTag(tag: string): string {
+  const body = tag.includes(":") ? tag.split(":").slice(1).join(":") : tag;  // drop the area prefix (shown in context)
+  const topics = body.split(/[,/]/).map((s) => s.trim()).filter(Boolean);
+  return topics.map((p) => p.split(/[-_ ]+/).filter(Boolean).map(prettyToken).join(" ")).join(" · ") || tag;
+}
+
 export function CapTag({ tag }: { tag: string }) {
   return (
-    <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 17, padding: "0 6px",
+    <span style={{ display: "inline-flex", alignItems: "center", height: 17, padding: "0 7px",
       borderRadius: "var(--r-xs)", background: "var(--bg-secondary)", color: "var(--text-tertiary)",
-      fontSize: 10, fontWeight: 500, whiteSpace: "nowrap" }}>{tag}</span>
+      fontSize: 10.5, fontWeight: 500, whiteSpace: "nowrap" }}>{prettyTag(tag)}</span>
   );
 }
 

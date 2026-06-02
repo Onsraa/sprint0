@@ -175,6 +175,7 @@ class ParsedCV(BaseModel):
     name: str
     gitlab_username: str
     skills_text: str
+    suggested_discipline: Optional[Discipline] = None  # the AI's lane guess (manager confirms → seats them)
 
 
 class PlanRequest(BaseModel):

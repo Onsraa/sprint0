@@ -1,0 +1,17 @@
+# Build-context upload for `gcloud builds submit`. Mirror .dockerignore — the image only needs
+# pyproject.toml + uv.lock + orchestrator/ + scripts/ + Dockerfile. Keep .env* OUT (secrets).
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+frontend
+docs
+seed
+secrets
+.env
+.env.*
+*.md
+.superpowers
+.DS_Store
+.mcp.json

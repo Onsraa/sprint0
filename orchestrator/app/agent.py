@@ -74,6 +74,8 @@ architect_agent = Agent(name="sprint0_architect", model=MODEL, instruction=INSTR
 
 
 async def _run_agent(agent: Agent, prompt: str) -> str:
+    if demo.is_demo():  # defense-in-depth: every demo-reachable generate_* must add a fixture, never hit Vertex
+        raise RuntimeError(f"live AI ({agent.name}) is disabled in demo mode — add a canned fixture")
     runner = InMemoryRunner(agent=agent, app_name=_APP)
     session = await runner.session_service.create_session(app_name=_APP, user_id="local")
     msg = types.Content(role="user", parts=[types.Part(text=prompt)])
@@ -125,8 +127,10 @@ async def generate_clarification(prompt: str) -> ClarifiedSpec:
 INSTRUCTION_ONBOARD = """You parse a developer's CV/resume into a profile for an agency \
 roster. Extract their real `name`, a sensible lowercase `gitlab_username` derived from the \
 name (e.g. "nia-petrova"), and a rich `skills_text` summary (languages, frameworks, domains, \
-tools, seniority cues) suitable for vector skill-matching. Be faithful to the CV; never \
-invent skills. Return only the structured profile."""
+tools, seniority cues) suitable for vector skill-matching. Also set `suggested_discipline` to \
+the single best-fit lane from {backend, frontend, devops, qa, uiux} given their strongest \
+skills (null only if genuinely unclear) — the manager confirms it to seat them in-lane. Be \
+faithful to the CV; never invent skills. Return only the structured profile."""
 
 onboard_agent = Agent(name="sprint0_onboard", model=MODEL, instruction=INSTRUCTION_ONBOARD, output_schema=ParsedCV)
 
@@ -152,6 +156,8 @@ qa_agent = Agent(name="sprint0_qa", model=MODEL, instruction=INSTRUCTION_QA, out
 
 
 async def generate_qa_report(prompt: str) -> QAReport:
+    if demo.is_demo():
+        return canned.CANNED_QA_REPORT.model_copy(deep=True)
     return QAReport.model_validate_json(await _run_agent(qa_agent, prompt))
 
 
@@ -178,6 +184,8 @@ strategist_agent = Agent(name="sprint0_strategist", model=MODEL, instruction=INS
 
 
 async def generate_strategy(prompt: str) -> RescheduleStrategy:
+    if demo.is_demo():
+        return canned.CANNED_STRATEGY.model_copy(deep=True)
     return RescheduleStrategy.model_validate_json(await _run_agent(strategist_agent, prompt))
 
 
@@ -200,6 +208,8 @@ card_agent = Agent(name="sprint0_card", model=MODEL, instruction=INSTRUCTION_CAR
 
 
 async def generate_decision_card(prompt: str) -> DecisionCardPass1:
+    if demo.is_demo():
+        return canned.CANNED_DECISION_CARD.model_copy(deep=True)
     return DecisionCardPass1.model_validate_json(await _run_agent(card_agent, prompt))
 
 
@@ -212,6 +222,8 @@ conflict_agent = Agent(name="sprint0_conflict", model=MODEL, instruction=INSTRUC
 
 
 async def generate_conflict(prompt: str) -> ConflictVerdict:
+    if demo.is_demo():
+        return canned.CANNED_CONFLICT.model_copy(deep=True)
     return ConflictVerdict.model_validate_json(await _run_agent(conflict_agent, prompt))
 
 
@@ -250,4 +262,6 @@ regen_agent = Agent(name="sprint0_regen", model=MODEL, instruction=INSTRUCTION_R
 
 
 async def generate_regen(prompt: str) -> RegeneratedSlice:
+    if demo.is_demo():
+        return canned.CANNED_REGEN.model_copy(deep=True)
     return RegeneratedSlice.model_validate_json(await _run_agent(regen_agent, prompt))

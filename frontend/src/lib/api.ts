@@ -465,7 +465,7 @@ export const api = {
   suggestTask(title: string): Promise<{ discipline: string; estimate_days: number; priority: string }> {
     return jpost(`/api/tasks/suggest`, { title });
   },
-  featurePreview(planId: string): Promise<{ pushed: number; moved: { task_id: string; title: string; assignee: string | null; old_end: string | null; new_end: string | null }[]; overloaded: { user: string; name: string; added_days: number }[]; feature_tasks: number }> {
+  featurePreview(planId: string): Promise<{ pushed: number; moved: { task_id: string; title: string; assignee: string | null; old_end: string | null; new_end: string | null }[]; capacity: { username: string; name: string; before: number; after: number; added_days: number }[]; untouched: { id: string; title: string; status: string }[]; feature_tasks: number; at_risk: number }> {
     return jpost(`/api/plans/${planId}/reschedule-preview`);
   },
   /** Lock (or unlock) a task's dates so the reflow engine never moves it (Reclaim-style lock). */
@@ -610,7 +610,7 @@ export const api = {
   },
   addFeature(
     projectId: number,
-    body: { text: string; constraints?: Constraints | null },
+    body: { text: string; constraints?: Constraints | null; priority?: string },
   ): Promise<FeaturePlanResponse> {
     return jpost(`/api/projects/${projectId}/features`, body);
   },
@@ -665,13 +665,16 @@ export const api = {
   reconcileTeam(): Promise<Record<string, unknown>> {
     return jpost("/api/team/reconcile");
   },
+  setDiscipline(username: string, discipline: string): Promise<DeveloperProfile> {
+    return jpost(`/api/members/${username}/discipline`, { discipline });
+  },
   closeProject(projectId: number, outcome_notes?: string): Promise<CloseResult> {
     return jpost(`/api/projects/${projectId}/close`, { outcome_notes: outcome_notes ?? "" });
   },
   developers(): Promise<DeveloperProfile[]> {
     return jget("/api/developers", z.array(S.Member));
   },
-  addDeveloper(input: { text?: string; file?: File }): Promise<DeveloperProfile> {
+  addDeveloper(input: { text?: string; file?: File }): Promise<DeveloperProfile & { suggested_discipline?: Discipline | null }> {
     const fd = new FormData();
     if (input.file) fd.append("file", input.file);
     else fd.append("text", input.text ?? "");

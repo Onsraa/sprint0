@@ -78,7 +78,7 @@ step "Preflight"
 uv run python scripts/setup_check.py preflight
 
 # ── 6) confirm the reset (destructive) ────────────────────────────────────────
-GRP="$(envval GITLAB_DEMO_GROUP)"; DBN="$(envval MONGODB_DB)"; [ -n "$DBN" ] || DBN=orchestrator
+GRP="$(envval GITLAB_DEMO_GROUP)"; DBN="$(envval MONGODB_DB)"; [ -n "$DBN" ] || DBN=sprint0
 if [ "$YES" -ne 1 ]; then
   printf "\n${Y}This RESETS the demo:${RST} drop Mongo DB ${BLD}%s${RST} + delete dispatched projects in GitLab group ${BLD}%s${RST}.\n" "$DBN" "$GRP"
   printf "Continue? [y/N] "; read -r ans

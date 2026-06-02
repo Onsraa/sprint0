@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { Icon } from "../lib/icon";
 import { ZeroMark } from "../lib/icon";
+import { toast } from "sonner";
 import { Button, Avatar, Badge } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 import { useApp } from "../app/useApp";
@@ -35,10 +36,13 @@ const RESCHEDULE_ACTION: Record<string, { label: string; flagged: boolean }> = {
 export function InboxPage() {
   const { notifs, markAllRead, setView } = useApp();
   const [sel, setSel] = useState<string | null>(notifs[0]?.id || null);
+  const [snoozed, setSnoozed] = useState<Set<string>>(() => new Set());
   const NEEDS = ["ratify", "ratify_needed", "blocked", "reschedule", "reschedule_proposed"];
-  const needs = notifs.filter((n: any) => NEEDS.includes(n.kind));
-  const other = notifs.filter((n: any) => !NEEDS.includes(n.kind));
-  const selN = notifs.find((n: any) => n.id === sel) || notifs[0] || null;
+  const visible = notifs.filter((n: any) => !snoozed.has(n.id));
+  const needs = visible.filter((n: any) => NEEDS.includes(n.kind));
+  const other = visible.filter((n: any) => !NEEDS.includes(n.kind));
+  const selN = visible.find((n: any) => n.id === sel) || visible[0] || null;
+  const snooze = (id: string) => { setSnoozed((s) => new Set(s).add(id)); setSel(null); toast("Snoozed — we'll resurface it later"); };
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <ViewChrome breadcrumb={["Studio", "Inbox"]}>
@@ -56,7 +60,7 @@ export function InboxPage() {
         <div style={{ flex: 1, minWidth: 0, overflow: "auto", padding: 28 }}>
           {selN && (selN.kind === "reschedule"
             ? <RescheduleConsent />
-            : <InboxDetail n={selN} go={setView} />)}
+            : <InboxDetail n={selN} go={setView} onSnooze={() => snooze(selN.id)} />)}
         </div>
       </div>
     </div>
@@ -95,7 +99,7 @@ function InboxRow({ n, active, onClick }: { n: any; active: boolean; onClick: ()
   );
 }
 
-function InboxDetail({ n, go }: { n: any; go: (v: string) => void }) {
+function InboxDetail({ n, go, onSnooze }: { n: any; go: (v: string) => void; onSnooze: () => void }) {
   const meta = NOTIF_META[n.kind] || NOTIF_META.assigned;
   return (
     <div style={{ maxWidth: 560, animation: "s0-fade-in var(--t-reg) both" }}>
@@ -113,7 +117,7 @@ function InboxDetail({ n, go }: { n: any; go: (v: string) => void }) {
       {n.kind === "ratify" && (
         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
           <Button variant="primary" size="md" icon="relay" onClick={() => go("relay")}>Open in Relay</Button>
-          <Button variant="secondary" size="md">Snooze</Button>
+          <Button variant="secondary" size="md" onClick={onSnooze}>Snooze</Button>
         </div>
       )}
       {(n.kind === "blocked" || n.kind === "qa_failed") && (

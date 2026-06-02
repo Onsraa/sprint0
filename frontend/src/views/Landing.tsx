@@ -1,13 +1,12 @@
-/* sprint0 — Landing (ported from the v4 design Landing.jsx). Minimal header + split hero: title +
- * the dynamic connexion card (GitLab / email → password). For the demo every path logs in as the
- * manager ("Try Demo"); the persona switcher in the nav rail re-chromes from there. */
-import { useState, type CSSProperties, type ReactNode } from "react";
+/* sprint0 — Landing. Minimal header + split hero: title + a single demo-entry card. This is a demo
+ * build, so login is honest: "Enter the demo workspace" logs you in as the manager ("Onsraa") and the
+ * persona switcher in the nav rail re-chromes from there. No fake OAuth / email / password screens. */
 import { useNavigate } from "@tanstack/react-router";
 import { useLogin } from "../features/auth/useAuth";
 import { Button } from "../components/ui";
-import { Icon, ZeroMark, Logo } from "../lib/icon";
+import { ZeroMark, Logo } from "../lib/icon";
 
-const DEMO_USER = "Onsraa"; // the manager persona — Try Demo drops you here
+const DEMO_USER = "Onsraa"; // the manager persona — Enter the demo workspace drops you here
 
 export function Landing() {
   const login = useLogin();
@@ -84,97 +83,26 @@ function HeroCopy() {
 }
 
 function ConnexionCard({ onEnter }: { onEnter: () => void }) {
-  const [mode, setMode] = useState<"choose" | "email" | "password">("choose");
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
   return (
     <div style={{ background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-xl)", boxShadow: "var(--shadow-2)", padding: 28, animation: "s0-pop-in var(--t-slow) var(--ease-out) both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <ZeroMark size={22} />
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
-            {mode === "choose" ? "Pick up the baton" : mode === "email" ? "Continue with email" : "Welcome back"}
-          </div>
-          <div style={{ fontSize: 12, color: "var(--text-quaternary)" }}>{mode === "password" ? email : "Sign in to your workspace"}</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>Pick up the baton</div>
+          <div style={{ fontSize: 12, color: "var(--text-quaternary)" }}>Demo workspace</div>
         </div>
       </div>
       <div style={{ marginTop: 22 }}>
-        {mode === "choose" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, animation: "s0-fade-in var(--t-reg) both" }}>
-            <AuthBtn icon="gitlab" label="Continue with GitLab" onClick={onEnter} primary />
-            <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "6px 0" }}>
-              <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-              <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>OR</span>
-              <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-            </div>
-            <AuthBtn icon="mail" label="Continue with email" onClick={() => setMode("email")} />
-          </div>
-        )}
-        {mode === "email" && (
-          <div style={{ animation: "s0-panel-in var(--t-reg) var(--ease-out) both" }}>
-            <Field label="Work email">
-              <input autoFocus value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@studio.com"
-                onKeyDown={(e) => e.key === "Enter" && validEmail && setMode("password")} style={inputStyle} />
-            </Field>
-            <Button variant="primary" size="lg" style={{ width: "100%", marginTop: 14, opacity: validEmail ? 1 : 0.45 }} disabled={!validEmail} onClick={() => setMode("password")} iconRight="arrowRight">Continue</Button>
-            <BackRow onClick={() => setMode("choose")} />
-          </div>
-        )}
-        {mode === "password" && (
-          <div style={{ animation: "s0-panel-in var(--t-reg) var(--ease-out) both" }}>
-            <Field label="Password" right={<a href="#" style={{ fontSize: 12, color: "var(--text-tertiary)", fontWeight: 500 }}>Forgot?</a>}>
-              <input autoFocus type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="••••••••••"
-                onKeyDown={(e) => e.key === "Enter" && pw.length >= 1 && onEnter()} style={inputStyle} />
-            </Field>
-            <Button variant="primary" size="lg" style={{ width: "100%", marginTop: 14, opacity: pw.length ? 1 : 0.45 }} disabled={!pw.length} onClick={onEnter} iconRight="arrowRight">Sign in</Button>
-            <BackRow onClick={() => setMode("email")} />
-          </div>
-        )}
+        <Button variant="primary" size="lg" style={{ width: "100%" }} onClick={onEnter} iconRight="arrowRight">
+          Enter the demo workspace
+        </Button>
       </div>
-      <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", lineHeight: 1.5, marginTop: 20, marginBottom: 0, textAlign: "center" }}>
-        By continuing you agree to the <a href="#" style={{ color: "var(--text-tertiary)", textDecoration: "underline" }}>Terms</a> & <a href="#" style={{ color: "var(--text-tertiary)", textDecoration: "underline" }}>Privacy</a>.
+      <p style={{ fontSize: 12, color: "var(--text-quaternary)", lineHeight: 1.5, marginTop: 16, marginBottom: 0, textAlign: "center" }}>
+        Explore as the manager; switch personas from the nav once inside. No account needed.
       </p>
     </div>
   );
 }
-
-function AuthBtn({ icon, label, onClick, primary }: { icon: "gitlab" | "mail"; label: string; onClick: () => void; primary?: boolean }) {
-  const [h, setH] = useState(false);
-  return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, height: 42, borderRadius: "var(--r-md)", fontSize: 13.5, fontWeight: 500,
-        background: primary ? (h ? "var(--ink-fill-hover)" : "var(--ink-fill)") : (h ? "var(--bg-hover)" : "var(--bg-elevated)"),
-        color: primary ? "#fff" : "var(--text-secondary)", border: primary ? "none" : "0.5px solid var(--border-strong)",
-        boxShadow: primary ? "none" : "var(--shadow-1)", transition: "background var(--t-quick)" }}>
-      {icon && <Icon name={icon} size={16} />}
-      {label}
-    </button>
-  );
-}
-function Field({ label, right, children }: { label: string; right?: ReactNode; children: ReactNode }) {
-  return (
-    <label style={{ display: "block" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 500, color: "var(--text-secondary)" }}>{label}</span>
-        {right}
-      </div>
-      {children}
-    </label>
-  );
-}
-function BackRow({ onClick }: { onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 14, fontSize: 12.5, fontWeight: 500, color: "var(--text-tertiary)" }}>
-      <Icon name="chevronLeft" size={13} /> Other options
-    </button>
-  );
-}
-const inputStyle: CSSProperties = {
-  width: "100%", height: 42, padding: "0 12px", fontSize: 14, color: "var(--text-primary)",
-  background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)",
-  outline: "none", boxShadow: "var(--shadow-inset)",
-};
 
 function LandingFooter() {
   return (

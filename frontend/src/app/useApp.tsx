@@ -5,6 +5,7 @@
  * State stays in Query/Zustand; this just shapes it. Also bridges mockup view-ids ↔ our route paths. */
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fmtDate } from "../lib/format";
 import { toast } from "sonner";
 import { useMe, useLogin } from "../features/auth/useAuth";
 import { useView, memberToRole } from "../features/nav/nav";
@@ -63,7 +64,7 @@ function toMockProject(p: ProjectSummary): any {
   return {
     ...p, id: p.project_id, code: initials(p.name), status: p.kind === "reference" ? "shipped" : (p.status || "in_progress"),
     stack: Object.values(p.tech_stack ?? {}).filter((v) => v && v !== "-"), issues, devs, grounded: p.grounded_on ?? [],
-    accent: DISC_ACCENTS[hash(p.name) % DISC_ACCENTS.length], created: p.created_at ?? "", activity: p.last_activity_at ?? "",
+    accent: DISC_ACCENTS[hash(p.name) % DISC_ACCENTS.length], created: fmtDate(p.created_at), activity: fmtDate(p.last_activity_at),
   };
 }
 const toMockAttribution = (a: Attribution): any => ({

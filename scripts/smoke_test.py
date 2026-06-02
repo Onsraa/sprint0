@@ -63,7 +63,7 @@ def check_mongo() -> str:
     if not uri:
         skip("MongoDB: MONGODB_URI not set")
         return "skip"
-    db = os.getenv("MONGODB_DB", "orchestrator")
+    db = os.getenv("MONGODB_DB", "sprint0")
     try:
         from pymongo import MongoClient
 

@@ -2,12 +2,16 @@
    Misc.jsx Team component (+ Bell.jsx's WatchControl helper); only the data source changed (mock
    MEMBERS/STAFFING/SUBSCRIPTIONS → the useApp() adapter). Reads the live store. */
 import { useState } from "react";
-import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
 import { Avatar, Badge, Button, DiscDot, DISC, LoadMeter, Tab, TrustDot } from "../components/ui";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useApp } from "../app/useApp";
+import { useUI } from "../lib/store";
 import { Profiles } from "./Profiles";
+import { api } from "../lib/api";
 import type { Member } from "../lib/api";
+import { qk } from "../lib/query";
 
 // real Member uses gitlab_username / trust_level; the mock used gitlab / trust.
 const gitlabOf = (m: Member) => (m as Member & { gitlab?: string }).gitlab ?? m.gitlab_username;
@@ -19,7 +23,10 @@ const trustOf = (m: Member) => (m as Member & { trust?: unknown }).trust_level ?
 const ORPHAN_GAP = "uiux";
 
 export function TeamView() {
-  const { chrome, subs, members } = useApp();
+  const { chrome, members } = useApp();
+  const setWizardKind = useUI((s) => s.setWizardKind);
+  const setWizardOpen = useUI((s) => s.setWizardOpen);
+  const openHire = () => { setWizardKind("hire"); setWizardOpen(true); };
   const [tab, setTab] = useState<"roster" | "capabilities">("roster");
   const gap = ORPHAN_GAP;
   // strongest non-uiux candidate by trust as the stretch suggestion (mock had cov.stretch_candidates[0]).
@@ -35,8 +42,7 @@ export function TeamView() {
           <Tab active={tab === "roster"} onClick={() => setTab("roster")}>Roster</Tab>
           <Tab active={tab === "capabilities"} onClick={() => setTab("capabilities")}>Capabilities</Tab>
         </div>
-        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", marginRight: 6 }}>watching {subs.watching.length} · watchers {subs.watchers.length}</span>
-        {chrome.canOnboard && <Button variant="primary" size="sm" icon="plus">Onboard a dev</Button>}
+        {chrome.canOnboard && <Button variant="primary" size="sm" icon="plus" onClick={openHire}>Onboard a dev</Button>}
       </ViewChrome>
       {tab === "capabilities" ? (
         <div style={{ flex: 1, overflow: "auto" }}><Profiles embedded /></div>
@@ -49,7 +55,7 @@ export function TeamView() {
             <div style={{ fontSize: 13, fontWeight: 600 }}>{DISC[gap].label} is an orphan gap</div>
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No dedicated dev — the gate routes to the manager. Stretch: {stretch?.name} (match {stretchScore}).</div>
           </div>
-          {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus">Onboard</Button>}
+          {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus" onClick={openHire}>Onboard</Button>}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", height: 30, padding: "0 20px", marginTop: 12, borderBottom: "0.5px solid var(--border-subtle)", position: "sticky", top: 0, background: "var(--bg-elevated)", zIndex: 1 }}>
@@ -57,7 +63,6 @@ export function TeamView() {
           <span className="kicker" style={{ width: 110 }}>Discipline</span>
           <span className="kicker" style={{ width: 110 }}>Trust</span>
           <span className="kicker" style={{ width: 110 }}>Load</span>
-          <span className="kicker" style={{ width: 96, textAlign: "right" }}>Watch</span>
         </div>
         {members.map((m) => <TeamRow key={m.username} m={m} />)}
       </div>
@@ -80,35 +85,45 @@ function TeamRow({ m }: { m: Member }) {
           <div className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>@{m.username} · gitlab:{gitlabOf(m)}</div>
         </div>
       </div>
-      <div style={{ width: 110 }}>
-        {m.discipline
-          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5 }}><DiscDot d={m.discipline} />{DISC[m.discipline].label}</span>
-          : <Badge tone="ink">Manager</Badge>}
-      </div>
+      <div style={{ width: 110 }}><SeatControl m={m} /></div>
       <div style={{ width: 110, display: "flex", alignItems: "center", gap: 6 }}>
         <TrustDot level={trustOf(m)} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)", textTransform: "capitalize" }}>{trustOf(m)}</span>
       </div>
       <div style={{ width: 110 }}><LoadMeter value={m.load} /></div>
-      <div style={{ width: 96, display: "flex", justifyContent: "flex-end" }}>
-        {!isSelf && <WatchControl username={m.username} />}
-      </div>
     </div>
   );
 }
 
-/* §6 Watch toggle — panel-local helper ported verbatim from the v4 design's Bell.jsx. */
-function WatchControl({ username }: { username: string }) {
-  const { isWatching, watch, unwatch } = useApp();
-  const on = isWatching(username);
-  const [h, setH] = useState(false);
+const DISCIPLINES = ["backend", "frontend", "devops", "qa", "uiux"] as const;
+
+/* Manager seats a member in a discipline (the onboarded junior arrives discipline-less). A seated dev
+   enters the assignment pool in-lane; before seating they sit out (so the AI doesn't stretch-flag them). */
+function SeatControl({ m }: { m: Member }) {
+  const { me } = useApp();
+  const qc = useQueryClient();
+  const seat = async (d: string) => {
+    if (!d) return;
+    try {
+      await api.setDiscipline(m.username, d);
+      toast.success(`${m.name} seated in ${DISC[d as keyof typeof DISC]?.label ?? d}`);
+      qc.invalidateQueries({ queryKey: qk.roster() });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not set discipline");
+    }
+  };
+  if (m.role === "manager") return <Badge tone="ink">Manager</Badge>;
+  if (me.role !== "manager") {
+    return m.discipline
+      ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5 }}><DiscDot d={m.discipline} />{DISC[m.discipline].label}</span>
+      : <Badge tone="outline">Unseated</Badge>;
+  }
   return (
-    <button onClick={(e) => { e.stopPropagation(); on ? unwatch(username) : watch(username); }}
-      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 24, padding: "0 9px", borderRadius: "var(--r-md)",
-        fontSize: 11.5, fontWeight: 500, border: "0.5px solid var(--border-strong)",
-        background: on ? "var(--bg-active)" : h ? "var(--bg-hover)" : "var(--bg-elevated)",
-        color: on ? "var(--text-primary)" : "var(--text-tertiary)" }}>
-      <Icon name={on ? "check" : "eye"} size={12} />{on ? "Watching" : "Watch"}
-    </button>
+    <select value={m.discipline ?? ""} onChange={(e) => seat(e.target.value)}
+      style={{ height: 26, padding: "0 6px", fontSize: 12, borderRadius: "var(--r-md)",
+        border: m.discipline ? "0.5px solid var(--border)" : "0.5px dashed var(--text-tertiary)",
+        background: "var(--bg-elevated)", color: m.discipline ? "var(--text-primary)" : "var(--text-tertiary)", cursor: "pointer" }}>
+      <option value="" disabled>Seat…</option>
+      {DISCIPLINES.map((d) => <option key={d} value={d}>{DISC[d].label}</option>)}
+    </select>
   );
 }

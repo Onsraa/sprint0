@@ -60,6 +60,7 @@ interface UIState {
   /** Wizard drafts (saved before dispatch; shown on Projects). */
   drafts: any[];
   addDraft: (d: any) => any;
+  removeDraftByName: (name: string) => void;
 
   /** Clear all session-scoped UI on logout. */
   resetSession: () => void;
@@ -125,6 +126,7 @@ export const useUI = create<UIState>((set) => ({
     set((s) => ({ drafts: [draft, ...s.drafts] }));
     return draft;
   },
+  removeDraftByName: (name) => set((s) => ({ drafts: s.drafts.filter((d: any) => d.name !== name) })),
 
   resetSession: () => set(SESSION_DEFAULTS),
 }));

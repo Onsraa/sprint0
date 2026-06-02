@@ -12,6 +12,7 @@ import { Avatar, Kbd } from "../components/ui";
 import { FullLogo } from "../lib/icon";
 import { Landing } from "../views/Landing";
 import { Wizard } from "../wizard/Wizard";
+import { FeatureWizard } from "../wizard/FeatureWizard";
 import { CommandPalette } from "../features/palette/CommandPalette";
 import { useNotificationsWS } from "../features/notify/useNotifications";
 import { useHealth } from "../features/health/useHealth";
@@ -76,6 +77,7 @@ export function AppShellNew() {
         </div>
       </div>
       <CommandPalette />
+      <FeatureWizard />
     </div>
   );
 }

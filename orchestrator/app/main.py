@@ -23,7 +23,7 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, demo, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
+from app import auth, canned, demo, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
@@ -40,8 +40,9 @@ from app.rag import (
     save_graph, graph_nodes, graph_edges, save_governance_rule, all_governance_rules,
     all_profiles, update_profile,
     save_subscription, delete_subscription, subscriptions_of, watchers_of,
-    get_access_grant, get_project_record, past_projects, record_merge,
+    get_access_grant, get_project_record, past_projects, record_merge, set_developer_discipline,
     save_access_grant, save_decision, save_notification, notifications_for_user, mark_all_read,
+    notification_exists, dedup_notifications,
     save_project_record, update_access_grant, update_project_record,
     all_events, all_tasks, delete_tasks_for_project, get_task, mongo_close, save_event, save_tasks,
     tasks_for_project, update_task,
@@ -161,10 +162,36 @@ def health() -> dict:
     return {"status": "ok" if ok else "degraded", "service": "sprint0", "mongo": ok, "ok": ok}
 
 
+async def _seed_demo() -> None:
+    """DEMO_MODE: populate the in-mem stores from CANNED_PLAN so the public URL shows a full
+    workspace with zero Atlas/GitLab — the login roster, an active project + its relay, and
+    materialized tasks (a spread of statuses, including Done so the Record-merge beat is live)."""
+    await team.refresh()  # demo: loads CANNED_ROSTER into the cache (login + assignee/lead resolution)
+    now = datetime.now(timezone.utc).isoformat()
+    plan = canned.DEMO_PLAN.model_copy(deep=True)  # already seated on the demo roster (canned._seat_plan)
+    pid, plan_id = canned.DEMO_PROJECT_ID, canned.DEMO_PLAN_ID
+    PLANS[plan_id] = plan
+    PROJECTS[pid] = plan
+    RELAYS[plan_id] = relay.build_relay(plan)
+    relay.auto_pass(RELAYS[plan_id], plan, _dev_trust(), 65, edges=None)  # posture clears low-risk gates → a mid-flight board, not all-grey
+    objs = tasklib.materialize_tasks(plan, pid, now)
+    for t, st in zip(objs, ["done", "done", "in_review", "in_progress", "in_progress"]):
+        t.status = st  # a lively board; the rest stay planned
+    scheduler.schedule_tasks(objs, team.all_members(), now)
+    await save_tasks([o.model_dump() for o in objs])
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     """Load the team roster + persisted projects so per-account views are instant + complete.
-    Also backfill Tasks for projects dispatched before the Task store existed (idempotent)."""
+    Also backfill Tasks for projects dispatched before the Task store existed (idempotent).
+    In DEMO_MODE there's no Atlas/GitLab to read → seed the in-mem stores from canned fixtures."""
+    if demo.is_demo():
+        try:
+            await _seed_demo()
+        except Exception:
+            pass
+        return
     try:
         await team.refresh()
         now = datetime.now(timezone.utc).isoformat()
@@ -185,6 +212,17 @@ async def _startup() -> None:
                     await save_tasks([o.model_dump() for o in objs])
             except Exception:
                 pass  # backfill is best-effort
+        # sweep orphan draft tasks (negative placeholder pid from un-dispatched wizard sessions, now stale)
+        try:
+            orphan = {t["project_id"] for t in await all_tasks() if int(t.get("project_id", 0)) < 0}
+            for opid in orphan:
+                await delete_tasks_for_project(opid)
+        except Exception:
+            pass
+        try:
+            await dedup_notifications()  # collapse any historical duplicate notifications (one-shot cleanup)
+        except Exception:
+            pass
     except Exception:
         pass  # Atlas may be momentarily unreachable; lazy-load on first authed request
 
@@ -225,6 +263,9 @@ async def my_issues(member: DeveloperProfile = Depends(auth.current_member)) -> 
 @app.get("/api/me/decisions")
 async def my_decisions(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """The caller's Decision Portfolio — every gate they've ratified, across all projects."""
+    if demo.is_demo():
+        rows = [dict(d) for d in canned.CANNED_DECISIONS]
+        return {"username": member.username, "count": len(rows), "decisions": rows}
     try:
         rows = await decisions_by_owner(member.username)
     except Exception:
@@ -286,6 +327,8 @@ async def _push_ws(user_id: str, payload: dict) -> None:
 async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned", "task_completed", "drift_flagged"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
     """Best-effort: append a Notification to a member's Inbox feed + push it live over WS (System 5)."""
     try:
+        if await notification_exists(user_id, type, ref or {}):
+            return  # dedup — don't pile up identical unread notifications (e.g. repeated API-failing flags)
         n = Notification(id=f"ntf_{uuid.uuid4().hex[:8]}", user_id=user_id, type=type, title=title,
                          body=body, ref=ref or {}, actionable=actionable,
                          created_at=datetime.now(timezone.utc).isoformat())
@@ -344,6 +387,8 @@ async def inbox(member: DeveloperProfile = Depends(auth.current_member)) -> dict
         notes = await notifications_for_user(member.username)
     except Exception:
         notes = []
+    if demo.is_demo():
+        notes = [dict(n) for n in canned.CANNED_INBOX]
     notes.sort(key=lambda n: n.get("created_at", ""), reverse=True)
     unread = len(needs_action) + sum(1 for n in notes if not n.get("read"))
     return {"needs_action": needs_action, "notifications": notes, "unread": unread}
@@ -482,6 +527,8 @@ async def list_projects(_: DeveloperProfile = Depends(auth.current_member)) -> d
     """All repos in the demo group (real source of truth). A repo with a ProjectRecord is
     sprint0-managed → kind=active (full plan/status/counts); the rest (agency seed repos) are
     kind=reference, enriched from PastProjects memory. Falls back to ProjectRecords if GitLab is down."""
+    if demo.is_demo():  # no GitLab/Atlas on the public tier → serve the canned workspace
+        return {"count": len(canned.CANNED_PROJECTS), "projects": [dict(p) for p in canned.CANNED_PROJECTS]}
     try:
         repos = await run_in_threadpool(gitlab.list_group_projects)
     except Exception:
@@ -735,9 +782,13 @@ async def ratify_gate(
                 relay._recompute_baton(state)  # bounced gates re-enter the baton
         now = datetime.now(timezone.utc).isoformat()
         deviated = req.deviated or (chosen is not None and chosen.source == "user")
-        rec = ("; ".join(i.title for i in sl))[:100]
-        if chosen is not None:
-            rec = (f"[{chosen.source}] {chosen.title} — " + rec)[:100]
+        if chosen is not None and chosen.title:
+            rec = chosen.title.strip()                       # the ratified Contract pick — clean, human-readable
+        elif req.ai_recommendation:
+            rec = req.ai_recommendation.strip()
+        else:
+            _n = len(sl)
+            rec = f"{(discipline or 'gate').capitalize()} slice · {_n} issue{'s' if _n != 1 else ''}"
         dec = Decision(
             id=f"dec_{uuid.uuid4().hex[:8]}", owner_id=member.username, domain=discipline,  # type: ignore[arg-type]
             context_tags=sorted({i.required_skill for i in sl if i.required_skill}),
@@ -924,7 +975,7 @@ async def approve_plan(plan_id: str, req: ApproveRequest, _: DeveloperProfile = 
     state = RELAYS.get(plan_id)  # create-late (decision 5): never scaffold before the relay clears
     if state is not None and not relay.all_ratified(state):
         pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
-        raise HTTPException(409, f"relay not cleared — gates still open: {pending}")
+        raise HTTPException(409, f"Sign the Contract for {len(pending)} open gate(s) first: {', '.join(pending)}.")
     # EXECUTE: scaffold real GitLab infra (sync httpx → threadpool).
     result = await run_in_threadpool(execute_plan, plan)
     RESULTS[plan_id] = result
@@ -967,7 +1018,7 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
         relay.auto_pass(state, plan, _dev_trust(), 100, edges=await _routing_edges())
     if not relay.all_ratified(state):
         pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
-        raise HTTPException(409, f"relay not cleared — gates still open: {pending}")
+        raise HTTPException(409, f"Sign the Contract for {len(pending)} open gate(s) first: {', '.join(pending)}.")
     if plan_id in DELTA_TARGET:  # mid-prod: append to the existing project
         pid = DELTA_TARGET[plan_id]
         result = await run_in_threadpool(extend_project, plan, pid)
@@ -1100,9 +1151,16 @@ async def reschedule_preview(plan_id: str, _: DeveloperProfile = Depends(auth.cu
     for d in drafts:
         if d.assignee:
             load[d.assignee] = load.get(d.assignee, 0.0) + d.estimate_days
-    overloaded = [{"user": u, "name": (by_user[u].name if u in by_user else u), "added_days": round(days, 1)}
-                  for u, days in sorted(load.items(), key=lambda x: -x[1])]
-    return {"pushed": len(moved), "moved": moved[:12], "overloaded": overloaded, "feature_tasks": len(drafts)}
+    capacity = []  # per-person load before -> after (~10% per added task-day over a 2-week sprint)
+    for u, days in sorted(load.items(), key=lambda x: -x[1]):
+        m = by_user.get(u)
+        before = int(m.load) if m else 0
+        capacity.append({"username": u, "name": (m.name if m else u), "before": before,
+                         "after": before + round(days * 10), "added_days": round(days, 1)})
+    at_risk = sum(1 for c in capacity if c["after"] > 100)
+    untouched = [{"id": t.id, "title": t.title, "status": t.status} for t in existing if t.status == "in_progress"][:8]
+    return {"pushed": len(moved), "moved": moved[:12], "capacity": capacity,
+            "untouched": untouched, "feature_tasks": len(drafts), "at_risk": at_risk}
 
 
 class QuickTaskRequest(BaseModel):
@@ -1676,6 +1734,10 @@ async def surface_decisions(domain: str = "", tags: str = "",
     """Cross-user surfacing + the quality gate: your own decisions (always, even unvalidated) plus
     OTHER members' decisions that passed the gate — outcome_validated AND reasoning AND visibility=team.
     Deprecated decisions never surface. Optional filter by `domain` + comma-separated `tags`."""
+    if demo.is_demo():
+        own = [dict(d) for d in canned.CANNED_DECISIONS if d.get("owner_id") == member.username]
+        others = [dict(d) for d in canned.CANNED_DECISIONS if d.get("owner_id") != member.username]
+        return {"own": own, "team": others}
     want_tags = {t.strip() for t in tags.split(",") if t.strip()}
 
     def matches(d: dict) -> bool:
@@ -1907,12 +1969,16 @@ class AttributionResolve(BaseModel):
 
 
 @app.post("/api/merge")
-async def merge(req: MergeRequest) -> dict:
+async def merge(req: MergeRequest, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Passport-increment-on-merge (+ auto-promotion). If it resolves a rejected issue, clear it
     from the re-QA queue. If no roster member matches the merge identity → queue for manager
     attribution (chain priority: gitlab_user_id → runner label → here, the human fallback)."""
     if req.project_id is not None and req.issue_iid is not None:
         REQA.get(req.project_id, set()).discard(req.issue_iid)
+    if demo.is_demo():  # grow the in-mem roster dev directly (record_merge's Atlas read returns nothing in demo)
+        grown = team.grow_demo_member(req.gitlab_username, req.task_type)
+        if grown:
+            return grown
     result = await record_merge(req.gitlab_username, req.task_type, req.score)
     if result:
         return result
@@ -1963,15 +2029,33 @@ async def reconcile_team(_: DeveloperProfile = Depends(auth.current_manager)) ->
     return out
 
 
+class DisciplineBody(BaseModel):
+    discipline: Discipline
+
+
+@app.post("/api/members/{username}/discipline")
+async def set_member_discipline(username: str, body: DisciplineBody, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """Seat a member in a discipline (e.g. a freshly onboarded junior) so they enter the assignment
+    pool in-lane. Persists to the in-mem roster (demo) or Mongo (live)."""
+    if demo.is_demo():
+        team.set_demo_discipline(username, body.discipline)
+    else:
+        await set_developer_discipline(username, body.discipline)
+        await team.refresh()
+    m = team.get(username)
+    return m.model_dump() if m else {}
+
+
 @app.get("/api/developers", response_model=list[DeveloperProfile])
 async def list_developers() -> list[DeveloperProfile]:
     await team.ensure_loaded()
     return team.developers() or CANNED_DEVELOPERS
 
 
-@app.post("/api/developers", response_model=DeveloperProfile)
-async def add_developer(text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None), _: DeveloperProfile = Depends(auth.current_manager)) -> DeveloperProfile:
-    """Cold-Start onboarding: drop a CV (text or PDF) → parse → upsert (Trust: Low)."""
+@app.post("/api/developers")
+async def add_developer(text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None), _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """Cold-Start onboarding: drop a CV (text or PDF) → parse → upsert (Trust: Low). Returns the new
+    member plus the AI's `suggested_discipline` (the manager confirms it in the wizard to seat them)."""
     cv = (text or "").strip()
     if file is not None:
         raw = await file.read()
@@ -1983,9 +2067,12 @@ async def add_developer(text: Optional[str] = Form(None), file: Optional[UploadF
             cv = raw.decode("utf-8", "ignore").strip()
     if not cv:
         raise HTTPException(400, "empty CV")
-    member = DeveloperProfile(**await onboard_developer(cv))
+    prof = await onboard_developer(cv)
+    member = DeveloperProfile(**prof)
+    if demo.is_demo():
+        team.add_demo_member(member)  # the Atlas insert is a no-op in demo → keep the new dev in-mem
     await team.refresh()  # the new member joins the roster immediately (login + assignment pool)
-    return member
+    return {**member.model_dump(), "suggested_discipline": prof.get("suggested_discipline")}
 
 
 @app.websocket("/api/plans/{plan_id}/events")

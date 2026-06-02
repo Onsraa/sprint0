@@ -24,7 +24,7 @@ from app import demo
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 _URI = os.environ["MONGODB_URI"]
-_DB = os.getenv("MONGODB_DB", "orchestrator")
+_DB = os.getenv("MONGODB_DB", "sprint0")
 _MODEL = os.getenv("VOYAGE_MODEL", "voyage-3.5-lite")
 _DIMS = int(os.getenv("EMBEDDING_DIMS", "1024"))
 PP_COLL = os.getenv("PAST_PROJECTS_COLLECTION", "PastProjects")
@@ -70,6 +70,8 @@ def embed_queries(texts: list[str]) -> list[list[float]]:
 
 def embed_document(text: str) -> list[float]:
     """Embed a stored document (matches the seed corpus' input_type)."""
+    if demo.is_demo():
+        return list(_DEMO_VEC)  # demo writes are no-ops (below) → the vector is discarded anyway
     return _embed([text], input_type="document")[0]
 
 
@@ -130,6 +132,12 @@ async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85
         dev.update(sets)
         dev["promoted"], dev["grew_discipline"] = promoted, disc
     return {k: v for k, v in dev.items() if k != "skill_embedding"}
+
+
+async def set_developer_discipline(username: str, discipline: str) -> None:
+    """Seat a member in a discipline (manager action) → they enter the assignment pool in-lane."""
+    async with MongoMCP() as m:
+        await m.update_many(DEV_COLL, {"username": username}, {"$set": {"discipline": discipline}})
 
 
 async def save_project_record(record: dict) -> None:
@@ -315,6 +323,36 @@ async def mark_all_read(user_id: str) -> None:
         await m.update_many(NOTIFICATIONS_COLL, {"user_id": user_id}, {"$set": {"read": True}})
 
 
+async def notification_exists(user_id: str, type: str, ref: dict) -> bool:
+    """Dedup: True if an UNREAD notification of this type for this user + ref already exists."""
+    q: dict = {"user_id": user_id, "type": type, "read": False}
+    for k in ("plan_id", "issue_id"):
+        if (ref or {}).get(k) is not None:
+            q[f"ref.{k}"] = ref[k]
+    async with MongoMCP() as m:
+        rows = await m.find(NOTIFICATIONS_COLL, query=q, projection={"_id": 0, "id": 1}, limit=1)
+    return bool(rows)
+
+
+async def dedup_notifications() -> int:
+    """One-shot cleanup: collapse duplicates — keep the latest per (user_id, type, ref), drop the rest."""
+    async with MongoMCP() as m:
+        rows = await m.find(NOTIFICATIONS_COLL,
+                            projection={"_id": 0, "id": 1, "user_id": 1, "type": 1, "ref": 1, "created_at": 1}, limit=2000)
+        seen: set = set()
+        drop: list[str] = []
+        for r in sorted(rows, key=lambda x: x.get("created_at", ""), reverse=True):
+            ref = r.get("ref") or {}
+            key = (r.get("user_id"), r.get("type"), ref.get("plan_id"), ref.get("issue_id"))
+            if key in seen:
+                drop.append(r["id"])
+            else:
+                seen.add(key)
+        if drop:
+            await m.delete_many(NOTIFICATIONS_COLL, {"id": {"$in": drop}})
+    return len(drop)
+
+
 async def save_access_grant(doc: dict) -> None:
     async with MongoMCP() as m:
         await m.insert_many(ACCESS_GRANTS_COLL, [doc])
@@ -342,32 +380,47 @@ async def access_grants_for_requester(requester_id: str) -> list[dict]:
 
 
 TASKS_COLL = "Tasks"  # PascalCase, the Work hub's source of truth (Phase A)
+_DEMO_TASKS: dict[str, dict] = {}  # DEMO_MODE in-mem task store — Atlas writes no-op, so the Work hub lives here
 
 
 async def save_tasks(docs: list[dict]) -> None:
     if not docs:
+        return
+    if demo.is_demo():
+        for d in docs:
+            _DEMO_TASKS[d["id"]] = dict(d)
         return
     async with MongoMCP() as m:
         await m.insert_many(TASKS_COLL, docs)
 
 
 async def tasks_for_project(project_id: int) -> list[dict]:
+    if demo.is_demo():
+        return [dict(d) for d in _DEMO_TASKS.values() if d.get("project_id") == project_id]
     async with MongoMCP() as m:
         return await m.find(TASKS_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=500)
 
 
 async def all_tasks() -> list[dict]:
+    if demo.is_demo():
+        return [dict(d) for d in _DEMO_TASKS.values()]
     async with MongoMCP() as m:
         return await m.find(TASKS_COLL, projection={"_id": 0}, limit=1000)
 
 
 async def get_task(task_id: str) -> dict:
+    if demo.is_demo():
+        return dict(_DEMO_TASKS.get(task_id) or {})
     async with MongoMCP() as m:
         rows = await m.find(TASKS_COLL, query={"id": task_id}, projection={"_id": 0}, limit=1)
     return rows[0] if rows else {}
 
 
 async def update_task(task_id: str, doc: dict) -> None:
+    if demo.is_demo():
+        if task_id in _DEMO_TASKS:
+            _DEMO_TASKS[task_id].update(doc)
+        return
     async with MongoMCP() as m:
         await m.update_many(TASKS_COLL, {"id": task_id}, {"$set": doc})
 
@@ -375,6 +428,10 @@ async def update_task(task_id: str, doc: dict) -> None:
 async def delete_tasks_for_project(project_id: int) -> None:
     """Drop a project's Tasks — used on dispatch to re-key the plan-time placeholder project_id
     to the real GitLab project_id without leaving ghost docs (Phase A: deviation from the plan)."""
+    if demo.is_demo():
+        for tid in [k for k, v in _DEMO_TASKS.items() if v.get("project_id") == project_id]:
+            _DEMO_TASKS.pop(tid, None)
+        return
     async with MongoMCP() as m:
         await m.delete_many(TASKS_COLL, {"project_id": project_id})
 
@@ -565,6 +622,8 @@ class MongoMCP:
         return _parse_docs(text)
 
     async def update_many(self, collection: str, query: dict, update: dict) -> str:
+        if demo.is_demo():
+            return '{"acknowledged": true, "demo_noop": true}'  # demo: read-only against the shared DB
         res = await self.session.call_tool(
             "update-many", {"database": _DB, "collection": collection, "filter": query, "update": update}
         )
@@ -574,6 +633,8 @@ class MongoMCP:
         return text
 
     async def insert_many(self, collection: str, documents: list[dict]) -> str:
+        if demo.is_demo():
+            return '{"acknowledged": true, "demo_noop": true}'  # demo: read-only against the shared DB
         res = await self.session.call_tool("insert-many", {"database": _DB, "collection": collection, "documents": documents})
         text = "".join(getattr(b, "text", "") or "" for b in res.content)
         if getattr(res, "isError", False):
@@ -581,6 +642,8 @@ class MongoMCP:
         return text
 
     async def delete_many(self, collection: str, query: dict) -> str:
+        if demo.is_demo():
+            return '{"acknowledged": true, "demo_noop": true}'  # demo: read-only against the shared DB
         res = await self.session.call_tool("delete-many", {"database": _DB, "collection": collection, "filter": query})
         text = "".join(getattr(b, "text", "") or "" for b in res.content)
         if getattr(res, "isError", False):

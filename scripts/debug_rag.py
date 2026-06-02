@@ -12,7 +12,7 @@ async def main() -> None:
         res = await m.session.call_tool(
             "aggregate",
             {
-                "database": "orchestrator",
+                "database": "sprint0",
                 "collection": PP_COLL,
                 "pipeline": [
                     {"$vectorSearch": {"index": PP_INDEX, "path": "brief_embedding", "queryVector": qv, "numCandidates": 50, "limit": 3}},

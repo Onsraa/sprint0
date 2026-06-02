@@ -318,6 +318,7 @@ async def onboard_developer(cv_text: str) -> dict:
         await m.insert_many(DEV_COLL, [doc])
     out = {k: v for k, v in doc.items() if k != "skill_embedding"}
     out["gitlab_linked"] = gl_user is not None
+    out["suggested_discipline"] = profile.suggested_discipline
     return out
 
 

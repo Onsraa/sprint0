@@ -39,3 +39,16 @@ def test_gated_agent_returns_canned_copy_in_demo(monkeypatch):
     assert plan.project_name == canned.CANNED_PLAN.project_name
     assert plan is not canned.CANNED_PLAN      # deep copy → downstream mutation can't corrupt the fixture
     demo.set_live(False)
+
+
+def test_demo_makes_mongo_writes_noop(monkeypatch):
+    # Public/demo must be READ-ONLY against the shared Atlas DB. Bypass __init__ so there is no MCP
+    # session: the guard must return before any self.session access (else AttributeError).
+    from app.rag import MongoMCP
+    monkeypatch.setattr(demo, "DEMO_MODE", True)
+    demo.set_live(False)
+    m = object.__new__(MongoMCP)
+    assert "demo_noop" in asyncio.run(m.insert_many("Decisions", [{"x": 1}]))
+    assert "demo_noop" in asyncio.run(m.update_many("Decisions", {}, {"$set": {"x": 1}}))
+    assert "demo_noop" in asyncio.run(m.delete_many("Decisions", {}))
+    demo.set_live(False)

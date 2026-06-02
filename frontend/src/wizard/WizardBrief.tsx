@@ -13,12 +13,15 @@
    (createBrief→clarify→architectures→plan/staffing→dispatchPreview→dispatch). The
    existing SequenceLoader covers each async wait. */
 import { Fragment, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { qk } from "../lib/query";
 import { toast } from "sonner";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { Icon, ZeroMark, FullLogo } from "../lib/icon";
 import { Button, Avatar, Badge, DiscDot, DISC, CapTag } from "../components/ui";
 import { Stepper, SequenceLoader, ConfirmDraft } from "./WizardMotion";
+import { RatifyPanel, GATE_META } from "../views/RatifyPanel";
 import { api } from "../lib/api";
 import type {
   ArchitectureCard,
@@ -55,6 +58,7 @@ const STEPS = [
   { id: "clarify", label: "Clarify", sub: "Resolve ambiguities" },
   { id: "arch", label: "Architecture", sub: "Pick a stack" },
   { id: "plan", label: "Plan", sub: "Draft relay" },
+  { id: "contract", label: "Contract", sub: "Sign the gates" },
   { id: "review", label: "Review", sub: "Dispatch preview" },
 ];
 
@@ -66,8 +70,11 @@ const DEFAULT_BRIEF = `Build a tenant portal for a freight client. They need: a 
 type LoaderCfg = { kicker: string; headline: React.ReactNode; lines: string[]; stepMs?: number };
 
 export function WizardBrief() {
-  const { setView, members, addDraft } = useApp();
+  const { setView, members, addDraft, gates, actGate, dial } = useApp();
   const setWizardOpen = useUI((s) => s.setWizardOpen);
+  const setUiPlanId = useUI((s) => s.setPlanId);
+  const removeDraftByName = useUI((s) => s.removeDraftByName);
+  const qc = useQueryClient();
 
   const [step, setStep] = useState(0);
   const [brief, setBrief] = useState(DEFAULT_BRIEF);
@@ -127,10 +134,12 @@ export function WizardBrief() {
   };
 
   const ambiguityCount = spec?.ambiguities.length ?? 0;
+  const relayCleared = gates.length > 0 && gates.every((g: any) => g.status === "ratified" || g.status === "auto_passed");
   const canNext =
     step === 0 ? brief.trim().length > 20 :
     step === 1 ? ambiguityCount === 0 || Object.keys(answers).length === ambiguityCount :
     step === 2 ? !!chosenStack :
+    step === 4 ? relayCleared :
     true;
 
   // STEP 0 → 1: createBrief, then clarify (the AI "digest" loader)
@@ -202,7 +211,25 @@ export function WizardBrief() {
     );
   };
 
-  // STEP 3 → 4: dispatch dry-run preview
+  // STEP 3 → 4: apply the Autonomy posture (auto-pass low-risk gates), then the Contract step
+  const goContract = () => {
+    if (!planId) return;
+    setUiPlanId(planId);  // point useApp().gates + the Contract (RatifyPanel) at this plan
+    runLoader(
+      {
+        kicker: "sprint0 · contract",
+        headline: "Applying your posture",
+        lines: ["Scoring trust × risk per gate", "Auto-passing the low-risk gates", "Surfacing the gates that need your call"],
+      },
+      async () => {
+        await api.relayAuto(planId, dial);
+        commitRef.current = () => setStep(4);
+      },
+      "Could not apply the posture",
+    );
+  };
+
+  // STEP 4 → 5: dispatch dry-run preview
   const goReview = () => {
     if (!planId) return;
     runLoader(
@@ -214,7 +241,7 @@ export function WizardBrief() {
       },
       async () => {
         setPreview(await api.dispatchPreview(planId));
-        commitRef.current = () => setStep(4);
+        commitRef.current = () => setStep(5);
       },
       "Could not build the dispatch preview",
     );
@@ -225,7 +252,8 @@ export function WizardBrief() {
     if (step === 0) return goClarify();
     if (step === 1) return goArch();
     if (step === 2) return goPlan();
-    if (step === 3) return goReview();
+    if (step === 3) return goContract();
+    if (step === 4) return goReview();
   };
 
   const closeToProjects = () => { setView("projects"); setWizardOpen(false); };
@@ -253,6 +281,10 @@ export function WizardBrief() {
     api
       .dispatch(planId, mode === "supervised" ? "copilot" : "autonomous")
       .then(() => {
+        qc.invalidateQueries({ queryKey: ["work"] });        // the dispatched project's tasks now show
+        qc.invalidateQueries({ queryKey: qk.projects() });
+        qc.invalidateQueries({ queryKey: qk.allRelays() });
+        removeDraftByName(previewName);                       // the real project replaces the stale draft
         commitRef.current = () => { setDispatching(false); setDispatched(true);
           toast("Dispatched to GitLab", { description: previewName + " · " + mode }); };
         // if the dispatch loader already finished animating, advance now; else its onDone will
@@ -294,7 +326,8 @@ export function WizardBrief() {
                   {step === 1 && spec && <StepClarify spec={spec} answers={answers} setAnswers={setAnswers} />}
                   {step === 2 && <StepArch cards={cards} chosenStack={chosenStack} setChosenStack={setChosenStack} />}
                   {step === 3 && plan && <StepPlan plan={plan} relay={relay} staffing={staffing} members={members} />}
-                  {step === 4 && preview && <StepReview mode={mode} setMode={setMode}
+                  {step === 4 && <StepContract gates={gates} actGate={actGate} />}
+                  {step === 5 && preview && <StepReview mode={mode} setMode={setMode}
                     preview={preview} members={members}
                     dispatching={dispatching} dispatched={dispatched}
                     onDispatch={onDispatch}
@@ -313,7 +346,7 @@ export function WizardBrief() {
               <div style={{ flex: 1 }} />
               {step < STEPS.length - 1 &&
               <Button variant="primary" size="md" iconRight="arrowRight" disabled={!canNext} style={{ opacity: canNext ? 1 : 0.45 }} onClick={onPrimary}>
-                  {step === 0 ? "Clarify spec" : step === 1 ? "Generate architectures" : step === 2 ? "Generate plan" : "Review & dispatch"}
+                  {step === 0 ? "Clarify spec" : step === 1 ? "Generate architectures" : step === 2 ? "Generate plan" : step === 3 ? "Sign the Contract" : "Review & dispatch"}
                 </Button>}
             </div>
           )}
@@ -530,6 +563,55 @@ function StepPlan({ plan, relay, staffing, members }: {
       </div>}
     </div>);
 
+}
+
+/* The Contract step — sign each open gate's reuse-or-innovate Contract (the posture auto-passed the rest). */
+function StepContract({ gates, actGate }: { gates: any[]; actGate: (d: string, s: string) => void }) {
+  const isDone = (g: any) => g.status === "ratified" || g.status === "auto_passed";
+  const isOpen = (g: any) => !isDone(g) && g.status !== "locked";
+  const open = gates.filter(isOpen);
+  const [focus, setFocus] = useState<string | null>(null);
+  const focused = gates.find((g) => g.discipline === focus && isOpen(g)) ?? open[0] ?? null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 5px" }}>Sign the Contract</h1>
+        <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.55 }}>
+          Your Autonomy posture auto-passed the low-risk gates. Sign the rest — reuse from agency memory, take a fresh option, or write your own — to clear the relay before dispatch.
+        </p>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {gates.map((g: any) => {
+          const d = isDone(g); const o = isOpen(g); const meta = GATE_META[g.status];
+          return (
+            <button key={g.discipline} disabled={!o} onClick={() => o && setFocus(g.discipline)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 30, padding: "0 11px", borderRadius: "var(--r-md)",
+                border: focused?.discipline === g.discipline ? "0.5px solid var(--text-primary)" : "0.5px solid var(--border)",
+                background: "var(--bg-elevated)", cursor: o ? "pointer" : "default", opacity: g.status === "locked" ? 0.5 : 1 }}>
+              {d ? <Icon name="check" size={12} style={{ color: "var(--green)" }} /> : <DiscDot d={g.discipline} size={8} />}
+              <span style={{ fontSize: 12.5, fontWeight: 500 }}>{DISC[g.discipline]?.label ?? g.discipline}</span>
+              <span style={{ fontSize: 10.5, color: meta?.fg }}>{meta?.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      {open.length > 0 ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>{open.length} gate{open.length > 1 ? "s" : ""} need your call.</span>
+          <Button variant="secondary" size="sm" onClick={() => open.forEach((g) => actGate(g.discipline, "ratified"))}>Ratify all remaining (accept drafts)</Button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 12, background: "var(--bg-secondary)", borderRadius: "var(--r-md)", fontSize: 13, color: "var(--text-secondary)" }}>
+          <Icon name="check" size={15} style={{ color: "var(--green)" }} />Relay cleared — continue to the dispatch preview.
+        </div>
+      )}
+      {focused && (
+        <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", display: "flex", minHeight: 380, maxHeight: 560 }}>
+          <RatifyPanel g={focused} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function StepReview({ mode, setMode, preview, members, dispatching, dispatched, onDispatch, onDone, onGoProjects }: {

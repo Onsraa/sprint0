@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / "orchestrator"))  # so `from app import gitlab` re
 
 G, Y, R, RST = "\033[32m", "\033[33m", "\033[31m", "\033[0m"
 
-DB = os.getenv("MONGODB_DB", "orchestrator")
+DB = os.getenv("MONGODB_DB", "sprint0")
 MONGODB_URI = os.getenv("MONGODB_URI", "")
 GROUP = os.getenv("GITLAB_DEMO_GROUP", "sprint0-demo")
 SEARCH_COLLS = [

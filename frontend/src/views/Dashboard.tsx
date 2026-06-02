@@ -157,6 +157,7 @@ function AvatarStack({ n = 0, members }: { n?: number; members: any[] }) {
 }
 
 function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRelays: () => void; onClose: () => void; onResume: () => void }) {
+  const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
   const isRef = p.kind === "reference";
   const isDraft = p.kind === "draft";
   return (
@@ -167,7 +168,7 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
         borderBottom: "0.5px solid var(--border-subtle)" }}>
         <span className="mono" style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>{isDraft ? "draft" : `#${p.id}`}</span>
         <div style={{ flex: 1 }} />
-        {!isDraft && <IconButton name="gitlab" title="Open in GitLab" />}
+        {!isDraft && p.web_url && <IconButton name="gitlab" title="Open in GitLab" onClick={() => window.open(p.web_url, "_blank", "noopener")} />}
         <IconButton name="close" onClick={onClose} />
       </div>
       <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
@@ -231,7 +232,7 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
         </div>
       ) : !isRef && (
         <div style={{ borderTop: "0.5px solid var(--border-subtle)", padding: 10, display: "flex", gap: 8 }}>
-          <Button variant="secondary" size="md" icon="plus" style={{ flex: 1 }}>Add feature</Button>
+          <Button variant="secondary" size="md" icon="plus" style={{ flex: 1 }} onClick={() => setFeatureProjectId(p.project_id)}>Add feature</Button>
           <Button variant="secondary" size="md" onClick={onClose}>Close</Button>
         </div>
       )}
