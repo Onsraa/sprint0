@@ -305,6 +305,12 @@ export const RejectResult = z.object({
 export type RejectResult = z.infer<typeof RejectResult>;
 
 /* ── members / staffing ──────────────────────────────────────────────── */
+// When a member can start NEW work — the honest capacity signal (server-computed from the live schedule).
+export const Availability = z.object({
+  available_on: z.string(), free_in_days: z.number(),
+  queued_days: z.number(), active_count: z.number(),
+});
+export type Availability = z.infer<typeof Availability>;
 export const Member = z.object({
   username: z.string(), name: z.string(), email: z.string(), role: MemberRole,
   discipline: Discipline.nullable(), seniority: Seniority, load: z.number(),
@@ -312,6 +318,7 @@ export const Member = z.object({
   trust: z.record(z.string(), TrustLevel), trust_level: TrustLevel,
   joined: z.string().nullish(),   // ISO month joined the agency (YYYY-MM) — shown on the Passport
   history: z.array(unknownRecord), promoted: z.boolean().optional(),
+  availability: Availability.nullish(),   // server-computed; when they can start new work
 });
 export type Member = z.infer<typeof Member>;
 /** Back-compat alias — onboarding/merge endpoints call it a profile. */

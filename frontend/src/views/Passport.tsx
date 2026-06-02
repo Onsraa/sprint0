@@ -9,7 +9,7 @@
    verbatim local seed of the mock PASSPORTS — see TODO(reconcile) below. */
 import { useApp } from "../app/useApp";
 import { Icon, ZeroMark } from "../lib/icon";
-import { Avatar, Badge, DiscDot, DISC, LoadMeter } from "../components/ui";
+import { Availability, Avatar, Badge, DiscDot, DISC } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 
 /* ───────── §26 Passport — per-discipline trust radar + merge history ─────────
@@ -107,7 +107,7 @@ export function Passport() {
             </div>
             <div style={{ display: "flex", gap: 22 }}>
               <Stat label="Seniority" value={p.seniority} />
-              <Stat label="Load" value={<LoadMeter value={p.load} width={48} />} />
+              <Stat label="Availability" value={<Availability a={me.availability} />} />
               <Stat label="Joined" value={<span className="mono" style={{ fontSize: 13 }}>{p.joined}</span>} />
             </div>
           </div>

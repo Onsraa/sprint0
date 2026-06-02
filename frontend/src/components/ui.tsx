@@ -3,6 +3,7 @@
    in lib/icon.tsx. Every panel composes these so spacing/typography stay pixel-consistent. */
 import { useState, type CSSProperties, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Icon, type IconName } from "../lib/icon";
+import type { Availability as AvailabilityT } from "../lib/schemas";
 
 type Variant = "primary" | "secondary" | "ghost" | "accent";
 type Size = "sm" | "md" | "lg";
@@ -156,6 +157,24 @@ export function LoadMeter({ value = 0, width = 44 }: { value?: number; width?: n
         <span style={{ display: "block", height: "100%", width: `${Math.min(value, 100)}%`, background: over ? "var(--amber)" : "var(--text-tertiary)", borderRadius: 2 }} />
       </span>
       <span className="mono" style={{ fontSize: 11, color: over ? "var(--amber)" : "var(--text-quaternary)" }}>{value}%</span>
+    </span>
+  );
+}
+
+/* When a member can start NEW work — the honest capacity signal (replaces the load %). green=free now,
+   amber=soon (≤3d), grey=busy. `compact` drops the backlog tail for tight rows (e.g. the relay candidate list). */
+export function Availability({ a, compact = false }: { a?: AvailabilityT | null; compact?: boolean }) {
+  if (!a) return <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>—</span>;
+  const d = a.free_in_days;
+  const tone = d === 0 ? "var(--green)" : d <= 3 ? "var(--amber)" : "var(--text-tertiary)";
+  const label = d === 0 ? "Free now" : `Free in ${d}d`;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }} title={`Available ${a.available_on} · ${a.active_count} active · ~${Math.round(a.queued_days)}d queued`}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: tone, flexShrink: 0 }} />
+      <span style={{ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{label}</span>
+      {!compact && a.active_count > 0 && (
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", whiteSpace: "nowrap" }}>· {a.active_count} {a.active_count === 1 ? "task" : "tasks"} · ~{Math.round(a.queued_days)}d</span>
+      )}
     </span>
   );
 }

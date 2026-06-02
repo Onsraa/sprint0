@@ -5,7 +5,9 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timedelta
 
-from app.contracts import ChangeEvent, DeveloperProfile, Task
+from app.contracts import Availability, ChangeEvent, DeveloperProfile, Task
+
+_ACTIVE_STATUSES = {"planned", "in_progress", "in_review", "blocked"}   # everything except "done"
 
 CALENDAR_BLOCK_KINDS = {"sick", "holiday", "time_off"}   # full-day absences that block scheduling
 
@@ -74,6 +76,38 @@ def _avail(assignee: str, anchor_d: date, load: dict[str, int], blocked: frozens
         return anchor_d
     busy = round((load.get(assignee, 0) / 100) * BUSY_HORIZON_WORKDAYS)
     return add_workdays(anchor_d, busy, blocked)
+
+
+def _workdays_between(a: date, b: date) -> int:
+    """Count of working days from `a` (inclusive) up to `b` (exclusive). a==b → 0. Assumes a<=b."""
+    n, d = 0, a
+    while d < b:
+        d = add_workdays(d, 1)
+        n += 1
+    return n
+
+
+def availability(members: list[DeveloperProfile], tasks: list[Task], anchor: str) -> dict[str, Availability]:
+    """When can each member start NEW work — the honest capacity signal (not a load %). Per member:
+    `available_on` = max(their external-commitment baseline via `_avail`, the day after their last
+    scheduled active task). No active scheduled work and no baseline → free now. Pure + deterministic."""
+    anchor_d = _anchor_date(anchor)
+    load = {m.username: m.load for m in members}
+    out: dict[str, Availability] = {}
+    for m in members:
+        u = m.username
+        active = [t for t in tasks if t.assignee == u and t.status in _ACTIVE_STATUSES]
+        baseline_free = _avail(u, anchor_d, load, frozenset())
+        sched_ends = [date.fromisoformat(t.scheduled_end) for t in active if t.scheduled_end]
+        task_free = add_workdays(max(sched_ends), 1) if sched_ends else anchor_d
+        on = max(baseline_free, task_free)
+        out[u] = Availability(
+            available_on=on.isoformat(),
+            free_in_days=_workdays_between(anchor_d, on),
+            queued_days=round(sum(t.estimate_days for t in active), 1),
+            active_count=len(active),
+        )
+    return out
 
 
 def _pack(tasks: list[Task], cap: dict[str, float], load: dict[str, int], anchor_d: date,

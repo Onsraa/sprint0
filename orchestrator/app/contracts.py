@@ -108,6 +108,17 @@ class PlanJSON(BaseModel):
     epics: list[Epic]
 
 
+# ── Availability (when can this person start new work — derived from the live schedule) ──
+class Availability(BaseModel):
+    """Honest capacity signal: NOT a load %, but the earliest day a member can pick up new work,
+    computed server-side from their scheduled tasks (+ external-commitment baseline). `free_in_days==0`
+    means free now."""
+    available_on: str                # ISO date — earliest start for new work
+    free_in_days: int = 0            # workdays from today → available_on (0 = free now)
+    queued_days: float = 0.0         # Σ estimate_days of active (not-done) assigned tasks
+    active_count: int = 0            # number of active assigned tasks
+
+
 # ── Developer profiles (spec §4, API view — embedding stays server-side) ──
 class DeveloperProfile(BaseModel):
     name: str
@@ -125,6 +136,7 @@ class DeveloperProfile(BaseModel):
     gitlab_user_id: Optional[int] = None        # real GitLab user → native assignee; None = label-only
     trust: dict[str, TrustLevel] = Field(default_factory=dict)  # per-discipline tier (overrides trust_level)
     joined: Optional[str] = None                # ISO month joined the agency (YYYY-MM); shown on the Passport
+    availability: Optional[Availability] = None  # server-computed (roster API only); when they can start new work
 
     @model_validator(mode="after")
     def _default_username(self) -> "DeveloperProfile":

@@ -243,9 +243,20 @@ async def auth_login(req: LoginRequest) -> dict:
     return await auth.login(req.username)
 
 
+async def _attach_availability(members: list[DeveloperProfile]) -> list[DeveloperProfile]:
+    """Overlay each member's availability (when they can start new work) from the live task store.
+    Best-effort — a transient task-store failure must never break the roster/identity endpoints."""
+    try:
+        objs = [Task(**d) for d in await all_tasks()]
+        avail = scheduler.availability(members, objs, datetime.now(timezone.utc).isoformat())
+        return [m.model_copy(update={"availability": avail.get(m.username)}) for m in members]
+    except Exception:
+        return members
+
+
 @app.get("/api/me", response_model=DeveloperProfile)
 async def me(member: DeveloperProfile = Depends(auth.current_member)) -> DeveloperProfile:
-    return member
+    return (await _attach_availability([member]))[0]
 
 
 @app.get("/api/me/issues")
@@ -2049,7 +2060,7 @@ async def set_member_discipline(username: str, body: DisciplineBody, _: Develope
 @app.get("/api/developers", response_model=list[DeveloperProfile])
 async def list_developers() -> list[DeveloperProfile]:
     await team.ensure_loaded()
-    return team.developers() or CANNED_DEVELOPERS
+    return await _attach_availability(team.developers() or CANNED_DEVELOPERS)
 
 
 @app.post("/api/developers")
