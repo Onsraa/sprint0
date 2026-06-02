@@ -54,3 +54,21 @@ def test_no_developer_returns_none():
     mgr = _cand("mgr", None, role="manager")
     chosen, _, below = scoring.best_assignment(issue, [mgr])
     assert chosen is None and below
+
+
+def test_availability_breaks_tie_toward_sooner_free():
+    # identical skill/trust/lane → whoever can start SOONEST wins (availability factor, Phase 2)
+    issue = _iss(typ="backend")
+    soon = _cand("soon", "backend"); soon["free_in_days"] = 0
+    later = _cand("later", "backend"); later["free_in_days"] = 12
+    chosen, _, _ = scoring.best_assignment(issue, [later, soon])
+    assert chosen["gitlab_username"] == "soon"
+
+
+def test_availability_falls_back_to_load_when_absent():
+    # no free_in_days on the dict → the factor still falls back to the static load baseline
+    issue = _iss(typ="backend")
+    busy = _cand("busy", "backend", load=90)   # no free_in_days key
+    free = _cand("free", "backend", load=0)
+    chosen, _, _ = scoring.best_assignment(issue, [busy, free])
+    assert chosen["gitlab_username"] == "free"

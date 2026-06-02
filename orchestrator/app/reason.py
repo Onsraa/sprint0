@@ -7,6 +7,7 @@ REASON only (RAG via MongoDB MCP + Gemini). Execution is the separate, human-gat
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from app.agent import (
@@ -16,12 +17,15 @@ from app.agent import (
 from app.assign import assign_developers
 from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
 from app.rag import (
-    DEV_COLL, DEV_INDEX, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
-    all_profiles, embed_document, embed_queries, embed_query, record_postmortem, save_profile,
+    DEV_COLL, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
+    all_profiles, cosine_score, embed_document, embed_queries, embed_query, record_postmortem, save_profile,
 )
 
 _PP_PROJECTION = {"name": 1, "tech_stack": 1, "total_estimate_days": 1, "actual_days": 1, "outcome_notes": 1}
 _DEV_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "skills_text": 1, "trust_level": 1}
+# Match needs the scoring fields + the stored vector (we rank locally over the tiny roster, not per-skill in Atlas).
+_DEV_MATCH_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "username": 1, "trust_level": 1, "trust": 1,
+                         "discipline": 1, "load": 1, "role": 1, "seniority": 1, "history": 1, "skill_embedding": 1}
 
 
 def _format_past(projects: list[dict]) -> str:
@@ -31,7 +35,7 @@ def _format_past(projects: list[dict]) -> str:
         stack = " / ".join(str(v) for v in ts.values()) if isinstance(ts, dict) else ""
         lines.append(
             f"- {p.get('name')} | {stack} | est {p.get('total_estimate_days', '?')}d, "
-            f"actual {p.get('actual_days', '?')}d | {p.get('outcome_notes', '')}"
+            f"actual {p.get('actual_days', '?')}d | {(p.get('outcome_notes', '') or '')[:160]}"
         )
     return "\n".join(lines) or "(no close matches)"
 
@@ -54,6 +58,29 @@ def _format_constraints(c: Constraints | None) -> str:
     if not c:
         return "(none specified — use sensible defaults)"
     return f"time-to-market: {c.time_to_market} · scalability: {c.scalability} · reliability: {c.reliability}"
+
+
+def _normalize_plan_ids(plan: PlanJSON) -> None:
+    """Server-own every epic/issue id: the LLM proposes content, never keys. Reassign deterministic
+    ids (`epic-N`, `epic-N-M`) and remap `depends_on` through the same map — silently dropping any
+    cross-ref the planner invented that points nowhere. Mirrors solutions.finalize_solution_set."""
+    id_map: dict[str, str] = {}
+    for ei, epic in enumerate(plan.epics, 1):
+        new_eid = f"epic-{ei}"
+        for ii, iss in enumerate(epic.issues, 1):
+            id_map[iss.id] = f"{new_eid}-{ii}"   # capture old→new BEFORE overwriting
+            iss.id = id_map[iss.id]
+        epic.id = new_eid
+    for epic in plan.epics:                       # 2nd pass: remap refs once every id is final
+        for iss in epic.issues:
+            iss.depends_on = [id_map[d] for d in iss.depends_on if d in id_map]
+
+
+def _safe_username(raw: str) -> str:
+    """A server-owned slug from the LLM's proposed handle — the handle is content, not a trusted key.
+    Lowercase, kebab, strip anything that isn't [a-z0-9-] so it's safe as an id / GitLab lookup."""
+    slug = re.sub(r"[^a-z0-9-]", "", raw.lower().replace(" ", "-")).strip("-")
+    return slug or "dev"
 
 
 async def propose_architectures(brief_text: str, constraints: Constraints | None = None) -> ArchitectureOptions:
@@ -166,6 +193,7 @@ async def run_brief(
     async with MongoMCP() as m:
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
         plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab))
+        _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
         plan.grounded_on = plan.grounded_on or [p["name"] for p in past]
         await _match_and_assign(plan, m)
     await _discover_profiles(plan)  # own MCP context — AFTER the main one (no re-entrancy)
@@ -196,16 +224,42 @@ async def _discover_profiles(plan: PlanJSON) -> None:
 
 
 async def _match_and_assign(plan: PlanJSON, m: MongoMCP) -> None:
-    """Vector-match each issue's required_skill to developers; fill assignees (trust-gated)."""
+    """Vector-match each issue's required_skill to developers; fill assignees (trust-gated).
+    One roster fetch + local cosine rank (the roster is ≤ a handful) instead of a $vectorSearch
+    round-trip per skill — same cosine score, N+1 → 1 MCP call."""
     skills = sorted({iss.required_skill for e in plan.epics for iss in e.issues})
+    if not skills:
+        return
     skill_vecs = embed_queries(skills)  # ONE Voyage request
+    roster = await m.find(DEV_COLL, projection=_DEV_MATCH_PROJECTION, limit=50)
     skill_dev: dict[str, list[dict]] = {}
     for skill, vec in zip(skills, skill_vecs):
-        skill_dev[skill] = await m.vector_search(
-            DEV_COLL, DEV_INDEX, "skill_embedding", vec, k=5,
-            projection={"name": 1, "gitlab_username": 1, "trust_level": 1, "trust": 1, "discipline": 1,
-                        "load": 1, "role": 1, "seniority": 1, "history": 1},
-        )
+        ranked = []
+        for d in roster:
+            emb = d.get("skill_embedding")
+            if not emb:
+                continue
+            row = {k: v for k, v in d.items() if k != "skill_embedding"}  # drop the 1024-float vector downstream
+            row["score"] = cosine_score(vec, emb)
+            ranked.append(row)
+        ranked.sort(key=lambda r: r["score"], reverse=True)
+        skill_dev[skill] = ranked[:5]
+    # Availability overlay — route new work to whoever can start SOONEST (real schedule, not static load).
+    # Best-effort: if the task store / roster is unreachable, scoring falls back to the static `load` factor.
+    try:
+        from app import scheduler, team
+        from app.contracts import Task
+        from app.rag import all_tasks
+        avail = scheduler.availability(
+            team.all_members(), [Task(**d) for d in await all_tasks()],
+            datetime.now(timezone.utc).isoformat())
+        for rows in skill_dev.values():
+            for c in rows:
+                a = avail.get(c.get("gitlab_username") or c.get("username", ""))
+                if a:
+                    c["free_in_days"] = a.free_in_days
+    except Exception:
+        pass
     assign_developers(plan, skill_dev)
 
 
@@ -221,6 +275,7 @@ async def delta_brief(feature_text: str, record: dict, constraints: Constraints 
             PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(feature_text), feature_text, k=3, projection=_PP_PROJECTION
         )
         plan = await generate_plan(_build_delta_prompt(feature_text, record, existing_titles, manifest, past, stack, constraints))
+        _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
         plan.grounded_on = plan.grounded_on or [record.get("name", "this project"), *(p["name"] for p in past)]
         await _match_and_assign(plan, m)
     return plan
@@ -291,16 +346,17 @@ async def onboard_developer(cv_text: str) -> dict:
     """Cold-Start onboarding (Idea: add a runner): CV → Gemini parse → upsert a
     DeveloperProfile (Trust: Low) into Atlas via the MCP."""
     profile = await generate_cv_profile(cv_text)
+    username = _safe_username(profile.gitlab_username or profile.name)  # server owns the key, not the LLM
     gl_user = None
     try:
         from app import gitlab as gl
-        gl_user = gl.search_user(profile.gitlab_username)  # link the real GitLab account (native assignee)
+        gl_user = gl.search_user(username)  # link the real GitLab account (native assignee)
     except Exception:
         pass
     doc = {
         "name": profile.name,
-        "gitlab_username": profile.gitlab_username,
-        "username": profile.gitlab_username,
+        "gitlab_username": username,
+        "username": username,
         "email": "",
         "skills_text": profile.skills_text,
         "skill_embedding": embed_document(profile.skills_text),
@@ -309,6 +365,8 @@ async def onboard_developer(cv_text: str) -> dict:
         "seniority": "junior",
         "load": 0,
         "gitlab_user_id": gl_user["id"] if gl_user else None,
+        # fail closed: an unlinked handle is NOT a real assignable account — say so, don't pretend it linked
+        "link_status": "linked" if gl_user else "unlinked",
         "trust_level": "low",
         "trust": {},
         "joined": datetime.now(timezone.utc).strftime("%Y-%m"),  # a CV hire joins today

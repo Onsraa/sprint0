@@ -32,11 +32,24 @@ def _history_score(cand: dict, tags: list[str]) -> float:
     return min(1.0, hit / len(good))
 
 
+_AVAIL_HORIZON = 15   # workdays; a candidate free this far out (or more) scores 0 on availability
+
+
+def _avail_factor(cand: dict) -> float:
+    """Availability factor (0..1) — route new work to whoever can start SOONEST. Uses the real
+    `free_in_days` (server-computed from the live schedule) when present; falls back to the static
+    `load` baseline when it isn't (e.g. a candidate dict that wasn't enriched)."""
+    fid = cand.get("free_in_days")
+    if fid is None:
+        return 1 - min(100, int(cand.get("load", 0) or 0)) / 100   # fallback: static load
+    return max(0.0, 1 - min(int(fid), _AVAIL_HORIZON) / _AVAIL_HORIZON)
+
+
 def score(cand: dict, issue: Issue) -> float:
     lane = issue.lane or issue.discipline
     skill = max(0.0, min(1.0, float(cand.get("score", 0.0) or 0.0)))  # $vectorSearch cosine
     trust = _RANK.get(_trust_in(cand, lane), 0) / 2                   # 0..1
-    load = 1 - min(100, int(cand.get("load", 0) or 0)) / 100         # more free → higher
+    load = _avail_factor(cand)                                        # sooner free → higher (was static load)
     lane_match = 1.0 if cand.get("discipline") == lane else 0.0
     sen = _SENIORITY.get(cand.get("seniority", "mid"), 0.7)
     seniority_fit = sen if _RANK.get(issue.risk, 0) <= 1 else sen ** 2  # juniors penalized on high risk
