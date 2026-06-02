@@ -92,13 +92,14 @@ function SessionLoading() {
 
 function Sidebar({ onPalette }: { onPalette: () => void }) {
   const { view, setView, role, chrome } = useApp();
+  const [collapsed, setCollapsed] = useState(false);
   return (
-    <aside style={{ width: "var(--nav-w)", flexShrink: 0, height: "100vh", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4 }}>
-      <Workspace />
-      <SearchTrigger onClick={onPalette} />
+    <aside style={{ width: collapsed ? 60 : "var(--nav-w)", flexShrink: 0, height: "100vh", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4, transition: "width var(--t-reg) var(--ease-out)" }}>
+      <Workspace collapsed={collapsed} />
+      <SearchTrigger onClick={onPalette} collapsed={collapsed} />
       {chrome.canDispatch && (
-        <button onClick={() => setView("wizard")} style={{ display: "flex", alignItems: "center", gap: 8, height: 32, margin: "2px 0", padding: "0 10px", borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", fontSize: 13, fontWeight: 500 }}>
-          <Icon name="plus" size={15} /> New from brief
+        <button onClick={() => setView("wizard")} title="New from brief" style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, height: 32, margin: "2px 0", padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", fontSize: 13, fontWeight: 500 }}>
+          <Icon name="plus" size={15} />{!collapsed && " New from brief"}
         </button>
       )}
       <nav style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 4 }}>
@@ -107,33 +108,39 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
           if (!items.length) return null;
           return (
             <div key={gi} style={{ marginTop: grp.section ? 12 : 0 }}>
-              {grp.section && (
+              {grp.section && !collapsed && (
                 <div style={{ height: 24, display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11, fontWeight: 500, color: "var(--text-quaternary)", letterSpacing: "0.02em" }}>{grp.section}</div>
               )}
-              {items.map((it) => <NavItem key={it.label} item={it} active={view === it.id} onClick={() => setView(it.id)} />)}
+              {items.map((it) => <NavItem key={it.label} item={it} active={view === it.id} onClick={() => setView(it.id)} collapsed={collapsed} />)}
             </div>
           );
         })}
       </nav>
       <div style={{ flex: 1 }} />
-      <SidebarFooter />
+      <button onClick={() => setCollapsed((c) => !c)} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 28, padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", color: "var(--text-quaternary)" }}>
+        <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={16} />{!collapsed && <span style={{ fontSize: 12, fontWeight: 500 }}>Collapse</span>}
+      </button>
+      <SidebarFooter collapsed={collapsed} />
     </aside>
   );
 }
 
-function Workspace() {
+function Workspace({ collapsed }: { collapsed?: boolean }) {
   const { me, switchPersona } = useApp();
   const workspace = useWorkspace();
   const [open, setOpen] = useState(false);
   const [h, setH] = useState(false);
   return (
     <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen((o) => !o)} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-        style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", width: "100%", background: open || h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
+      <button onClick={() => setOpen((o) => !o)} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} title={collapsed ? `· ${workspace}` : undefined}
+        style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 36, padding: collapsed ? 0 : "0 8px", borderRadius: "var(--r-md)", width: "100%", background: open || h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
         <FullLogo size={17} />
-        <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· {workspace}</span>
-        <div style={{ flex: 1 }} />
-        <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
+        {!collapsed && <>
+          <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· {workspace}</span>
+          <div style={{ flex: 1 }} />
+          <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
+        </>}
       </button>
       {open && (
         <>
@@ -158,34 +165,38 @@ function Workspace() {
   );
 }
 
-function SearchTrigger({ onClick }: { onClick: () => void }) {
+function SearchTrigger({ onClick, collapsed }: { onClick: () => void; collapsed?: boolean }) {
   const [h, setH] = useState(false);
   return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 8px", borderRadius: "var(--r-md)", background: h ? "var(--bg-hover)" : "transparent", color: "var(--text-tertiary)", transition: "background var(--t-quick)" }}>
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} title={collapsed ? "Search · ⌘K" : undefined}
+      style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, height: 30, padding: collapsed ? 0 : "0 8px", borderRadius: "var(--r-md)", background: h ? "var(--bg-hover)" : "transparent", color: "var(--text-tertiary)", transition: "background var(--t-quick)" }}>
       <Icon name="search" size={15} />
-      <span style={{ fontSize: 13, fontWeight: 500 }}>Search</span>
-      <div style={{ flex: 1 }} />
-      <span style={{ display: "inline-flex", gap: 2 }}><Kbd>⌘</Kbd><Kbd>K</Kbd></span>
+      {!collapsed && <>
+        <span style={{ fontSize: 13, fontWeight: 500 }}>Search</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ display: "inline-flex", gap: 2 }}><Kbd>⌘</Kbd><Kbd>K</Kbd></span>
+      </>}
     </button>
   );
 }
 
-function NavItem({ item, active, onClick }: { item: { id: string; label: string; icon: string; kbd?: readonly string[] }; active: boolean; onClick: () => void }) {
+function NavItem({ item, active, onClick, collapsed }: { item: { id: string; label: string; icon: string; kbd?: readonly string[] }; active: boolean; onClick: () => void; collapsed?: boolean }) {
   const [h, setH] = useState(false);
   return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ position: "relative", display: "flex", alignItems: "center", gap: 9, width: "100%", height: 28, padding: "0 10px", borderRadius: "var(--r-md)", textAlign: "left",
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} title={collapsed ? item.label : undefined}
+      style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, width: "100%", height: 28, padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", textAlign: "left",
         background: active ? "var(--bg-active)" : h ? "var(--bg-hover)" : "transparent", color: active ? "var(--text-primary)" : "var(--text-secondary)", transition: "background var(--t-quick), color var(--t-quick)" }}>
       <Icon name={item.icon as never} size={16} style={{ color: active ? "var(--text-secondary)" : "var(--text-tertiary)" }} />
-      <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: "-0.1px" }}>{item.label}</span>
-      <div style={{ flex: 1 }} />
-      {h && item.kbd && <span style={{ display: "inline-flex", gap: 2 }}>{item.kbd.map((k, i) => <Kbd key={i}>{k}</Kbd>)}</span>}
+      {!collapsed && <>
+        <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: "-0.1px" }}>{item.label}</span>
+        <div style={{ flex: 1 }} />
+        {h && item.kbd && <span style={{ display: "inline-flex", gap: 2 }}>{item.kbd.map((k, i) => <Kbd key={i}>{k}</Kbd>)}</span>}
+      </>}
     </button>
   );
 }
 
-function SidebarFooter() {
+function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
   const { me, role } = useApp();
   // REAL liveness — green when the gateway reaches Mongo/MCP, red when it can't, amber while checking.
   const { data: health } = useHealth();
@@ -194,18 +205,20 @@ function SidebarFooter() {
   const label = online === true ? "MCP · online" : online === false ? "MCP · offline" : "MCP · …";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, height: 28, padding: "0 10px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 7, height: 28, padding: collapsed ? 0 : "0 10px" }} title={collapsed ? label : undefined}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot }} />
-        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>{label}</span>
+        {!collapsed && <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>{label}</span>}
       </div>
-      <button style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)" }}>
+      <button title={collapsed ? `${me.name} · ${role}` : undefined} style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 36, padding: collapsed ? 0 : "0 8px", borderRadius: "var(--r-md)" }}>
         <Avatar name={me.name ?? "?"} size={22} tone={role === "manager" ? "ink" : undefined} />
-        <div style={{ textAlign: "left", lineHeight: 1.2 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)" }}>{me.name}</div>
-          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{role}{me.discipline ? " · " + me.discipline : ""}</div>
-        </div>
-        <div style={{ flex: 1 }} />
-        <Icon name="more" size={16} style={{ color: "var(--text-quaternary)" }} />
+        {!collapsed && <>
+          <div style={{ textAlign: "left", lineHeight: 1.2 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)" }}>{me.name}</div>
+            <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{role}{me.discipline ? " · " + me.discipline : ""}</div>
+          </div>
+          <div style={{ flex: 1 }} />
+          <Icon name="more" size={16} style={{ color: "var(--text-quaternary)" }} />
+        </>}
       </button>
     </div>
   );

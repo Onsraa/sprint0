@@ -8,12 +8,18 @@
    CoverageStrip, GateCard, FlowConnector, IntegrationStrip) are ported verbatim.
    TierBadge + GATE_META are imported from the sibling RatifyPanel.tsx. */
 import { useState, useEffect, Fragment } from "react";
-import { Avatar, Badge, DiscDot, DISC, LoadMeter, TrustDot, Button } from "../components/ui";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Availability, Avatar, Badge, DiscDot, DISC, TrustDot, Button } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
 import { useApp, AUTONOMY_MODES } from "../app/useApp";
 import { useUI } from "../lib/store";
+import { api } from "../lib/api";
+import { qk } from "../lib/query";
 import { RatifyPanel, TierBadge, GATE_META } from "./RatifyPanel";
+
+const isDone = (g: any) => g.status === "ratified" || g.status === "auto_passed";
 
 /* Relay stages mirror relay.py's _LANE_STAGE / _STAGE_ORDER: the build wave runs in parallel,
    then integration (frontend), then acceptance (qa). Gates render per stage, only for disciplines
@@ -46,6 +52,19 @@ export function RelayBoard() {
       return s.stage === "build" && names.length > 1 ? `{${names.join(" ∥ ")}}` : names.join(" · "); })
     .join(" → ");
   const rolePhrase = role === "manager" ? "Pass the baton" : role === "qa" ? "Acceptance & integration" : "Ratify your slice";
+  // gate-ratified tally + the ready-to-dispatch state (all gates ratified/auto-passed)
+  const ratified = gates.filter(isDone).length;
+  const allClear = gates.length > 0 && gates.every(isDone);
+  const qc = useQueryClient();
+  const dispatch = useMutation({
+    mutationFn: () => api.dispatch(planId as string, "copilot"),
+    onSuccess: (res) => {
+      toast.success("Dispatched to GitLab", { description: `${planName} · ${res.issues_created} issues` });
+      qc.invalidateQueries({ queryKey: qk.allRelays() });  // the finished relay leaves the board
+      qc.invalidateQueries({ queryKey: ["work"] });         // the new tasks land
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Dispatch failed"),
+  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -57,14 +76,24 @@ export function RelayBoard() {
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "22px 28px 28px" }}>
           <div style={{ maxWidth: 780, minWidth: 520, margin: "0 auto" }}>
-            <div style={{ marginBottom: 18 }}>
-              <div className="kicker" style={{ marginBottom: 6 }}>{rolePhrase}</div>
-              <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: 0 }}>{planName}</h1>
-              <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
-                <span className="mono" style={{ color: "var(--text-secondary)" }}>{stageFlow}</span> ·
-                expert attention is a budget — <b style={{ color: "var(--text-primary)" }}>{autoCount}</b> gates auto-pass.
-              </p>
+            <div style={{ marginBottom: 18, display: "flex", alignItems: "flex-start", gap: 16 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="kicker" style={{ marginBottom: 6 }}>{rolePhrase}</div>
+                <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: 0 }}>{planName}</h1>
+                <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
+                  <span className="mono" style={{ color: "var(--text-secondary)" }}>{stageFlow}</span> ·
+                  expert attention is a budget — <b style={{ color: "var(--text-primary)" }}>{autoCount}</b> gates auto-pass.
+                </p>
+              </div>
+              <div style={{ flexShrink: 0, textAlign: "right", paddingTop: 2 }}>
+                <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-1px" }}>
+                  {ratified}<span style={{ color: "var(--text-quaternary)", fontWeight: 400 }}>/{gates.length}</span>
+                </div>
+                <div className="mono" style={{ fontSize: 9.5, color: "var(--text-quaternary)", letterSpacing: "0.06em" }}>GATES RATIFIED</div>
+              </div>
             </div>
+
+            {allClear && <DispatchBanner gates={gates} canDispatch={role === "manager"} pending={dispatch.isPending} onDispatch={() => dispatch.mutate()} />}
 
             <CoverageStrip />
 
@@ -83,6 +112,34 @@ export function RelayBoard() {
 
         {selGate && <RatifyPanel g={selGate} />}
       </div>
+    </div>
+  );
+}
+
+/* All gates cleared → the manager can scaffold the project. Dispatch pops the relay off the board
+   (the useApp planId guard handles the now-stale pin) and the new tasks land in the work store. */
+function DispatchBanner({ gates, canDispatch, onDispatch, pending }: { gates: any[]; canDispatch: boolean; onDispatch: () => void; pending?: boolean }) {
+  const autoCount = gates.filter((g) => g.status === "auto_passed").length;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "15px 16px", marginBottom: 18,
+      borderRadius: "var(--r-lg)", border: "0.5px solid var(--text-primary)", background: "var(--bg-secondary)", boxShadow: "var(--shadow-1)" }}>
+      <span style={{ width: 34, height: 34, borderRadius: "var(--r-md)", flexShrink: 0, display: "grid", placeItems: "center",
+        background: "var(--ink-fill)", color: "#fff" }}>
+        <Icon name="ratify" size={18} />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.2px" }}>Ready to dispatch</span>
+          <Badge tone="green"><Icon name="check" size={10} />{gates.length}/{gates.length} cleared</Badge>
+        </div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.5 }}>
+          {autoCount > 0 ? `${autoCount} auto-passed · ` : ""}every slice ratified — sprint0 can scaffold the merge train to GitLab.
+        </div>
+      </div>
+      {canDispatch
+        ? <Button variant="primary" size="md" icon="bolt" disabled={pending} onClick={onDispatch}>{pending ? "Dispatching…" : "Dispatch"}</Button>
+        : <span style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 32, padding: "0 10px", fontSize: 12, color: "var(--text-quaternary)" }}>
+            <Icon name="lock" size={13} />Manager dispatches</span>}
     </div>
   );
 }
@@ -149,7 +206,7 @@ function CoverageStrip() {
                   <div style={{ fontSize: 12.5, fontWeight: 500 }}>{c.name ?? m?.name} <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>· match {typeof c.score === "number" ? c.score.toFixed(2) : c.score}</span></div>
                   <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{why}</div>
                 </div>
-                {m && <LoadMeter value={m.load} width={36} />}
+                {m && <Availability a={m.availability} compact />}
                 {m && <TrustDot level={m.trust} />}
               </div>
             );

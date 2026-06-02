@@ -49,9 +49,10 @@ export function QAGate() {
   const [running, setRunning] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [rejecting, setRejecting] = useState<string | null>(null); // issue_id being rejected
+  const [tester, setTester] = useState<any>(null); // who sprint0 routed acceptance to (qaRun → best-by-passport)
 
   // follow the topbar ProjectSwitcher; otherwise default to the top queue entry once it loads
-  useEffect(() => { if (projectFilter != null && projectFilter !== projectId) { setProjectId(projectFilter); setRan(false); setItems([]); setRejecting(null); } }, [projectFilter, projectId]);
+  useEffect(() => { if (projectFilter != null && projectFilter !== projectId) { setProjectId(projectFilter); setRan(false); setItems([]); setRejecting(null); setTester(null); } }, [projectFilter, projectId]);
   useEffect(() => { if (projectId == null && queue.length) setProjectId(queue[0].project_id); }, [queue, projectId]);
 
   const project = projects.find((p: any) => p.project_id === projectId);
@@ -69,6 +70,7 @@ export function QAGate() {
     try {
       const report = await api.qaRun(projectId);
       setItems(report.items.map(toLocalItem));
+      setTester(report.tester ?? null);
       setRan(true);
       setRejecting(null);
       toast.success("Acceptance run complete", {
@@ -113,7 +115,7 @@ export function QAGate() {
               </div>
             ) : queueShown.map((e) => (
               <QueueRow key={e.project_id} e={e} active={projectId === e.project_id}
-                onClick={() => { setProjectId(e.project_id); setRan(false); setItems([]); setRejecting(null); }} />
+                onClick={() => { setProjectId(e.project_id); setRan(false); setItems([]); setRejecting(null); setTester(null); }} />
             ))}
           </div>
 
@@ -127,6 +129,8 @@ export function QAGate() {
             </div>
             <Button variant="secondary" size="md" icon="ratify" disabled={running || projectId == null} onClick={runAcceptance}>{running ? "Running…" : ran ? "Re-run acceptance" : "Run acceptance"}</Button>
           </div>
+
+          {ran && tester && <TesterRouting tester={tester} />}
 
           {!ran ? (
             /* empty state — no real run yet (the seed strip/checklist below stays as a preview) */
@@ -174,6 +178,32 @@ export function QAGate() {
           <Integration />
         </div>
       </div>
+    </div>
+  );
+}
+
+/* who sprint0 routed acceptance to + why (best-by-passport — skill × trust, not always a titled QA). */
+function TesterRouting({ tester }: { tester: { name: string; discipline?: string | null; score?: number; reason?: string } }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 15px", marginBottom: 20,
+      borderRadius: "var(--r-lg)", border: "0.5px solid var(--border)", background: "var(--bg-secondary)", boxShadow: "var(--shadow-1)" }}>
+      <Avatar name={tester.name} size={34} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Icon name="bolt" size={13} style={{ color: "var(--text-primary)" }} />
+          <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>sprint0 routed acceptance to <b style={{ color: "var(--text-primary)", fontWeight: 600 }}>{tester.name}</b></span>
+          {tester.discipline && <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-tertiary)" }}><DiscDot d={tester.discipline as never} />{tester.discipline}</span>}
+        </div>
+        <div style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+          {typeof tester.score === "number" && tester.score > 0 && (
+            <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 19, padding: "0 8px", borderRadius: "var(--r-pill)", fontSize: 10.5, fontWeight: 600, background: "var(--ink-fill)", color: "#fff" }}>match {tester.score.toFixed(2)}</span>
+          )}
+          {tester.reason && (
+            <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 19, padding: "0 8px", borderRadius: "var(--r-pill)", fontSize: 10.5, fontWeight: 600, background: "var(--bg-elevated)", color: "var(--text-tertiary)", border: "0.5px solid var(--border)" }}>{tester.reason}</span>
+          )}
+        </div>
+      </div>
+      <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", flexShrink: 0, textAlign: "right", maxWidth: 130, lineHeight: 1.45 }}>skill × trust · not always a titled QA</span>
     </div>
   );
 }

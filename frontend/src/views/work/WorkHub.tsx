@@ -431,6 +431,7 @@ function TaskCard({ task: t, onOpen, selected, dragging, floating, onStartDrag, 
           <DiscDot d={t.discipline} /><span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{DISC[t.discipline]?.label}</span>
         </span>
         <div style={{ flex: 1 }} />
+        {byOf(t) && byOf(t) !== "ai" && byOf(t) !== "self" && <Badge tone="outline" mono>added @{byOf(t)}</Badge>}
         {byOf(t) === "ai" && <Badge tone="neutral" mono><span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)", display: "inline-block" }} />ai</Badge>}
         <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{estOf(t)}d</span>
         <Avatar name={byUser(t.assignee)?.name || "?"} size={18} />

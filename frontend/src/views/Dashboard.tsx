@@ -203,7 +203,9 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
 
         <div className="kicker" style={{ marginBottom: 8 }}>{isDraft ? "Proposed stack" : "Tech stack"}</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 16 }}>
-          {(p.stack || []).map((s: string) => <Badge key={s} tone="outline">{s}</Badge>)}
+          {(p.stack || []).filter(Boolean).length
+            ? (p.stack as string[]).filter(Boolean).map((s) => <Badge key={s} tone="outline">{s}</Badge>)
+            : <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>not set</span>}
         </div>
 
         {(p.grounded?.length || p.tags?.length) ? (

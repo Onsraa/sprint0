@@ -1,18 +1,19 @@
-/* sprint0 — Landing. Minimal header + split hero: title + a single demo-entry card. This is a demo
- * build, so login is honest: "Enter the demo workspace" logs you in as the manager ("Onsraa") and the
- * persona switcher in the nav rail re-chromes from there. No fake OAuth / email / password screens. */
+/* sprint0 — Landing. Minimal header + split hero: title + the passwordless demo-entry card. Honest demo
+ * auth: enter as the manager, or pick any of the 5 fixed demo personas directly — no OAuth/email/password.
+ * The persona switcher in the nav re-chromes from there. */
 import { useNavigate } from "@tanstack/react-router";
 import { useLogin } from "../features/auth/useAuth";
-import { Button } from "../components/ui";
-import { ZeroMark, Logo } from "../lib/icon";
+import { Avatar, Button } from "../components/ui";
+import { Icon, ZeroMark, Logo } from "../lib/icon";
+import { DEMO_PERSONAS } from "../app/AppShellNew";
 
-const DEMO_USER = "Onsraa"; // the manager persona — Enter the demo workspace drops you here
+const DEMO_USER = "Onsraa"; // default entry (the manager)
 
 export function Landing() {
   const login = useLogin();
   const navigate = useNavigate();
-  const onEnter = () => {
-    login.mutate(DEMO_USER, { onSuccess: () => navigate({ to: "/inbox" as "/" }) });
+  const onEnter = (username: string = DEMO_USER) => {
+    login.mutate(username, { onSuccess: (res) => navigate({ to: (res.member.role === "manager" ? "/inbox" : "/today") as "/" }) });
   };
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-base)", display: "flex", flexDirection: "column", position: "relative" }}>
@@ -21,7 +22,7 @@ export function Landing() {
         <LandingHeader onEnter={onEnter} />
         <main style={{ flex: 1, display: "grid", gridTemplateColumns: "1.05fr 0.95fr", maxWidth: 1180, width: "100%", margin: "0 auto", padding: "0 40px", alignItems: "center", gap: 64 }}>
           <HeroCopy />
-          <ConnexionCard onEnter={onEnter} />
+          <DemoEntry onEnter={onEnter} />
         </main>
         <LandingFooter />
       </div>
@@ -50,8 +51,8 @@ function LandingHeader({ onEnter }: { onEnter: () => void }) {
           <a key={l} href="#" style={{ padding: "0 12px", height: 30, display: "inline-flex", alignItems: "center", fontSize: 13, fontWeight: 500, color: "var(--text-tertiary)" }}>{l}</a>
         ))}
         <span style={{ width: 1, height: 18, background: "var(--border)", margin: "0 8px" }} />
-        <button onClick={onEnter} style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)", padding: "0 10px", height: 30 }}>Log in</button>
-        <Button variant="primary" size="md" onClick={onEnter}>Try Demo</Button>
+        <button onClick={() => onEnter()} style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)", padding: "0 10px", height: 30 }}>Log in</button>
+        <Button variant="primary" size="md" onClick={() => onEnter()}>Try Demo</Button>
       </nav>
     </header>
   );
@@ -82,23 +83,54 @@ function HeroCopy() {
   );
 }
 
-function ConnexionCard({ onEnter }: { onEnter: () => void }) {
+/* Passwordless demo entry: enter as the manager, or pick any of the 5 fixed personas directly. */
+function DemoEntry({ onEnter }: { onEnter: (username?: string) => void }) {
+  const manager = DEMO_PERSONAS.find((p) => p.role === "manager") ?? DEMO_PERSONAS[0];
+  const teammates = DEMO_PERSONAS.filter((p) => p.role !== "manager");
   return (
-    <div style={{ background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-xl)", boxShadow: "var(--shadow-2)", padding: 28, animation: "s0-pop-in var(--t-slow) var(--ease-out) both" }}>
+    <div style={{ background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-xl)", boxShadow: "var(--shadow-2)", padding: 24, animation: "s0-pop-in var(--t-slow) var(--ease-out) both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <ZeroMark size={22} />
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>Pick up the baton</div>
-          <div style={{ fontSize: 12, color: "var(--text-quaternary)" }}>Demo workspace</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>Enter the demo workspace</div>
+          <div style={{ fontSize: 12, color: "var(--text-quaternary)" }}>Passwordless · pick a persona, no credentials</div>
         </div>
       </div>
-      <div style={{ marginTop: 22 }}>
-        <Button variant="primary" size="lg" style={{ width: "100%" }} onClick={onEnter} iconRight="arrowRight">
-          Enter the demo workspace
-        </Button>
+
+      <button onClick={() => onEnter(manager.username)}
+        style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 56, padding: "0 14px", marginTop: 20, borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", textAlign: "left" }}>
+        <Avatar name={manager.name} size={30} tone="ink" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Enter the demo workspace</div>
+          <div className="mono" style={{ fontSize: 11, color: "rgba(255,255,255,0.66)", marginTop: 1 }}>as {manager.name} · manager</div>
+        </div>
+        <Icon name="arrowRight" size={16} style={{ color: "rgba(255,255,255,0.8)", flexShrink: 0 }} />
+      </button>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "18px 0 10px" }}>
+        <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>OR ENTER AS</span>
+        <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
       </div>
-      <p style={{ fontSize: 12, color: "var(--text-quaternary)", lineHeight: 1.5, marginTop: 16, marginBottom: 0, textAlign: "center" }}>
-        Explore as the manager; switch personas from the nav once inside. No account needed.
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {teammates.map((p) => (
+          <button key={p.username} onClick={() => onEnter(p.username)}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: "transparent", textAlign: "left", transition: "background var(--t-quick)" }}>
+            <Avatar name={p.name} size={26} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
+              <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
+            </div>
+            <Icon name="arrowRight" size={15} style={{ color: "var(--text-quaternary)", flexShrink: 0 }} />
+          </button>
+        ))}
+      </div>
+
+      <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", lineHeight: 1.5, marginTop: 16, marginBottom: 0, textAlign: "center" }}>
+        5 fixed demo accounts · switch personas anytime from the workspace header.
       </p>
     </div>
   );
