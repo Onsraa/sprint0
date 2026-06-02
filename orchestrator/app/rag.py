@@ -11,6 +11,7 @@ import json
 import os
 import time
 from contextlib import AsyncExitStack
+from functools import lru_cache
 from pathlib import Path
 
 import voyageai
@@ -55,10 +56,26 @@ def _embed(texts: list[str], input_type: str = "query") -> list[list[float]]:
     return []
 
 
+@lru_cache(maxsize=256)
+def _embed_query_cached(text: str) -> tuple[float, ...]:
+    """One brief is embedded across clarify→architectures→plan; cache the deterministic vector so
+    we pay Voyage once, not 3×. Tuple (immutable) so a caller can't mutate the cached entry."""
+    return tuple(_embed([text])[0])
+
+
 def embed_query(text: str) -> list[float]:
     if demo.is_demo():
         return list(_DEMO_VEC)
-    return _embed([text])[0]
+    return list(_embed_query_cached(text))
+
+
+def cosine_score(a: list[float], b: list[float]) -> float:
+    """Atlas `$vectorSearch` cosine score, computed locally: (1 + cosine)/2 ∈ [0,1]. Replicated so a
+    one-shot roster fetch + local rank reproduces the per-skill vectorSearch scores exactly."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return (1.0 + dot / (na * nb)) / 2.0 if na and nb else 0.0
 
 
 def embed_queries(texts: list[str]) -> list[list[float]]:
