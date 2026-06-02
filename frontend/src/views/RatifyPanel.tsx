@@ -9,11 +9,13 @@
    with `chosen_solution`. The mock's richer fields (grounded_on object, delta_note object, per-solution
    conflict, client-side regen preview) collapse onto the real Zod shapes. TierBadge + GATE_META stay
    exported so RelayBoard composes them. */
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Avatar, Badge, DiscDot, DISC, StatusIcon, CapTag, Button } from "../components/ui";
 import { Icon, ZeroMark } from "../lib/icon";
 import { useApp } from "../app/useApp";
 import { useGateSolutions } from "../features/relay/useRelay";
+import { api } from "../lib/api";
 import type { SolutionCard, Discipline } from "../lib/api";
 
 /* ───────── routing-tier presentation (§10) — the two_expert tier is the ink "spark" ───────── */
@@ -72,15 +74,6 @@ export function TierBadge({ tier, size = "md" }: { tier?: string | null; size?: 
     </span>
   );
 }
-
-/* The slice rendered per gate — mock until the orchestrator surfaces plan.issues-by-discipline on useApp(). */
-const SLICE: Record<string, { id: string; t: string; s: string; tags: string[] }[]> = {
-  uiux:     [{ id: "HARB-122", t: "Empty state + skeleton for map panel", s: "planned", tags: ["map-clustering", "empty-state"] }, { id: "HARB-119", t: "Filter rail tokens + spacing", s: "done", tags: ["tokens"] }],
-  backend:  [{ id: "HARB-090", t: "Token-scope service for shareable views", s: "in_review", tags: ["token-scope", "auth"] }, { id: "HARB-091", t: "Rate-limit + retry budget", s: "in_progress", tags: ["rate-limit", "retry"] }],
-  devops:   [{ id: "HARB-201", t: "Preview environments per MR", s: "done", tags: ["preview-env"] }, { id: "HARB-202", t: "Pipeline cache for pnpm", s: "done", tags: ["ci"] }],
-  frontend: [{ id: "HARB-118", t: "Saved-view share links", s: "in_progress", tags: ["share-links"] }, { id: "HARB-104", t: "Geo-cluster perf pass", s: "blocked", tags: ["map-clustering", "perf"] }],
-  qa:       [{ id: "HARB-300", t: "Acceptance: share-link scopes", s: "planned", tags: ["acceptance", "auth"] }],
-};
 
 const SOURCE_META: Record<string, { label: string }> = {
   memory: { label: "Reuse · memory" }, ai: { label: "Fresh · AI" }, user: { label: "Yours" },
@@ -282,7 +275,12 @@ export function RatifyPanel({ g }: { g: any }) {
   const { me, chrome, members, planId, ratifyWith }: any = useApp();
   const byUser = (u: string) => members?.find((m: any) => m.username === u);
   const meta = GATE_META[g.status];
-  const slice = SLICE[g.discipline] || [];
+  // the real slice — this plan's issues for this discipline (shared ["plan", planId] query, cached across gates)
+  const { data: plan } = useQuery({ queryKey: ["plan", planId], queryFn: () => api.getPlan(planId), enabled: !!planId });
+  const slice = useMemo(() => (plan?.epics ?? [])
+    .flatMap((e: any) => e.issues ?? [])
+    .filter((i: any) => i.discipline === g.discipline)
+    .map((i: any) => ({ id: i.id, t: i.title, s: "planned", tags: i.capability_tags ?? [] })), [plan, g.discipline]);
   const done = g.status === "ratified" || g.status === "auto_passed";
   const ownsThisGate = g.owner === me.username || chrome.seesAllGates;
   const locked = g.depends.length > 0 && !done;
@@ -364,7 +362,7 @@ export function RatifyPanel({ g }: { g: any }) {
               <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", width: 60, flexShrink: 0 }}>{i.id}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.t}</div>
-                <div style={{ display: "flex", gap: 4, marginTop: 3 }}>{i.tags.map(t => <CapTag key={t} tag={t} />)}</div>
+                <div style={{ display: "flex", gap: 4, marginTop: 3 }}>{i.tags.map((t: string) => <CapTag key={t} tag={t} />)}</div>
               </div>
               {i.s === "blocked" && <Badge tone="red">blocked</Badge>}
             </div>

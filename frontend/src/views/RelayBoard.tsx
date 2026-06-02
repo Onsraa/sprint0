@@ -7,7 +7,7 @@
    the useApp() adapter per the port spec; panel-local helpers (TrustDialMini,
    CoverageStrip, GateCard, FlowConnector, IntegrationStrip) are ported verbatim.
    TierBadge + GATE_META are imported from the sibling RatifyPanel.tsx. */
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { Avatar, Badge, DiscDot, DISC, LoadMeter, TrustDot, Button } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
@@ -15,44 +15,15 @@ import { useApp, AUTONOMY_MODES } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { RatifyPanel, TierBadge, GATE_META } from "./RatifyPanel";
 
-const ROW1 = ["uiux", "backend", "devops"];
-
-/* §7 staffing coverage — the per-plan gap advisor payload (was data2.jsx STAFFING).
-   TODO(reconcile): useApp() does not yet expose staffing coverage; the orchestrator
-   should add `staffing` (GET /api/plans/{id}/staffing). Kept verbatim so the strip
-   is pixel-identical until that field lands. */
-const STAFFING_COVERAGE = {
-  per_discipline: [
-    { discipline: "uiux",     covered: false, devs: [] as string[],       note: "orphan gap" },
-    { discipline: "backend",  covered: true,  devs: ["rajiv", "priya"],   note: "rajiv at 91% load" },
-    { discipline: "frontend", covered: true,  devs: ["talia", "noah"],    note: "" },
-    { discipline: "qa",       covered: true,  devs: ["elena"],            note: "" },
-    { discipline: "devops",   covered: true,  devs: ["dario"],            note: "" },
-  ],
-  gaps: ["uiux"],
-  stretch_candidates: [
-    { username: "talia", load: 78, trust: "high",   score: 0.74, why: "frontend senior · strongest design-adjacent skill cosine" },
-    { username: "noah",  load: 54, trust: "medium", score: 0.61, why: "frontend mid · has headroom, weaker on tokens" },
-    { username: "mira",  load: 62, trust: "high",   score: 0.55, why: "manager covering — temporary, not sustainable" },
-  ],
-};
-
-/* §9 deepened failing-API flow — candidate producers (was data.jsx-local API_CANDIDATES). */
-const API_CANDIDATES = [
-  { id: "HARB-090", title: "Token-scope service", assignee: "rajiv", api_contract: "POST /scopes" },
-  { id: "HARB-091", title: "Rate-limit + retry budget", assignee: "rajiv", api_contract: "middleware/ratelimit" },
-];
-
-/* TODO(reconcile): useApp() exposes `gates` but not the plan id or the integration
-   seed; the orchestrator should surface `planId` + relay `integration_signals`.
-   Kept as a local seed so the board renders identically until then. */
-const RELAY_PLAN_ID = "plan_HARB_42";
-const RELAY_INTEGRATION = [
-  { target: "HARB-090", title: "Token-scope service", by: "noah", reporter: "HARB-104", note: "429s under burst — missing retry budget.", state: "failing" },
-];
+/* Relay stages mirror relay.py's _LANE_STAGE / _STAGE_ORDER: the build wave runs in parallel,
+   then integration (frontend), then acceptance (qa). Gates render per stage, only for disciplines
+   actually present in this plan — no hardcoded discipline rows, no "not in this plan" fillers. */
+const STAGE_OF: Record<string, string> = { uiux: "build", backend: "build", devops: "build", frontend: "integrate", qa: "accept" };
+const STAGE_ORDER = ["build", "integrate", "accept"] as const;
+const STAGE_CLEAR_LABEL: Record<string, string> = { build: "build wave clears", integrate: "frontend ratified" };
 
 export function RelayBoard() {
-  const { gates, autonomy, setAutonomy, me, role }: any = useApp();
+  const { gates, autonomy, setAutonomy, me, role, planId, relaySummaries }: any = useApp();
   const activeGate = useUI((s) => s.activeGate);
   const setActiveGate = useUI((s) => s.setActiveGate);
   const gateOf = (d: string) => gates.find((g: any) => g.discipline === d);
@@ -60,51 +31,57 @@ export function RelayBoard() {
   const [sel, setSel] = useState<string>(() => {
     if (activeGate && gates.some((g: any) => g.discipline === activeGate)) return activeGate;
     if (me.discipline && gates.some((g: any) => g.discipline === me.discipline)) return me.discipline;
-    return "backend";
+    return gates[0]?.discipline ?? "backend";
   });
   useEffect(() => { if (activeGate) { setSel(activeGate); setActiveGate(null); } }, [activeGate, setActiveGate]);
-  const selGate = gateOf(sel);
+  const selGate = gateOf(sel) ?? gates[0];
   const autoCount = gates.filter((g: any) => g.tier === "auto_pass").length;
+  // feature name + the present stages — both derived from the live plan, nothing hardcoded
+  const planName = relaySummaries?.find((r: any) => r.plan_id === planId)?.project ?? "Relay";
+  const byStage = STAGE_ORDER
+    .map((stage) => ({ stage, gates: gates.filter((g: any) => STAGE_OF[g.discipline] === stage) }))
+    .filter((s) => s.gates.length > 0);
+  const stageFlow = byStage
+    .map((s) => { const names = s.gates.map((g: any) => DISC[g.discipline]?.label ?? g.discipline);
+      return s.stage === "build" && names.length > 1 ? `{${names.join(" ∥ ")}}` : names.join(" · "); })
+    .join(" → ");
+  const rolePhrase = role === "manager" ? "Pass the baton" : role === "qa" ? "Acceptance & integration" : "Ratify your slice";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <ViewChrome breadcrumb={["Harbor Logistics", "Relay"]}>
+      <ViewChrome breadcrumb={["Studio", "Relay"]}>
         <AutonomyControl mode={autonomy} onChange={setAutonomy} editable={role === "manager"} />
-        <Badge tone="outline" mono>{RELAY_PLAN_ID}</Badge>
+        {planId && <Badge tone="outline" mono>{planId}</Badge>}
       </ViewChrome>
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "22px 28px 28px" }}>
           <div style={{ maxWidth: 780, minWidth: 520, margin: "0 auto" }}>
             <div style={{ marginBottom: 18 }}>
-              <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: 0 }}>
-                {role === "manager" ? "Pass the baton" : role === "qa" ? "Acceptance & integration" : "Ratify your slice"}
-              </h1>
+              <div className="kicker" style={{ marginBottom: 6 }}>{rolePhrase}</div>
+              <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: 0 }}>{planName}</h1>
               <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
-                <span className="mono" style={{ color: "var(--text-secondary)" }}>{"{UI/UX ∥ Backend ∥ DevOps}"}</span> → Frontend → QA ·
+                <span className="mono" style={{ color: "var(--text-secondary)" }}>{stageFlow}</span> ·
                 expert attention is a budget — <b style={{ color: "var(--text-primary)" }}>{autoCount}</b> gates auto-pass.
               </p>
             </div>
 
             <CoverageStrip />
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(150px, 1fr))", gap: 12 }}>
-              {ROW1.map(d => <GateCard key={d} g={gateOf(d)} active={sel === d} onClick={() => setSel(d)} mine={me.discipline === d} />)}
-            </div>
-            <FlowConnector label="all three clear" />
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <div style={{ width: "calc(33.33% - 8px)", minWidth: 150 }}><GateCard g={gateOf("frontend")} active={sel === "frontend"} onClick={() => setSel("frontend")} mine={me.discipline === "frontend"} /></div>
-            </div>
-            <FlowConnector label="frontend ratified" />
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <div style={{ width: "calc(33.33% - 8px)", minWidth: 150 }}><GateCard g={gateOf("qa")} active={sel === "qa"} onClick={() => setSel("qa")} mine={me.discipline === "qa"} /></div>
-            </div>
+            {byStage.map((s, i) => (
+              <Fragment key={s.stage}>
+                {i > 0 && <FlowConnector label={STAGE_CLEAR_LABEL[byStage[i - 1].stage] ?? "clears"} />}
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(s.gates.length, 3)}, minmax(150px, 1fr))`, gap: 12, justifyContent: "center" }}>
+                  {s.gates.map((g: any) => <GateCard key={g.discipline} g={g} active={sel === g.discipline} onClick={() => setSel(g.discipline)} mine={me.discipline === g.discipline} />)}
+                </div>
+              </Fragment>
+            ))}
 
             <IntegrationStrip />
           </div>
         </div>
 
-        <RatifyPanel g={selGate} />
+        {selGate && <RatifyPanel g={selGate} />}
       </div>
     </div>
   );
@@ -136,13 +113,16 @@ function AutonomyControl({ mode, onChange, editable }: { mode: string; onChange:
   );
 }
 
-/* §7 staffing coverage strip */
+/* §7 staffing coverage strip — real GET /api/plans/{id}/staffing (useApp().staffing). Shows the first
+   uncovered discipline + the AI's scored stretch candidates; load/trust come from the live roster. */
 function CoverageStrip() {
-  const { chrome, setView, members }: any = useApp();
+  const { chrome, setView, members, staffing }: any = useApp();
   const byUser = (u: string) => members?.find((m: any) => m.username === u);
-  const cov = STAFFING_COVERAGE;
-  if (!cov.gaps.length) return null;
-  const gap = cov.gaps[0];
+  const coverage: any[] = staffing?.coverage ?? [];
+  const gapRow = coverage.find((c) => !c.covered);
+  if (!gapRow) return null;
+  const gap = gapRow.discipline;
+  const candidates: any[] = gapRow.recommendation?.stretch_candidates ?? [];
   return (
     <div style={{ border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: 14, marginBottom: 18,
       background: "var(--bg-secondary)" }}>
@@ -150,31 +130,34 @@ function CoverageStrip() {
         <Icon name="team" size={15} style={{ color: "var(--text-primary)" }} />
         <span style={{ fontSize: 13, fontWeight: 600 }}>Coverage gap</span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12 }}>
-          <DiscDot d={gap} />{DISC[gap].label} has no dev
+          <DiscDot d={gap} />{DISC[gap]?.label} has no dev
         </span>
         <div style={{ flex: 1 }} />
         <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>routes to manager</span>
       </div>
-      <div className="kicker" style={{ marginBottom: 8 }}>Scored stretch candidates</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {cov.stretch_candidates.map(c => {
-          const m = byUser(c.username);
-          return (
-            <div key={c.username} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: "var(--r-md)",
-              background: "var(--bg-elevated)", border: "0.5px solid var(--border)" }}>
-              <Avatar name={m?.name} size={22} tone={m?.role === "manager" ? "ink" : undefined} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 500 }}>{m?.name} <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>· match {c.score}</span></div>
-                <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.why}</div>
+      {candidates.length > 0 && <>
+        <div className="kicker" style={{ marginBottom: 8 }}>Scored stretch candidates</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {candidates.map((c) => {
+            const m = byUser(c.username);
+            const why = c.pros?.[0] ?? "";
+            return (
+              <div key={c.username} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: "var(--r-md)",
+                background: "var(--bg-elevated)", border: "0.5px solid var(--border)" }}>
+                <Avatar name={c.name ?? m?.name} size={22} tone={m?.role === "manager" ? "ink" : undefined} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 500 }}>{c.name ?? m?.name} <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>· match {typeof c.score === "number" ? c.score.toFixed(2) : c.score}</span></div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{why}</div>
+                </div>
+                {m && <LoadMeter value={m.load} width={36} />}
+                {m && <TrustDot level={m.trust} />}
               </div>
-              <LoadMeter value={c.load} width={36} />
-              <TrustDot level={c.trust} />
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      </>}
       {chrome.canOnboard && (
-        <Button variant="secondary" size="sm" icon="plus" style={{ marginTop: 10 }} onClick={() => setView("team")}>Onboard a {DISC[gap].label} dev</Button>
+        <Button variant="secondary" size="sm" icon="plus" style={{ marginTop: 10 }} onClick={() => setView("team")}>Onboard a {DISC[gap]?.label} dev</Button>
       )}
     </div>
   );
@@ -184,6 +167,7 @@ function GateCard({ g, active, onClick, mine }: {
   g: any; active: boolean; onClick: () => void; mine: boolean;
 }) {
   const [h, setH] = useState(false);
+  if (!g) return null;
   const meta = GATE_META[g.status];
   const done = g.status === "ratified" || g.status === "auto_passed";
   const spark = g.baton || g.tier === "two_expert";
@@ -242,12 +226,12 @@ function FlowConnector({ label }: { label: string }) {
   );
 }
 
-/* §9 deepened failing-API flow */
+/* §9 failing-API gate — real relay integration_signals (useApp().integration), read-only. A failing
+   producer contract holds the QA gate. The report/resolve interaction (wired to POST …/integration/flag)
+   is a Claude-Design item — see docs/UI-NEEDS.md — so the board never shows a fabricated signal. */
 function IntegrationStrip() {
-  const { me, role }: any = useApp();
-  const [sig, setSig] = useState<any[]>(RELAY_INTEGRATION);
-  const [reporting, setReporting] = useState(false);
-  const isQA = role === "qa";
+  const { integration }: any = useApp();
+  const sig: any[] = (integration ?? []).filter((s: any) => s.state === "failing");
   return (
     <div style={{ marginTop: 28, border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "var(--bg-secondary)",
@@ -255,34 +239,7 @@ function IntegrationStrip() {
         <Icon name="bolt" size={14} style={{ color: "var(--text-primary)" }} />
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>API integration</span>
         <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>— a failing API holds the QA gate until the producer fixes it.</span>
-        <div style={{ flex: 1 }} />
-        <Button variant="secondary" size="sm" icon="bolt" onClick={() => setReporting(r => !r)}>Report failing API</Button>
       </div>
-
-      {reporting && (
-        <div style={{ padding: 14, borderBottom: "0.5px solid var(--border-subtle)", background: "var(--bg-base)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <Icon name="flag" size={13} style={{ color: "var(--text-tertiary)" }} />
-            <span style={{ fontSize: 12.5, fontWeight: 500 }}>More than one upstream producer — pick which contract is failing</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {API_CANDIDATES.map(c => (
-              <button key={c.id} onClick={() => {
-                setSig(s => [...s, { target: c.id, title: c.title, by: me.username, reporter: "HARB-104", note: `${c.api_contract} — reported failing`, state: "failing" }]);
-                setReporting(false);
-              }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", textAlign: "left",
-                background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-md)" }}>
-                <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", width: 60 }}>{c.id}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 500 }}>{c.title}</div>
-                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{c.api_contract} · @{c.assignee}</div>
-                </div>
-                <Icon name="chevronRight" size={14} style={{ color: "var(--text-quaternary)" }} />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {sig.length === 0 ? (
         <div style={{ padding: "14px", display: "flex", alignItems: "center", gap: 8 }}>
@@ -290,15 +247,13 @@ function IntegrationStrip() {
           <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>All contracts green.</span>
         </div>
       ) : sig.map((s, i) => (
-        <div key={s.target + i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px" }}>
+        <div key={s.target_issue_id + i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px" }}>
           <Badge tone="red">failing</Badge>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>{s.title} <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 400 }}>{s.target}</span></div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}><span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 400 }}>{s.target_issue_id}</span></div>
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>reported by @{s.by} · {s.note} · qa gate <b style={{ color: "var(--text-primary)" }}>blocked</b></div>
           </div>
-          {isQA
-            ? <Badge tone="outline" mono>acceptance held</Badge>
-            : <Button variant="secondary" size="sm" icon="ratify" onClick={() => setSig(ss => ss.filter((_, j) => j !== i))}>Mark api-ok</Button>}
+          <Badge tone="outline" mono>acceptance held</Badge>
         </div>
       ))}
     </div>

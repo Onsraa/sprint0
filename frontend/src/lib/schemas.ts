@@ -221,7 +221,7 @@ export const WorkTask = z.object({
   estimate_days: z.number().optional(), risk: Risk.optional(), depends_on: z.array(z.string()).optional(),
   priority: TaskPriority.optional(), scheduled_start: z.string().nullish(), scheduled_end: z.string().nullish(),
   pinned: z.boolean().optional(), gitlab_issue_iid: z.number().nullish(), context_scope: ContextScope.optional(),
-  kind: Kind.optional(), context: unknownRecord.optional(), api_contract: z.string().nullish(),
+  kind: Kind.nullish(), context: unknownRecord.optional(), api_contract: z.string().nullish(),
   capability_tags: z.array(z.string()).optional(), stretch_flag: z.string().nullish(),
   created_at: z.string().optional(), updated_at: z.string().optional(),
 });

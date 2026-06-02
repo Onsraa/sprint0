@@ -134,10 +134,11 @@ export function Relays() {
   const relays = [...mine].sort((a, b) => relayScore(b) - relayScore(a));
   const awaiting = relays.filter((r) => r.baton.length > 0).length;
 
+  // Managers open the full RelayBoard; devs/leads land on their ratify queue (/relay isn't a dev route).
   const openRelay = (r: RelaySummary, gate?: Discipline) => {
     setPlanId(r.plan_id);
     if (gate) setActiveGate(gate);
-    setView("relay");
+    setView(role === "manager" ? "relay" : "ratify");
   };
 
   return (
