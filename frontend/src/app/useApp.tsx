@@ -107,11 +107,12 @@ export function useApp() {
       setRoute((VIEW_TO_ROUTE[ROLE_CHROME[r].land] ?? ROLE_CHROME[r].land) as never);
     },
   });
-  const members = useRoster().map(toMockMember);
+  const rosterRaw = useRoster();
+  const members = useMemo(() => rosterRaw.map(toMockMember), [rosterRaw]);
 
   // notifications + bell
   const { data: inbox } = useInbox();
-  const notifs = (inbox?.notifications ?? []).map((n) => ({ ...n, kind: n.type, unread: !n.read, time: n.created_at }));
+  const notifs = useMemo(() => (inbox?.notifications ?? []).map((n) => ({ ...n, kind: n.type, unread: !n.read, time: n.created_at })), [inbox]);
   const unread = inbox?.unread ?? 0;
   const bellOpen = useUI((s) => s.bellOpen);
   const setBellOpen = useUI((s) => s.setBellOpen);
@@ -122,11 +123,16 @@ export function useApp() {
   const toasts: never[] = [];
 
   // relay + Trust Dial (active plan from the UI store, else first active relay)
-  const { data: relaySummaries = [] } = useQuery({ queryKey: qk.allRelays(), queryFn: () => api.allRelays().then((r) => r.relays) });
-  const planId = useUI((s) => s.planId) ?? relaySummaries[0]?.plan_id ?? null;
+  const { data: relaySummariesRaw } = useQuery({ queryKey: qk.allRelays(), queryFn: () => api.allRelays().then((r) => r.relays) });
+  const relaySummaries = useMemo(() => relaySummariesRaw ?? [], [relaySummariesRaw]);
+  // Honor the UI's pinned plan ONLY while it's still an in-flight relay. Once dispatched it leaves the
+  // board, so drop the stale pin (else useRelay keeps polling a removed relay → 404). Fall back to the top.
+  const pinnedPlanId = useUI((s) => s.planId);
+  const planId = (pinnedPlanId && relaySummaries.some((r) => r.plan_id === pinnedPlanId) ? pinnedPlanId : null)
+    ?? relaySummaries[0]?.plan_id ?? null;
   const { data: relay } = useRelay(planId);
-  const gates = (relay?.gates ?? []).map((g) => toMockGate(g, relay));
-  const integration = relay?.integration_signals ?? [];
+  const gates = useMemo(() => (relay?.gates ?? []).map((g) => toMockGate(g, relay)), [relay]);
+  const integration = useMemo(() => relay?.integration_signals ?? [], [relay]);
   const dial = useUI((s) => s.dial);
   const setDial = useUI((s) => s.setDial);
   const relayAuto = useRelayAuto(planId ?? "");
@@ -141,25 +147,27 @@ export function useApp() {
   // per-gate Decision Cards (5 fixed disciplines)
   const cBack = useDecisionCard(planId, "backend"); const cFront = useDecisionCard(planId, "frontend");
   const cUiux = useDecisionCard(planId, "uiux"); const cQa = useDecisionCard(planId, "qa"); const cDev = useDecisionCard(planId, "devops");
-  const cards: Record<string, unknown> = { backend: cBack.data, frontend: cFront.data, uiux: cUiux.data, qa: cQa.data, devops: cDev.data };
+  const cards: Record<string, unknown> = useMemo(() => ({ backend: cBack.data, frontend: cFront.data, uiux: cUiux.data, qa: cQa.data, devops: cDev.data }), [cBack.data, cFront.data, cUiux.data, cQa.data, cDev.data]);
   // staffing/coverage for the active plan
   const { data: staffing } = useQuery({ queryKey: qk.staffing(planId ?? ""), queryFn: () => api.staffing(planId as string), enabled: !!planId });
 
   // work / projects
-  const { data: tasksRaw = [] } = useWork("team");
-  const tasks = tasksRaw.map(toMockTask);
+  const { data: tasksRaw } = useWork("team");
+  const tasks = useMemo(() => (tasksRaw ?? []).map(toMockTask), [tasksRaw]);
   const { projects: projectsRaw } = useProjects();
-  const projects = projectsRaw.map(toMockProject);
+  const projects = useMemo(() => projectsRaw.map(toMockProject), [projectsRaw]);
   // project_id → human name, so Today task rows show the project name, not the numeric id.
   const projectNames = useMemo(() => Object.fromEntries(projectsRaw.map((p) => [p.project_id, p.name])), [projectsRaw]);
   const liveProjectId = useUI((s) => s.liveProjectId);
-  const { data: queue = [] } = useQuery({ queryKey: qk.myQueue(), queryFn: () => api.myQueue().then((r) => r.items) });
+  const { data: queueRaw } = useQuery({ queryKey: qk.myQueue(), queryFn: () => api.myQueue().then((r) => r.items) });
+  const queue = useMemo(() => queueRaw ?? [], [queueRaw]);
   // Today spine — ranked next-actions, composed client-side from existing streams (no new endpoint).
-  const { data: myTasksRaw = [] } = useWork("me");
+  const { data: myTasksRaw } = useWork("me");
+  const myTasks = useMemo(() => myTasksRaw ?? [], [myTasksRaw]);
   const next = useMemo(() => rankNext({
     role, myDiscipline: member?.discipline ?? null, myUsername: member?.username ?? "",
-    queue, relays: relaySummaries, myTasks: myTasksRaw, needs: inbox?.needs_action ?? [], projectNames,
-  }), [role, member, queue, relaySummaries, myTasksRaw, inbox, projectNames]);
+    queue, relays: relaySummaries, myTasks, needs: inbox?.needs_action ?? [], projectNames,
+  }), [role, member, queue, relaySummaries, myTasks, inbox, projectNames]);
   const drafts = useUI((s) => s.drafts);
   const addDraft = useUI((s) => s.addDraft);
 
@@ -173,7 +181,7 @@ export function useApp() {
 
   // capability profiles — real shape matches
   const { data: profilesData } = useProfiles();
-  const profiles = profilesData?.profiles ?? [];
+  const profiles = useMemo(() => profilesData?.profiles ?? [], [profilesData]);
   const confirm = useConfirmProfile();
   const confirmProfile = (id: string) => confirm.mutate(id);
 
@@ -190,13 +198,13 @@ export function useApp() {
   const resolveProposal = (decision: "applied" | "rejected") => { const id = proposal?.id; if (!id) return; (decision === "applied" ? api.applyReschedule(id) : api.rejectReschedule(id)).then(() => qc.invalidateQueries({ queryKey: qk.inbox() })); };
 
   // merge attributions
-  const { data: attrsRaw = [] } = useQuery({ queryKey: ["attributions"], queryFn: () => api.attributions() });
-  const attributions = attrsRaw.map(toMockAttribution);
+  const { data: attrsRaw } = useQuery({ queryKey: ["attributions"], queryFn: () => api.attributions(), enabled: role === "manager" });
+  const attributions = useMemo(() => (attrsRaw ?? []).map(toMockAttribution), [attrsRaw]);
   const resolveAttribution = (id: string, username: string) => { api.resolveAttribution(id, { username }).then(() => qc.invalidateQueries({ queryKey: ["attributions"] })); };
 
   // code-graph drift
   const { data: driftRaw } = useQuery({ queryKey: ["drift"], queryFn: () => api.checkDrift().then((r) => r.reports), staleTime: 60_000 });
-  const drift = (driftRaw ?? []).map((d, i) => ({ ...d, id: `dr${i}`, title: d.drift_from_description || d.violation, detail: d.violation || d.suggested_fix, paths: d.affected_files ?? [], scheduled: false }));
+  const drift = useMemo(() => (driftRaw ?? []).map((d, i) => ({ ...d, id: `dr${i}`, title: d.drift_from_description || d.violation, detail: d.violation || d.suggested_fix, paths: d.affected_files ?? [], scheduled: false })), [driftRaw]);
   const scheduleRefactor = (id: string) => {
     const idx = parseInt(id.replace("dr", ""), 10);
     const report = (driftRaw ?? [])[idx];

@@ -5,9 +5,9 @@
    → pings the producer).
 
    Ported pixel-1:1 from the v5 mockup (app/QAGate.jsx). Data source: REAL backend —
-   api.qaRun(projectId) drives the checklist; api.rejectIssue reopens+reroutes. The
-   scripted QA_RUN/QA_PRODUCERS below are fallback seeds only (before a run is fired). */
-import { useEffect, useState } from "react";
+   api.qaRun(projectId) drives the checklist; api.rejectIssue reopens+reroutes. Before a
+   run the checklist is empty (a prompt to run acceptance) — no scripted/fabricated rows. */
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
@@ -18,19 +18,6 @@ import { Avatar, Badge, Button, DiscDot } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 import { ProjectSwitcher } from "../components/ProjectSwitcher";
 
-// Fallback seed shown only before a real run has been triggered. The primary path
-// replaces these items with the live api.qaRun(projectId) result.
-const QA_RUN: any = {
-  project: "Harbor Logistics", plan: "plan_HARB_42",
-  items: [
-    { issue_id: "HARB-119", title: "Filter rail tokens + spacing", verdict: "pass", note: "Matches the design-system skeleton tokens.", runner: "mira", disc: "uiux" },
-    { issue_id: "HARB-090", title: "Token-scope service — audience-pinned", verdict: "pass", note: "No wildcard tokens; audience claim verified.", runner: "rajiv", disc: "backend" },
-    { issue_id: "HARB-201", title: "Preview environments per MR", verdict: "pass", note: "Envs spin up green on every MR.", runner: "dario", disc: "devops" },
-    { issue_id: "HARB-104", title: "Geo-cluster perf — 60fps @ 12k pins", verdict: "fail", note: "Drops to 38fps at 9k pins — assertion on the pin budget fails.", runner: "noah", disc: "frontend" },
-    { issue_id: "HARB-118", title: "Share-link expired state", verdict: "needs_human", note: "Expired link 404s instead of a recoverable state — judgement call on copy.", runner: "talia", disc: "frontend" },
-  ],
-  reopened: [],
-};
 const VERDICT_META: Record<string, { label: string; tone: string; icon: string }> = {
   pass:        { label: "Pass",        tone: "green",  icon: "check" },
   fail:        { label: "Fail",        tone: "red",    icon: "close" },
@@ -54,7 +41,7 @@ export function QAGate() {
   // cross-project QA queue — every project with acceptance work outstanding (the Tester is no longer
   // locked to one project). The ProjectSwitcher narrows it; selecting a row scopes the acceptance below.
   const { data: queueResp } = useQuery({ queryKey: ["qaQueue"], queryFn: () => api.qaQueue() });
-  const queue: QAQueueEntry[] = queueResp?.queue ?? [];
+  const queue: QAQueueEntry[] = useMemo(() => queueResp?.queue ?? [], [queueResp]);
   const queueShown = projectFilter == null ? queue : queue.filter((e) => e.project_id === projectFilter);
 
   const [projectId, setProjectId] = useState<number | null>(projectFilter ?? liveProjectId ?? null);
@@ -62,20 +49,19 @@ export function QAGate() {
   const [running, setRunning] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [rejecting, setRejecting] = useState<string | null>(null); // issue_id being rejected
-  const [flagging, setFlagging] = useState(false);
-  const [blocks, setBlocks] = useState<any[]>([]); // failing-dep flags holding the gate
 
   // follow the topbar ProjectSwitcher; otherwise default to the top queue entry once it loads
   useEffect(() => { if (projectFilter != null && projectFilter !== projectId) { setProjectId(projectFilter); setRan(false); setItems([]); setRejecting(null); } }, [projectFilter, projectId]);
   useEffect(() => { if (projectId == null && queue.length) setProjectId(queue[0].project_id); }, [queue, projectId]);
 
   const project = projects.find((p: any) => p.project_id === projectId);
-  // Before a run, fall back to the scripted seed so the strip/checklist still render.
-  const display = ran ? items : QA_RUN.items;
+  const sel = queue.find((e) => e.project_id === projectId);  // selected queue entry → its real plan_id pre-run
+  // No scripted preview: before a run the checklist is empty and the header prompts to run acceptance.
+  const display = ran ? items : [];
 
   const pass = display.filter((i: any) => i.verdict === "pass").length;
   const total = display.length;
-  const gateBlocked = blocks.length > 0 || display.some((i: any) => i.verdict === "fail" && !i.rerouted);
+  const gateBlocked = display.some((i: any) => i.verdict === "fail" && !i.rerouted);
 
   const runAcceptance = async () => {
     if (projectId == null) { toast.error("Pick a project to run acceptance on."); return; }
@@ -107,16 +93,11 @@ export function QAGate() {
       toast.error(e instanceof Error ? e.message : "Reject failed");
     }
   };
-  const addFlag = (c: any) => {
-    setBlocks(b => [...b, { ...c, reporter: "HARB-300" }]);
-    setFlagging(false);
-  };
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <ViewChrome breadcrumb={[project?.name ?? "QA", "Tester"]}>
         <Badge tone={gateBlocked ? "red" : "green"}>{gateBlocked ? "gate blocked" : "gate open"}</Badge>
-        <Badge tone="outline" mono>{ran ? `${total} checks` : QA_RUN.plan}</Badge>
+        <Badge tone="outline" mono>{ran ? `${total} checks` : (sel?.plan_id ?? "—")}</Badge>
         <ProjectSwitcher />
       </ViewChrome>
 
@@ -190,8 +171,7 @@ export function QAGate() {
           </div>
 
           {/* integration / failing-API — consumer + QA side */}
-          <Integration blocks={blocks} flagging={flagging} setFlagging={setFlagging} addFlag={addFlag}
-            onClear={(i: number) => setBlocks(b => b.filter((_, j) => j !== i))} />
+          <Integration />
         </div>
       </div>
     </div>
@@ -293,62 +273,23 @@ function RejectForm({ item, members, onReroute }: any) {
   );
 }
 
-/* consumer + QA side of the failing-API flow (§28) */
-const QA_PRODUCERS = [
-  { id: "HARB-090", title: "Token-scope service", assignee: "rajiv", api_contract: "POST /api/scopes" },
-  { id: "HARB-091", title: "Rate-limit + retry budget", assignee: "rajiv", api_contract: "middleware/ratelimit" },
-];
-function Integration({ blocks, flagging, setFlagging, addFlag }: any) {
+/* §28 failing-API gate (consumer side). The wired report→block→ping flow (POST …/integration/flag)
+   is a Claude-Design item — see docs/UI-NEEDS.md — so the Tester never shows a fabricated producer. */
+function Integration() {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <Icon name="bolt" size={14} style={{ color: "var(--text-primary)" }} />
         <span className="kicker" style={{ fontSize: 10 }}>Integration · failing dependency</span>
-        <div style={{ flex: 1 }} />
-        <Button variant="secondary" size="sm" icon="bolt" onClick={() => setFlagging((f: boolean) => !f)}>Report failing dependency</Button>
       </div>
       <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", margin: "0 0 12px", lineHeight: 1.5 }}>
         A failing producer contract holds the <b style={{ color: "var(--text-primary)" }}>accept</b> gate <b style={{ color: "var(--text-primary)" }}>blocked</b> and pings the producer's Inbox — acceptance can't pass until they fix it.
       </p>
-
-      {flagging && (
-        <div style={{ border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: 13, marginBottom: 12, background: "var(--bg-secondary)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
-            <Icon name="flag" size={13} style={{ color: "var(--text-tertiary)" }} />
-            <span style={{ fontSize: 12.5, fontWeight: 500 }}>More than one upstream producer — pick which contract is failing</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {QA_PRODUCERS.map(c => (
-              <button key={c.id} onClick={() => addFlag(c)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", textAlign: "left",
-                background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-md)" }}>
-                <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", width: 60 }}>{c.id}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 500 }}>{c.title}</div>
-                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{c.api_contract} · @{c.assignee}</div>
-                </div>
-                <Icon name="chevronRight" size={14} style={{ color: "var(--text-quaternary)" }} />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }}>
-        {blocks.length === 0 ? (
-          <div style={{ padding: "13px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)" }} />
-            <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>All producer contracts green.</span>
-          </div>
-        ) : blocks.map((s: any, i: number) => (
-          <div key={s.id + i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderTop: i ? "0.5px solid var(--border-subtle)" : "none" }}>
-            <Badge tone="red">failing</Badge>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 500 }}>{s.title} <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 400 }}>{s.id}</span></div>
-              <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{s.api_contract} · pinged @{s.assignee} · accept gate <b style={{ color: "var(--text-primary)" }}>blocked</b></div>
-            </div>
-            <Badge tone="outline" mono>acceptance held</Badge>
-          </div>
-        ))}
+        <div style={{ padding: "13px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)" }} />
+          <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>All producer contracts green.</span>
+        </div>
       </div>
     </div>
   );

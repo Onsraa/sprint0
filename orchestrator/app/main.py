@@ -173,6 +173,9 @@ async def _startup() -> None:
                 continue
             pid = rec["project_id"]
             PROJECTS[pid] = PlanJSON(**rec["plan"])
+            # No relay parity: a dispatched project is FINISHED, so its relay has LEFT the board — the
+            # Relays pool shows in-flight plans only (empty on a clean env until a brief is planned, which
+            # is correct). We still backfill Tasks below so per-account work views populate.
             try:
                 if not await tasks_for_project(pid):  # never materialized (pre-Phase-A / seeded) → backfill
                     objs = tasklib.materialize_tasks(PROJECTS[pid], pid, now)
@@ -1021,6 +1024,9 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
     except Exception:
         pass  # never block dispatch on task persistence
     RESULTS[plan_id] = result
+    # The relay is FINISHED → drop it from the in-flight board (the project now lives in Projects + Tester).
+    RELAYS.pop(plan_id, None)
+    PLANS.pop(plan_id, None)
     return {"plan_id": plan_id, "mode": req.mode, **result}
 
 
