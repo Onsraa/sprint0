@@ -23,7 +23,8 @@ export function AgreementCard({ a, onRatify, onReject, busy }: {
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: SIG[a.state] ?? "var(--text-quaternary)", flexShrink: 0 }} />
         <span className="mono" style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-quaternary)" }}>Interface contract</span>
         <span style={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0 }}>{a.subject}</span>
-        {(a.state === "ratified" || a.state === "auto_passed") && <Badge tone="green"><Icon name="check" size={10} />both signed</Badge>}
+        {a.state === "ratified" && <Badge tone="green"><Icon name="check" size={10} />both signed</Badge>}
+        {a.state === "auto_passed" && <Badge tone="ink"><Icon name="relay" size={10} />compounded</Badge>}
       </div>
       {c && (
         <div style={{ padding: "12px 13px" }}>
@@ -42,7 +43,8 @@ export function AgreementCard({ a, onRatify, onReject, busy }: {
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 13px", borderTop: "0.5px solid var(--border-subtle)" }}>
         <span style={{ fontSize: 11, color: "var(--text-tertiary)", flex: 1, minWidth: 0 }}>
-          {a.state === "ratified" || a.state === "auto_passed" ? "Ratified — the mock is live; both sides build to this." :
+          {a.state === "auto_passed" ? "Auto-passed — the agency ratified this shape before; compounded, no meeting." :
+           a.state === "ratified" ? "Ratified — the mock is live; both sides build to this." :
            waiting.length ? `Waiting on ${waiting.join(", ")}` : "Both leads must sign."}
         </span>
         {onReject && a.state === "proposed" && <Button variant="ghost" size="sm" disabled={busy} onClick={onReject}>Reject</Button>}

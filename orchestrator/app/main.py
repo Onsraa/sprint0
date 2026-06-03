@@ -50,7 +50,7 @@ from app.rag import (
     tasks_for_project, update_task,
     save_reschedule_proposal, open_reschedule_proposals,
     get_reschedule_proposal, update_reschedule_proposal,
-    save_agreement, agreements_for_plan, agreements_for_ratifier, get_agreement, update_agreement,
+    save_agreement, agreements_for_plan, agreements_for_ratifier, get_agreement, update_agreement, all_agreements,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -768,16 +768,27 @@ async def _create_interface_agreements(plan_id: str, plan: PlanJSON) -> None:
             return
         members = team.all_members()
         now = datetime.now(timezone.utc).isoformat()
+        past = await all_agreements()  # the precedent pool (the compounding memory)
         for a in drafts:
             a.id = f"agr_{uuid.uuid4().hex[:8]}"
             a.plan_id = plan_id
             a.ratifiers = agreements.ratifiers_for(a, members)
             a.created_at = a.updated_at = now
-            await save_agreement(a.model_dump())
-            for u in a.ratifiers:
-                await notify(u, "agreement_proposed", f"Interface contract · {a.subject}",
-                             body=f"{a.producer_discipline}↔{a.consumer_discipline}: ratify the API both sides build to.",
-                             ref={"agreement_id": a.id, "plan_id": plan_id}, actionable=True)
+            precedent = agreements.find_precedent(a.model_dump(), past)
+            if precedent:
+                # COMPOUND: the team already ratified this exact shape → auto-pass + seed the mock now, no routing
+                a.state, a.precedent_id = "auto_passed", precedent
+                if a.interface and a.producer_issue_id:
+                    _apply_api_contract(plan_id, a.producer_issue_id, json.dumps(agreements.mock_from_schema(a.interface.response_fields)))
+                await save_agreement(a.model_dump())
+            else:
+                a.state = "proposed"
+                await save_agreement(a.model_dump())
+                for u in a.ratifiers:
+                    await notify(u, "agreement_proposed", f"Interface contract · {a.subject}",
+                                 body=f"{a.producer_discipline}↔{a.consumer_discipline}: ratify the API both sides build to.",
+                                 ref={"agreement_id": a.id, "plan_id": plan_id}, actionable=True)
+            past.append(a.model_dump())  # a 2nd identical draft in this same plan also compounds
     except Exception:
         pass
 

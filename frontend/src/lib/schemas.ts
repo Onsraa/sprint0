@@ -321,6 +321,7 @@ export const Agreement = z.object({
   interface: InterfaceDraft.nullish(),
   grounded_on: z.array(z.string()).optional(), ratifiers: z.array(z.string()),
   ratifications: z.array(unknownRecord).optional(), state: z.string(),
+  precedent_id: z.string().nullish(),   // P3: the past ratified agreement it auto-passed from (compounded)
   producer_discipline: z.string().nullish(), consumer_discipline: z.string().nullish(),
   producer_issue_id: z.string().nullish(), consumer_issue_id: z.string().nullish(),
 });

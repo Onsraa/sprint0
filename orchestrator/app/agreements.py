@@ -75,6 +75,28 @@ def _type_ok(value, t: str) -> bool:
     return isinstance(value, py) if py else True
 
 
+def _iface_sig(a: dict) -> tuple:
+    """The compounding signature of an interface agreement — disciplines + path + the response field set.
+    Two agreements with the same signature are the SAME coordination decision."""
+    iface = a.get("interface") or {}
+    names = tuple(sorted(f.get("name", "") for f in (iface.get("response_fields") or [])))
+    return (a.get("producer_discipline"), a.get("consumer_discipline"), iface.get("path", ""), names)
+
+
+def find_precedent(new: dict, past: list[dict]) -> str | None:
+    """A past *ratified* interface agreement with the same signature — the team already agreed on this
+    shape, so the new one can **auto-pass** + compound from it (coordination cost drops as the agency
+    ships). Returns the precedent's id, or None. Both args are model_dump() dicts."""
+    if new.get("type") != "interface":
+        return None
+    sig = _iface_sig(new)
+    for p in past:
+        if (p.get("type") == "interface" and p.get("state") in ("ratified", "auto_passed")
+                and p.get("id") != new.get("id") and _iface_sig(p) == sig):
+            return p.get("id")
+    return None
+
+
 def verify_against(contract: InterfaceDraft, payload: dict) -> list[str]:
     """Shape-check a merged producer payload against the ratified response contract. Returns the list of
     violations (empty = clean) — a non-empty list IS the contract violation the verify beat escalates."""

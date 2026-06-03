@@ -69,3 +69,23 @@ def test_verify_against_flags_violations():
     assert A.verify_against(c, {"id": 1, "name": "x"}) == []                  # clean
     assert A.verify_against(c, {"id": 1}) == ["missing required `name`"]      # missing
     assert A.verify_against(c, {"id": "oops", "name": "x"}) == ["`id` should be integer"]  # type mismatch
+
+
+# ── P3 compounding: auto-pass from a ratified precedent ──────────────────────
+def test_find_precedent_matches_same_signature_when_ratified():
+    past = [{"id": "old", "type": "interface", "state": "ratified", "producer_discipline": "backend",
+             "consumer_discipline": "frontend",
+             "interface": {"path": "/api/x", "response_fields": [{"name": "id"}, {"name": "amount"}]}}]
+    new = {"id": "new", "type": "interface", "producer_discipline": "backend", "consumer_discipline": "frontend",
+           "interface": {"path": "/api/x", "response_fields": [{"name": "amount"}, {"name": "id"}]}}  # same set, any order
+    assert A.find_precedent(new, past) == "old"
+
+
+def test_find_precedent_none_when_unratified_or_different():
+    new = {"id": "n", "type": "interface", "producer_discipline": "backend", "consumer_discipline": "frontend",
+           "interface": {"path": "/api/x", "response_fields": [{"name": "id"}]}}
+    unratified = [{"id": "p", "type": "interface", "state": "proposed", "producer_discipline": "backend",
+                   "consumer_discipline": "frontend", "interface": {"path": "/api/x", "response_fields": [{"name": "id"}]}}]
+    assert A.find_precedent(new, unratified) is None                         # precedent not ratified → no auto-pass
+    diff_path = [{**unratified[0], "state": "ratified", "interface": {"path": "/api/y", "response_fields": [{"name": "id"}]}}]
+    assert A.find_precedent(new, diff_path) is None                          # different shape → no match

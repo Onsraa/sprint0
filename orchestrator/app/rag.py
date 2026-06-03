@@ -268,6 +268,14 @@ async def agreements_for_ratifier(username: str) -> list[dict]:
     return [r for r in rows if username in (r.get("ratifiers") or []) and r.get("state") == "proposed"]
 
 
+async def all_agreements(limit: int = 1000) -> list[dict]:
+    """The whole pool — the precedent memory the compounding check reads (find a ratified match → auto-pass)."""
+    if demo.is_demo():
+        return [dict(d) for d in _DEMO_AGREEMENTS.values()]
+    async with MongoMCP() as m:
+        return await m.find(AGREEMENTS_COLLECTION, projection={"_id": 0}, limit=limit)
+
+
 async def get_agreement(agreement_id: str) -> dict:
     if demo.is_demo():
         return dict(_DEMO_AGREEMENTS.get(agreement_id) or {})
