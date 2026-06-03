@@ -1301,6 +1301,9 @@ class MergeRequest(BaseModel):
     score: float = 0.85
     project_id: Optional[int] = None  # if set with issue_iid, clears the issue from the re-QA queue
     issue_iid: Optional[int] = None
+    plan_id: Optional[str] = None         # with issue_id + output_sample: verify the merged slice vs its contract
+    issue_id: Optional[str] = None        # the plan's producer issue id (e.g. "E1-1")
+    output_sample: Optional[dict] = None  # the producer's real response shape (what the dev's CI already verified)
 
 
 @app.post("/api/projects/{project_id}/issues/{iid}/reject")
@@ -2184,27 +2187,65 @@ class AttributionResolve(BaseModel):
     task_type: Optional[str] = None
 
 
+async def _verify_on_merge(req: MergeRequest) -> Optional[dict]:
+    """The VERIFY beat at the ONLY listened action — MERGE. If the merge carries the producer's output
+    sample (the real response shape the dev's CI already verified) + its plan/issue, shape-check it against
+    the ratified interface contract. A violation = the merged reality diverging from a ratified agreement →
+    an IntegrationSignal that holds the gate + pings the producer (the same enforcement the manual verify
+    uses). No sample → nothing to check (graceful — a missed contract never becomes a false alarm)."""
+    if not (req.plan_id and req.issue_id and req.output_sample is not None):
+        return None
+    plan = PLANS.get(req.plan_id)
+    if plan is None:
+        return None
+    state = RELAYS.get(req.plan_id)
+    now = datetime.now(timezone.utc).isoformat()
+    for raw in await agreements_for_plan(req.plan_id):
+        if raw.get("type") != "interface" or raw.get("state") not in ("ratified", "auto_passed"):
+            continue
+        if raw.get("producer_issue_id") != req.issue_id:
+            continue
+        viol = agreements.verify_against(InterfaceDraft(**(raw.get("interface") or {})), req.output_sample)
+        if viol and state is not None:  # drift → the existing integration gate enforces it
+            relay.record_integration_signal(state, IntegrationSignal(
+                target_issue_id=req.issue_id, state="failing", by="sprint0", source="ai",
+                note=f"Contract violation on merge: {'; '.join(viol)}", created_at=now))
+            prod = next((i for e in plan.epics for i in e.issues if i.id == req.issue_id), None)
+            if prod and prod.assignee:
+                await notify(prod.assignee, "qa_failed", f"Contract violation · {raw.get('subject')}",
+                             body="; ".join(viol), ref={"plan_id": req.plan_id, "issue_id": req.issue_id}, actionable=True)
+        return {"agreement_id": raw.get("id"), "subject": raw.get("subject"), "ok": not viol, "violations": viol}
+    return None
+
+
 @app.post("/api/merge")
 async def merge(req: MergeRequest, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Passport-increment-on-merge (+ auto-promotion). If it resolves a rejected issue, clear it
     from the re-QA queue. If no roster member matches the merge identity → queue for manager
-    attribution (chain priority: gitlab_user_id → runner label → here, the human fallback)."""
+    attribution (chain priority: gitlab_user_id → runner label → here, the human fallback).
+    Merge is the verify beat: if the slice carries an output sample, shape-check it vs its contract."""
     if req.project_id is not None and req.issue_iid is not None:
         REQA.get(req.project_id, set()).discard(req.issue_iid)
+    contract = await _verify_on_merge(req)  # the verify beat (None when the merge carries no sample to check)
+
+    def _with(out: dict) -> dict:
+        if contract is not None:
+            out["contract"] = contract
+        return out
     if demo.is_demo():  # grow the in-mem roster dev directly (record_merge's Atlas read returns nothing in demo)
         grown = team.grow_demo_member(req.gitlab_username, req.task_type)
         if grown:
-            return grown
+            return _with(grown)
     result = await record_merge(req.gitlab_username, req.task_type, req.score)
     if result:
-        return result
+        return _with(result)
     aid = f"att_{uuid.uuid4().hex[:8]}"
     ATTRIBUTIONS.append({
         "id": aid, "gitlab_username": req.gitlab_username, "task_type": req.task_type,
         "score": req.score, "project_id": req.project_id, "issue_iid": req.issue_iid,
         "suggested": _suggest_attribution(req.gitlab_username),
     })
-    return {"needs_attribution": True, "attribution_id": aid, "suggested": ATTRIBUTIONS[-1]["suggested"]}
+    return _with({"needs_attribution": True, "attribution_id": aid, "suggested": ATTRIBUTIONS[-1]["suggested"]})
 
 
 @app.get("/api/attributions")

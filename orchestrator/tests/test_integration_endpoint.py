@@ -132,3 +132,66 @@ def test_producer_marks_ok_unblocks_qa():
     assert _status(state, "qa") == "blocked"
     res = _flag("p7", _by("sprint0-se"), state="ok", target_issue_id="b1")          # producer (target assignee) clears
     assert "gates" in res and _status(state, "qa") == "pending"
+
+
+# --- verify-on-merge: the contract-violation beat at the only listened action (MERGE) ---
+
+def _iface_raw(pid, producer_issue_id, state="ratified"):
+    """A ratified interface agreement requiring an integer `id` + a number `amount` on the producer."""
+    return {"id": "ag1", "type": "interface", "plan_id": pid, "state": state,
+            "subject": "backend↔frontend · /api/x", "producer_issue_id": producer_issue_id,
+            "interface": {"method": "GET", "path": "/api/x", "request_fields": [], "errors": [],
+                          "response_fields": [{"name": "id", "type": "integer", "required": True},
+                                              {"name": "amount", "type": "number", "required": True}]}}
+
+
+def _merge(pid, monkeypatch, agreements_list, **body):
+    """Drive /api/merge with Atlas-touching deps stubbed; returns (response, [pinged users])."""
+    async def _afp(_plan_id):
+        return agreements_list
+    async def _rec(*a, **k):
+        return {"merged": True}
+    pings = []
+    async def _notify(user, *a, **k):
+        pings.append(user)
+    monkeypatch.setattr(main.demo, "is_demo", lambda: False)
+    monkeypatch.setattr(main, "agreements_for_plan", _afp)
+    monkeypatch.setattr(main, "record_merge", _rec)
+    monkeypatch.setattr(main, "notify", _notify)
+    res = asyncio.run(main.merge(main.MergeRequest(gitlab_username="sprint0-se", task_type="backend", **body),
+                                 _by("sprint0-se")))
+    return res, pings
+
+
+def test_merge_contract_violation_raises_signal(monkeypatch):
+    _, state = _seed("m1", _be_fe())                                                 # b1 = backend producer, assignee sprint0-se
+    res, pings = _merge("m1", monkeypatch, [_iface_raw("m1", "b1")],
+                        plan_id="m1", issue_id="b1", output_sample={"id": 1})         # missing required `amount`
+    assert res["contract"]["ok"] is False
+    assert any("amount" in v for v in res["contract"]["violations"])
+    assert [s.target_issue_id for s in relay.open_integration_failures(state)] == ["b1"]
+    assert _status(state, "qa") == "blocked"                                          # the existing gate enforces it
+    assert pings == ["sprint0-se"]                                                    # producer pinged to fix
+
+
+def test_merge_contract_clean_no_signal(monkeypatch):
+    _, state = _seed("m2", _be_fe())
+    res, pings = _merge("m2", monkeypatch, [_iface_raw("m2", "b1")],
+                        plan_id="m2", issue_id="b1", output_sample={"id": 1, "amount": 9.5})
+    assert res["contract"]["ok"] is True and res["contract"]["violations"] == []
+    assert relay.open_integration_failures(state) == [] and pings == []
+
+
+def test_merge_without_sample_skips_verify(monkeypatch):
+    _, state = _seed("m3", _be_fe())
+    res, _pings = _merge("m3", monkeypatch, [_iface_raw("m3", "b1")])                 # no plan_id/issue_id/output_sample
+    assert "contract" not in res                                                      # graceful: nothing to check
+    assert relay.open_integration_failures(state) == []
+
+
+def test_merge_unratified_contract_not_enforced(monkeypatch):
+    _, state = _seed("m4", _be_fe())
+    res, pings = _merge("m4", monkeypatch, [_iface_raw("m4", "b1", state="proposed")],  # not yet ratified
+                        plan_id="m4", issue_id="b1", output_sample={"id": 1})          # would violate IF enforced
+    assert res.get("contract") is None                                               # only ratified/auto_passed contracts bind
+    assert relay.open_integration_failures(state) == [] and pings == []
