@@ -3,7 +3,8 @@ Phase 3. Kept schema-valid so the frontend + tests exercise the real contract.
 """
 from app.contracts import (
     ArchitectureOptions, ClarifiedSpec, ConflictVerdict, Decision, DecisionCardPass1, DeveloperProfile,
-    Notification, ParsedCV, PlanJSON, ProjectRecord, QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
+    InterfaceDraft, Notification, ParsedCV, PlanJSON, ProjectRecord, QAReport, RegeneratedSlice,
+    RescheduleStrategy, SolutionSet,
 )
 
 CANNED_PLAN = PlanJSON.model_validate(
@@ -49,8 +50,9 @@ CANNED_PLAN = PlanJSON.model_validate(
                         "required_skill": "frontend:forms",
                         "context_scope": {
                             "files": ["src/pages/Login.tsx", "src/api/client.ts"],
-                            "note": "No backend context needed.",
+                            "note": "Consumes the auth API (E1-1) — needs the interface contract.",
                         },
+                        "depends_on": ["E1-1"],
                         "assignee": "sam",
                     },
                 ],
@@ -322,6 +324,28 @@ CANNED_SOLUTIONS = SolutionSet.model_validate(
                 "grounded_on": [],
             },
         ],
+    }
+)
+
+# The cross-stack interface contract the demo drafts (backend producer ↔ frontend consumer). Reuse-grounded.
+CANNED_INTERFACE = InterfaceDraft.model_validate(
+    {
+        "method": "GET",
+        "path": "/api/transactions",
+        "request_fields": [
+            {"name": "since", "type": "string", "required": False, "note": "ISO date cursor"},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        "response_fields": [
+            {"name": "id", "type": "integer", "required": True},
+            {"name": "amount", "type": "number", "required": True},
+            {"name": "currency", "type": "string", "required": True},
+            {"name": "merchant", "type": "string", "required": True},
+            {"name": "posted_at", "type": "string", "required": True},
+            {"name": "pending", "type": "boolean", "required": False},
+        ],
+        "errors": ["401 unauthorized", "404 not_found"],
+        "note": "Reuses QuantaPay's idempotent transaction-feed shape.",
     }
 )
 

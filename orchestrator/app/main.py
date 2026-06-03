@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import io
+import json
 import os
 import time
 import uuid
@@ -24,10 +25,10 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import auth, canned, demo, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
+from app import agreements, auth, canned, demo, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
-    AccessGrant, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
+    AccessGrant, Agreement, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
@@ -49,10 +50,11 @@ from app.rag import (
     tasks_for_project, update_task,
     save_reschedule_proposal, open_reschedule_proposals,
     get_reschedule_proposal, update_reschedule_proposal,
+    save_agreement, agreements_for_plan, agreements_for_ratifier, get_agreement, update_agreement,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
-    propose_solutions, qa_review, reconcile_links, regenerate_slice, run_brief,
+    propose_interfaces, propose_solutions, qa_review, reconcile_links, regenerate_slice, run_brief,
 )
 
 app = FastAPI(title="sprint0", version="0.4.0")
@@ -361,7 +363,7 @@ async def _push_ws(user_id: str, payload: dict) -> None:
             _WS_CLIENTS.get(user_id, set()).discard(ws)
 
 
-async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned", "task_completed", "drift_flagged"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
+async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned", "task_completed", "drift_flagged", "agreement_proposed"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
     """Best-effort: append a Notification to a member's Inbox feed + push it live over WS (System 5)."""
     try:
         if await notification_exists(user_id, type, ref or {}):
@@ -740,7 +742,78 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
     PLANS[plan_id] = plan
     RELAYS[plan_id] = relay.build_relay(plan)  # the one-shot output is now a DRAFT entering the relay
     await _persist_draft_tasks(plan, plan_id)
+    await _create_interface_agreements(plan_id, plan)  # CDD: draft + route the cross-discipline contracts
     return {"plan_id": plan_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
+
+
+# ── Agreement engine: interface contracts (CDD) — draft → route → ratify → auto-mock ──
+def _apply_api_contract(plan_id: str, issue_id: str, contract: str) -> None:
+    """Seed the producer issue's `api_contract` (the mock that flows to the FE context)."""
+    plan = PLANS.get(plan_id)
+    if not plan:
+        return
+    for e in plan.epics:
+        for i in e.issues:
+            if i.id == issue_id:
+                i.api_contract = contract
+                return
+
+
+async def _create_interface_agreements(plan_id: str, plan: PlanJSON) -> None:
+    """Draft an interface contract at every cross-discipline dependency edge + route each to its two lane
+    leads' Inboxes (minimal-ratifier). Best-effort — a miss is still caught at the integration gate."""
+    try:
+        drafts = await propose_interfaces(plan)
+        if not drafts:
+            return
+        members = team.all_members()
+        now = datetime.now(timezone.utc).isoformat()
+        for a in drafts:
+            a.id = f"agr_{uuid.uuid4().hex[:8]}"
+            a.plan_id = plan_id
+            a.ratifiers = agreements.ratifiers_for(a, members)
+            a.created_at = a.updated_at = now
+            await save_agreement(a.model_dump())
+            for u in a.ratifiers:
+                await notify(u, "agreement_proposed", f"Interface contract · {a.subject}",
+                             body=f"{a.producer_discipline}↔{a.consumer_discipline}: ratify the API both sides build to.",
+                             ref={"agreement_id": a.id, "plan_id": plan_id}, actionable=True)
+    except Exception:
+        pass
+
+
+@app.get("/api/plans/{plan_id}/agreements")
+async def list_agreements(plan_id: str, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    return {"agreements": await agreements_for_plan(plan_id)}
+
+
+@app.get("/api/me/agreements")
+async def my_agreements(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The agreements awaiting MY signature — the Inbox queue (minimal-ratifier routing, no broadcast)."""
+    return {"agreements": await agreements_for_ratifier(member.username)}
+
+
+class RatifyAgreementBody(BaseModel):
+    decision: Literal["ratified", "rejected"] = "ratified"
+    note: str = ""
+
+
+@app.post("/api/agreements/{agreement_id}/ratify")
+async def ratify_agreement(agreement_id: str, body: RatifyAgreementBody,
+                           member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    raw = await get_agreement(agreement_id)
+    if not raw:
+        raise HTTPException(404, "agreement not found")
+    a = Agreement(**raw)
+    if member.username not in a.ratifiers and member.role != "manager":
+        raise HTTPException(403, "not a ratifier of this agreement")
+    agreements.apply_ratification(a, member.username, body.decision, body.note,
+                                  datetime.now(timezone.utc).isoformat())
+    # auto-mock: a ratified interface contract seeds the producer issue's api_contract (flows to the FE)
+    if a.state == "ratified" and a.type == "interface" and a.interface and a.producer_issue_id:
+        _apply_api_contract(a.plan_id, a.producer_issue_id, json.dumps(agreements.mock_from_schema(a.interface.response_fields)))
+    await update_agreement(agreement_id, a.model_dump())
+    return a.model_dump()
 
 
 @app.get("/api/plans/{plan_id}", response_model=PlanJSON)

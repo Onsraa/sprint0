@@ -8,6 +8,9 @@ import { toast } from "sonner";
 import { Button, Avatar, Badge } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 import { useApp } from "../app/useApp";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "../lib/api";
+import { AgreementCard } from "./AgreementCard";
 
 /* notification kind → icon + label. spark events render in ink, not hue. */
 const NOTIF_META: Record<string, { icon: any; label: string; spark?: boolean }> = {
@@ -46,6 +49,15 @@ export function InboxPage() {
   const { notifs, markAllRead, setView, accessRequests, acceptAccess, rejectAccess } = useApp();
   const [sel, setSel] = useState<string | null>(notifs[0]?.id || null);
   const [snoozed, setSnoozed] = useState<Set<string>>(() => new Set());
+  // Agreement engine: the interface contracts awaiting MY signature (minimal-ratifier routing).
+  const qc = useQueryClient();
+  const { data: agData } = useQuery({ queryKey: ["myAgreements"], queryFn: () => api.myAgreements() });
+  const agreements = agData?.agreements ?? [];
+  const ratifyAg = useMutation({
+    mutationFn: ({ id, d }: { id: string; d: "ratified" | "rejected" }) => api.ratifyAgreement(id, d),
+    onSuccess: (_r, v) => { qc.invalidateQueries({ queryKey: ["myAgreements"] }); toast.success(v.d === "ratified" ? "Contract ratified" : "Rejected"); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+  });
   const NEEDS = ["ratify", "ratify_needed", "blocked", "reschedule", "reschedule_proposed"];
   const visible = notifs.filter((n: any) => !snoozed.has(n.id));
   const needs = visible.filter((n: any) => NEEDS.includes(n.kind));
@@ -59,7 +71,14 @@ export function InboxPage() {
       </ViewChrome>
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={{ width: 380, flexShrink: 0, borderRight: "0.5px solid var(--border)", overflow: "auto" }}>
-          <Group label="Needs your action" count={needs.length + accessRequests.length}>
+          <Group label="Needs your action" count={needs.length + accessRequests.length + agreements.length}>
+            {agreements.map((a: any) => (
+              <div key={a.id} style={{ padding: "0 12px 10px" }}>
+                <AgreementCard a={a} busy={ratifyAg.isPending}
+                  onRatify={() => ratifyAg.mutate({ id: a.id, d: "ratified" })}
+                  onReject={() => ratifyAg.mutate({ id: a.id, d: "rejected" })} />
+              </div>
+            ))}
             {accessRequests.map((r: any) => <AccessRequestRow key={r.ref?.grant_id} r={r} onAccept={() => acceptAccess(r.ref.grant_id)} onReject={() => rejectAccess(r.ref.grant_id)} />)}
             {needs.map((n: any) => <InboxRow key={n.id} n={n} active={selN?.id === n.id} onClick={() => setSel(n.id)} />)}
           </Group>

@@ -314,6 +314,49 @@ class Decision(BaseModel):
     updated_at: str
 
 
+# ── Agreements (the coordination spine): AI-drafted, async-ratified, compounding ──
+class SchemaField(BaseModel):
+    """One field of an interface payload — a Gemini-safe stand-in for JSON-Schema (no open dicts)."""
+    name: str
+    type: Literal["string", "number", "integer", "boolean", "object", "array", "null"] = "string"
+    required: bool = True
+    note: str = ""
+
+
+class InterfaceDraft(BaseModel):
+    """A cross-discipline interface contract (CDD) — the typed payload of an `interface` Agreement. The AI
+    drafts it from both slices' needs, grounded on past interfaces; both leads ratify it BEFORE either builds."""
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+    path: str = ""                                            # e.g. /api/listings/{id}
+    request_fields: list[SchemaField] = Field(default_factory=list)
+    response_fields: list[SchemaField] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)           # e.g. ["404 not_found", "409 conflict"]
+    note: str = ""
+
+
+class Agreement(BaseModel):
+    """The coordination unit: an AI-drafted, async-ratified, compounding decision. One shape per kind; the
+    typed draft lives in a per-kind slot (only `interface` for P2 — subteam/etc. add later). Additive — does
+    NOT replace `Decision` (which stays the ratification portfolio)."""
+    id: str
+    type: Literal["interface", "subteam", "reuse", "reschedule", "handoff", "assign", "priority"]
+    plan_id: str
+    subject: str = ""                                         # human label of what it binds
+    interface: Optional[InterfaceDraft] = None                # set when type == "interface"
+    grounded_on: list[str] = Field(default_factory=list)
+    ratifiers: list[str] = Field(default_factory=list)        # the MINIMAL consent set (usernames)
+    ratifications: list[dict] = Field(default_factory=list)   # [{by, decision: ratified|rejected, at, note}]
+    state: Literal["proposed", "auto_passed", "ratified", "rejected", "active", "validated"] = "proposed"
+    precedent_id: Optional[str] = None                        # the past ratified agreement it matched (auto-pass)
+    # interface routing/verify context
+    producer_issue_id: Optional[str] = None
+    consumer_issue_id: Optional[str] = None
+    producer_discipline: Optional[str] = None
+    consumer_discipline: Optional[str] = None
+    created_at: str = ""
+    updated_at: str = ""
+
+
 class Notification(BaseModel):
     """A row in a member's Inbox feed. `type` covers ratify, access, QA, ship, and (Phase E)
     reschedule events; `ref` carries deep-link ids (plan_id/grant_id/task_id)."""
@@ -321,7 +364,7 @@ class Notification(BaseModel):
     user_id: str                  # recipient username
     type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed",
                   "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned",
-                  "task_completed", "drift_flagged"]
+                  "task_completed", "drift_flagged", "agreement_proposed"]
     title: str
     body: str = ""
     ref: dict = Field(default_factory=dict)

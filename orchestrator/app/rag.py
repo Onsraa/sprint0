@@ -237,6 +237,54 @@ async def all_decisions(limit: int = 500) -> list[dict]:
         return await m.find(DECISIONS_COLLECTION, projection={"_id": 0}, limit=limit)
 
 
+# ── Agreements (the coordination spine: AI-drafted, async-ratified, compounding) ──
+AGREEMENTS_COLLECTION = "Agreements"
+_DEMO_AGREEMENTS: dict[str, dict] = {}  # DEMO_MODE in-mem store — Atlas writes no-op, so agreements live here
+
+
+async def save_agreement(doc: dict) -> None:
+    if demo.is_demo():
+        _DEMO_AGREEMENTS[doc["id"]] = dict(doc)
+        return
+    async with MongoMCP() as m:
+        await m.insert_many(AGREEMENTS_COLLECTION, [doc])
+
+
+async def agreements_for_plan(plan_id: str) -> list[dict]:
+    if demo.is_demo():
+        return [dict(d) for d in _DEMO_AGREEMENTS.values() if d.get("plan_id") == plan_id]
+    async with MongoMCP() as m:
+        return await m.find(AGREEMENTS_COLLECTION, query={"plan_id": plan_id}, projection={"_id": 0}, limit=200)
+
+
+async def agreements_for_ratifier(username: str) -> list[dict]:
+    """The agreements awaiting THIS person's signature (their Inbox queue) — array-membership filtered
+    client-side to stay portable across the demo in-mem store + Atlas."""
+    if demo.is_demo():
+        rows = [dict(d) for d in _DEMO_AGREEMENTS.values()]
+    else:
+        async with MongoMCP() as m:
+            rows = await m.find(AGREEMENTS_COLLECTION, projection={"_id": 0}, limit=500)
+    return [r for r in rows if username in (r.get("ratifiers") or []) and r.get("state") == "proposed"]
+
+
+async def get_agreement(agreement_id: str) -> dict:
+    if demo.is_demo():
+        return dict(_DEMO_AGREEMENTS.get(agreement_id) or {})
+    async with MongoMCP() as m:
+        rows = await m.find(AGREEMENTS_COLLECTION, query={"id": agreement_id}, projection={"_id": 0}, limit=1)
+    return rows[0] if rows else {}
+
+
+async def update_agreement(agreement_id: str, patch: dict) -> None:
+    if demo.is_demo():
+        if agreement_id in _DEMO_AGREEMENTS:
+            _DEMO_AGREEMENTS[agreement_id].update(patch)
+        return
+    async with MongoMCP() as m:
+        await m.update_many(AGREEMENTS_COLLECTION, {"id": agreement_id}, {"$set": patch})
+
+
 # ── Code Graph (System 4): Graph A (nodes/edges) + Graph B (governance rules) ──
 GRAPH_NODES_COLL = "GraphNodes"
 GRAPH_EDGES_COLL = "GraphEdges"

@@ -305,6 +305,28 @@ export const SolutionSet = z.object({
   solutions: z.array(SolutionCard),
 });
 export type SolutionSet = z.infer<typeof SolutionSet>;
+
+/* ── Agreements (the coordination spine): AI-drafted, async-ratified ──────── */
+export const SchemaField = z.object({
+  name: z.string(), type: z.string(), required: z.boolean().optional(), note: z.string().optional(),
+});
+export const InterfaceDraft = z.object({
+  method: z.string(), path: z.string(),
+  request_fields: z.array(SchemaField), response_fields: z.array(SchemaField),
+  errors: z.array(z.string()), note: z.string().optional(),
+});
+export type InterfaceDraft = z.infer<typeof InterfaceDraft>;
+export const Agreement = z.object({
+  id: z.string(), type: z.string(), plan_id: z.string(), subject: z.string(),
+  interface: InterfaceDraft.nullish(),
+  grounded_on: z.array(z.string()).optional(), ratifiers: z.array(z.string()),
+  ratifications: z.array(unknownRecord).optional(), state: z.string(),
+  producer_discipline: z.string().nullish(), consumer_discipline: z.string().nullish(),
+  producer_issue_id: z.string().nullish(), consumer_issue_id: z.string().nullish(),
+});
+export type Agreement = z.infer<typeof Agreement>;
+export const AgreementList = z.object({ agreements: z.array(Agreement) });
+
 export const RejectResult = z.object({
   issue_iid: z.number(), rerouted_to: z.string().nullable(), awaiting_reqa: z.array(z.number()),
 });

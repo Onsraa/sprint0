@@ -20,7 +20,7 @@ from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 from app.contracts import (
-    ArchitectureOptions, ClarifiedSpec, ConflictVerdict, DecisionCardPass1, ParsedCV, PlanJSON,
+    ArchitectureOptions, ClarifiedSpec, ConflictVerdict, DecisionCardPass1, InterfaceDraft, ParsedCV, PlanJSON,
     QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
 )
 from app import canned, demo
@@ -299,6 +299,24 @@ async def generate_solutions(prompt: str) -> SolutionSet:
     if demo.is_demo():
         return canned.CANNED_SOLUTIONS.model_copy(deep=True)
     return _parse(SolutionSet, await _run_agent(solutions_agent, prompt), solutions_agent.name)
+
+
+# ── Interface Contract (CDD): the two-party agreement between a producer + consumer discipline ──
+INSTRUCTION_INTERFACE = """You draft ONE API interface contract between two disciplines that must integrate \
+(a PRODUCER slice and a CONSUMER slice of the same feature). You are given both slices' issues. Output the \
+contract BOTH sides build against — before either writes code:
+- `method` + `path` (REST), a `request_fields` list and a `response_fields` list (each field: name, a JSON \
+type in {string,number,integer,boolean,object,array,null}, required), and likely `errors` (e.g. "404 not_found").
+- Keep it minimal + honest — only the fields the consumer truly needs. Ground it in the slices' titles; if a \
+past project shipped this exact shape, reuse it. Output structured data only, no prose."""
+
+interface_agent = Agent(name="sprint0_interface", model=MODEL, instruction=INSTRUCTION_INTERFACE, output_schema=InterfaceDraft)
+
+
+async def generate_interface(prompt: str) -> InterfaceDraft:
+    if demo.is_demo():
+        return canned.CANNED_INTERFACE.model_copy(deep=True)
+    return _parse(InterfaceDraft, await _run_agent(interface_agent, prompt), interface_agent.name)
 
 
 INSTRUCTION_REGEN = """A lead chose to WRITE THEIR OWN solution for a gate instead of the AI's options. \

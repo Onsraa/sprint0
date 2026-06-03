@@ -12,11 +12,11 @@ import re
 from datetime import datetime, timezone
 
 from app.agent import (
-    generate_architectures, generate_clarification, generate_cv_profile, generate_plan, generate_qa_report,
-    generate_regen, generate_solutions,
+    generate_architectures, generate_clarification, generate_cv_profile, generate_interface, generate_plan,
+    generate_qa_report, generate_regen, generate_solutions,
 )
 from app.assign import assign_developers
-from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
+from app.contracts import Agreement, ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
 from app.rag import (
     DEV_COLL, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
     all_profiles, cosine_score, decisions_for_project, embed_document, embed_queries, embed_query,
@@ -167,6 +167,41 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
     sset = await generate_solutions(prompt)
     sset.discipline = discipline
     return sset
+
+
+async def propose_interfaces(plan: PlanJSON) -> list[Agreement]:
+    """The CDD detector: every cross-discipline dependency edge → one drafted interface contract. The
+    dependency graph IS the contract coverage, so devs never hand-negotiate an interface. Returns
+    un-persisted Agreements (the caller assigns id + plan_id + ratifiers + routes to the Inbox)."""
+    by_id = {i.id: i for e in plan.epics for i in e.issues}
+    seen: set[tuple[str, str]] = set()
+    out: list[Agreement] = []
+    for cons in by_id.values():
+        for dep in cons.depends_on:
+            prod = by_id.get(dep)
+            if not prod or prod.discipline == cons.discipline:
+                continue                               # same-lane dep → no interface needed
+            key = (prod.id, cons.discipline)
+            if key in seen:
+                continue                               # one contract per (producer, consuming lane)
+            seen.add(key)
+            prompt = (
+                f"FEATURE: {plan.project_name}\n"
+                f"PRODUCER ({prod.discipline}): {prod.title} — {(prod.description or '')[:200]}\n"
+                f"CONSUMER ({cons.discipline}): {cons.title} — {(cons.description or '')[:200]}\n"
+                f"Draft the interface contract the consumer needs from the producer."
+            )
+            try:
+                draft = await generate_interface(prompt)
+            except Exception:
+                continue                               # best-effort; a miss is still caught at the integration gate
+            out.append(Agreement(
+                id="", type="interface", plan_id="",
+                subject=f"{prod.discipline}→{cons.discipline} · {draft.path or prod.title}",
+                interface=draft, producer_issue_id=prod.id, consumer_issue_id=cons.id,
+                producer_discipline=prod.discipline, consumer_discipline=cons.discipline,
+            ))
+    return out
 
 
 async def regenerate_slice(issues: list, discipline: str, user_solution) -> RegeneratedSlice:

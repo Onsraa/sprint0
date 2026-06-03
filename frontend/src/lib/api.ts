@@ -620,6 +620,17 @@ export const api = {
     return jget(`/api/plans/${planId}/gates/${discipline}/solutions`, S.SolutionSet);
   },
 
+  /* Agreement engine: the coordination spine — interface contracts (CDD), routed + ratified */
+  myAgreements(): Promise<{ agreements: S.Agreement[] }> {
+    return jget("/api/me/agreements", S.AgreementList);
+  },
+  planAgreements(planId: string): Promise<{ agreements: S.Agreement[] }> {
+    return jget(`/api/plans/${planId}/agreements`, S.AgreementList);
+  },
+  ratifyAgreement(id: string, decision: "ratified" | "rejected", note = ""): Promise<S.Agreement> {
+    return jpost(`/api/agreements/${id}/ratify`, { decision, note });
+  },
+
   /* QA */
   qaRun(projectId: number): Promise<QAReport> {
     return jpost(`/api/projects/${projectId}/qa/run`);
