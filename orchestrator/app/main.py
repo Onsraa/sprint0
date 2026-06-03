@@ -941,7 +941,8 @@ async def plan_staffing(plan_id: str) -> dict:
     if plan is None:
         raise HTTPException(404, "plan not found")
     await team.ensure_loaded()
-    return {"coverage": staffing.coverage(plan, team.all_members())}
+    members = await _attach_availability(team.all_members())  # gap advisor reads real availability, not static load
+    return {"coverage": staffing.coverage(plan, members)}
 
 
 async def _can_read_contract(member: DeveloperProfile, discipline: str) -> bool:
