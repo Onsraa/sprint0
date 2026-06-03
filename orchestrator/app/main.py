@@ -994,6 +994,16 @@ async def gate_solutions(
         except Exception:
             dependents = {}
     sset = soln.finalize_solution_set(sset, discipline, soln.impacted_files(slice_files, dependents))
+    # #33 — server-derive each option's grade (memory-grounded only) + the green/orange/grey triage signal
+    # from the graded-decisions memory. conflict is already on the card (LLM-flagged live / canned in demo).
+    try:
+        decisions = await all_decisions()
+    except Exception:
+        decisions = []
+    for c in sset.solutions:
+        if c.source == "memory" and not c.grade:   # preserve a pre-set grade (canned demo); derive otherwise
+            c.grade = grading.grade_for(c.grounded_on, decisions, discipline)
+        c.signal = grading.signal_for(c)
     SOLUTIONS[key] = sset
     return sset
 

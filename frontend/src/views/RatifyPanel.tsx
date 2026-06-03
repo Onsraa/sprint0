@@ -57,6 +57,17 @@ export function GradeChip({ grade, showLabel = true }: { grade?: string; showLab
   );
 }
 
+// #33 — the green/orange/grey triage dot (server-derived). green=earned reuse · orange=look/contested · grey=unproven.
+const SIGNAL_META: Record<string, { color: string; label: string }> = {
+  green:  { color: "var(--green)", label: "earned — confident + grounded" },
+  orange: { color: "var(--amber)", label: "weigh this — middling or contested" },
+  grey:   { color: "var(--text-quaternary)", label: "unproven — the AI's own bet" },
+};
+export function SignalDot({ signal }: { signal?: string }) {
+  const m = SIGNAL_META[signal ?? "grey"] || SIGNAL_META.grey;
+  return <span title={m.label} style={{ width: 8, height: 8, borderRadius: "50%", background: m.color, flexShrink: 0, display: "inline-block" }} />;
+}
+
 export function TierBadge({ tier, size = "md" }: { tier?: string | null; size?: "sm" | "md" }) {
   const m = TIER_META[tier ?? ""] || TIER_META.one_expert;
   const sm = size === "sm";
@@ -127,8 +138,10 @@ function SolutionCardView({ s, selected, recommended, interactive, onSelect }:
         <SourceMark source={s.source} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <SignalDot signal={s.signal} />
             <span className="mono" style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase",
               color: star ? "var(--text-primary)" : "var(--text-quaternary)" }}>{meta.label}</span>
+            {s.source === "memory" && s.grade && <GradeChip grade={s.grade} />}
             {recommended && <Badge tone="ink" style={{ height: 15 }}>sprint0 pick</Badge>}
           </div>
           <div style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.2px", margin: "3px 0 0", color: "var(--text-primary)" }}>{s.title}</div>
@@ -142,6 +155,13 @@ function SolutionCardView({ s, selected, recommended, interactive, onSelect }:
           {s.delta_note && (
             <div style={{ marginTop: 7 }}>
               <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", background: "var(--bg-secondary)", padding: "2px 7px", borderRadius: "var(--r-xs)" }}>{s.delta_note}</span>
+            </div>
+          )}
+          {s.conflict && (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 6, padding: "6px 9px", borderRadius: "var(--r-sm)",
+              background: "var(--bg-secondary)", border: "0.5px solid var(--amber)" }}>
+              <Icon name="warn" size={12} style={{ color: "var(--amber)", marginTop: 1, flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.4 }}>{s.conflict_reason || "Contradicts a past team decision."}</span>
             </div>
           )}
         </div>
@@ -299,6 +319,7 @@ export function RatifyPanel({ g }: { g: any }) {
     const chosen: SolutionCard = selectedSol ?? {
       id: "user", source: "user", title: choice.custom!.title, summary: choice.custom!.reasoning,
       rationale: choice.custom!.reasoning, pros: [], cons: [], confidence: 0, grounded_on: [], delta_note: "", impacted_files: [],
+      conflict: false, conflict_reason: "", grade: null, signal: "grey",
     };
     ratifyWith(g.discipline, chosen, choice.custom?.reasoning ?? "");
   };

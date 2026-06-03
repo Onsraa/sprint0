@@ -557,13 +557,18 @@ class SolutionCard(BaseModel):
     grounded_on: list[str] = Field(default_factory=list)   # past-project name(s) reused (memory source)
     delta_note: str = ""                                   # "variant of X + <delta>" when fresh ≈ memory
     impacted_files: list[str] = Field(default_factory=list)  # server-computed (context_scope ∪ graph deps)
+    # ── #33 Contract richness: provenance signals (conflict LLM-flagged in context; grade/signal server-derived) ──
+    conflict: bool = False                                  # contradicts a past TEAM decision fed into the prompt
+    conflict_reason: str = ""                               # which decision it contradicts (≤140); shown as the warning
+    grade: Optional[Literal["proposed", "shipped", "prod_survived", "retro_validated"]] = None  # earned strength (memory only)
+    signal: Literal["green", "orange", "grey"] = "grey"     # server-derived triage roll-up (grading.signal_for)
 
     @field_validator("title")
     @classmethod
     def _title(cls, v: str) -> str:
         return _trunc_words(v, 7)
 
-    @field_validator("summary", "delta_note")
+    @field_validator("summary", "delta_note", "conflict_reason")
     @classmethod
     def _line(cls, v: str) -> str:
         return (v or "")[:140]

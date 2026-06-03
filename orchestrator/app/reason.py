@@ -48,6 +48,12 @@ def _format_code(chunks: list[dict]) -> str:
     return "\n".join(lines) or "(no reusable code found)"
 
 
+def _format_decisions(decisions: list[dict]) -> str:
+    lines = [f"- [{d.get('grade', 'proposed')}] {d.get('recommendation', '')} (on {d.get('project_name', '?')})"
+             for d in decisions]
+    return "\n".join(lines) or "(no standing team decisions for this gate)"
+
+
 def _format_roster(devs: list[dict]) -> str:
     return "\n".join(
         f"- @{d.get('gitlab_username')} ({d.get('trust_level')}): {d.get('skills_text', '')}" for d in devs
@@ -137,6 +143,12 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
             code = await m.code_search(qv, k=5)
         except Exception:
             code = []
+    try:  # #33 — feed past TEAM decisions so the LLM can ground a `conflict` flag (not hallucinate it)
+        from app.rag import all_decisions
+        team_decisions = [d for d in await all_decisions()
+                          if d.get("visibility") == "team" and d.get("domain") == discipline]
+    except Exception:
+        team_decisions = []
     prompt = (
         f"FEATURE: {plan.project_name}\n"
         f"GATE DISCIPLINE: {discipline}\n\n"
@@ -144,6 +156,8 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
         f"SIMILAR PAST PROJECTS (agency memory — reuse what worked):\n{_format_past(past)}\n\n"
         f"REUSABLE CODE (chunk-level):\n{_format_code(code)}\n\n"
+        f"PAST TEAM DECISIONS (set conflict=true + name it in conflict_reason ONLY if an option genuinely "
+        f"contradicts one; else conflict=false):\n{_format_decisions(team_decisions)}\n\n"
         f"Propose 2-3 grounded solutions for THIS gate."
     )
     sset = await generate_solutions(prompt)

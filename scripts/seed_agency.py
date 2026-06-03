@@ -46,6 +46,30 @@ PP_INDEX = os.getenv("PAST_PROJECTS_VECTOR_INDEX", "pp_vector_index")
 DEV_INDEX = os.getenv("DEVELOPER_VECTOR_INDEX", "dev_vector_index")
 CODE_INDEX = os.getenv("CODE_CHUNKS_VECTOR_INDEX", "code_vector_index")
 PP_TEXT_INDEX = os.getenv("PAST_PROJECTS_TEXT_INDEX", "pp_text_index")  # Atlas Search (hybrid, item H)
+DECISIONS_COLL = os.getenv("DECISIONS_COLLECTION", "Decisions")
+
+# #33 — graded TEAM decisions so a fresh-seed demo shows the full Contract signal spread (green/orange/grey).
+# project_name matches the canned solution `grounded_on` so grade_for derives the green option's pill.
+_SEED_DECISIONS = [
+    {"id": "dec-auth-quantapay", "owner_id": "sprint0-se", "domain": "backend",
+     "recommendation": "Reuse the QuantaPay JWT+TOTP auth module", "reasoning": "Battle-tested; reused since QuantaPay.",
+     "project_id": "seed-quantapay", "project_name": "QuantaPay (2024)", "issue_ids": [],
+     "outcome_validated": True, "visibility": "team", "deprecated": False, "grade": "prod_survived",
+     "merged": True, "qa_passed": True, "days_clean": 30,
+     "created_at": "2024-08-01T00:00:00Z", "updated_at": "2024-08-01T00:00:00Z"},
+    {"id": "dec-realtime-traillog", "owner_id": "sprint0-se", "domain": "backend",
+     "recommendation": "Prefer managed push + polling over self-hosted WebSocket fan-out on flaky field connectivity",
+     "reasoning": "Lesson from the TrailLog field rollout.", "project_id": "seed-traillog",
+     "project_name": "TrailLog (2025)", "issue_ids": [], "outcome_validated": True, "visibility": "team",
+     "deprecated": False, "grade": "shipped", "merged": True, "qa_passed": False, "days_clean": 0,
+     "created_at": "2025-03-01T00:00:00Z", "updated_at": "2025-03-01T00:00:00Z"},
+    {"id": "dec-payments-quantapay", "owner_id": "sprint0-se", "domain": "backend",
+     "recommendation": "Stripe Connect for marketplace payouts, idempotent webhooks", "reasoning": "Shipped in QuantaPay.",
+     "project_id": "seed-quantapay", "project_name": "QuantaPay (2024)", "issue_ids": [],
+     "outcome_validated": True, "visibility": "team", "deprecated": False, "grade": "shipped",
+     "merged": True, "qa_passed": True, "days_clean": 5,
+     "created_at": "2024-09-01T00:00:00Z", "updated_at": "2024-09-01T00:00:00Z"},
+]
 
 if not MONGODB_URI:
     die("MONGODB_URI not set in .env")
@@ -150,7 +174,7 @@ def main() -> int:
         print(f"   reset_demo → {gl.reset_demo()}")
     except Exception as e:
         print(f"{YEL}   reset_demo skipped: {str(e)[:120]}{RST}")
-    for coll in (PP_COLL, DEV_COLL, PROJ_COLL, CODE_COLL):
+    for coll in (PP_COLL, DEV_COLL, PROJ_COLL, CODE_COLL, DECISIONS_COLL):
         n = db[coll].delete_many({}).deleted_count
         print(f"   cleared {coll}: {n}")
 
@@ -195,6 +219,9 @@ def main() -> int:
         d["skill_embedding"] = v
     db[DEV_COLL].insert_many(devs)
     print(f"{GREEN}✅ {DEV_COLL}: {len(devs)} docs{RST}")
+
+    db[DECISIONS_COLL].insert_many([dict(d) for d in _SEED_DECISIONS])
+    print(f"{GREEN}✅ {DECISIONS_COLL}: {len(_SEED_DECISIONS)} graded team decisions (#33 signal seed){RST}")
 
     # Indexes — best-effort. Vector indexes (needed for the run) get priority; the full-text
     # index (for hybrid retrieval, item H) is skipped if the M0 search-index cap is hit.

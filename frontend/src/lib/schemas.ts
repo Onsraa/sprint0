@@ -292,6 +292,12 @@ export const SolutionCard = z.object({
   grounded_on: z.array(z.string()),   // past project(s) reused (memory source)
   delta_note: z.string(),             // "variant of X + Δ" when a fresh option ≈ memory
   impacted_files: z.array(z.string()),
+  // #33 Contract richness — provenance signals (server-derived except conflict). Optional (symmetric
+  // in/out) so jget's type inference stays clean; the backend always sends them.
+  conflict: z.boolean().optional(),
+  conflict_reason: z.string().optional(),
+  grade: Grade.nullish(),                                  // earned strength (memory options only)
+  signal: z.enum(["green", "orange", "grey"]).optional(),
 });
 export type SolutionCard = z.infer<typeof SolutionCard>;
 export const SolutionSet = z.object({

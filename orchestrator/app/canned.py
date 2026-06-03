@@ -288,26 +288,38 @@ CANNED_SOLUTIONS = SolutionSet.model_validate(
     {
         "discipline": "",  # the server (propose_solutions) stamps the real gate discipline
         "solutions": [
-            {
+            {  # memory + grounded + high conf → GREEN (grade derived from the seeded QuantaPay decision)
                 "source": "memory",
-                "title": "Reuse LedgerLite JWT auth",
-                "summary": "Lift the proven JWT login + refresh-rotation slice from LedgerLite.",
-                "rationale": "Shipped and prod-survived in LedgerLite (2024); least risk for a security-sensitive gate.",
+                "title": "Reuse QuantaPay JWT+TOTP auth",
+                "summary": "Lift the battle-tested JWT login + TOTP + refresh-rotation slice from QuantaPay.",
+                "rationale": "Shipped and prod-survived in QuantaPay (2024); least risk for a security-sensitive gate.",
                 "pros": ["Battle-tested", "Fastest path", "Security reviewed"],
                 "cons": ["Slightly dated deps"],
-                "confidence": 82,
-                "grounded_on": ["LedgerLite (2024)"],
+                "confidence": 84,
+                "grounded_on": ["QuantaPay (2024)"],
+                "grade": "prod_survived",  # demo: pre-set (all canned data is fabricated); LIVE derives from real decisions
             },
-            {
+            {  # fresh option that CONTRADICTS the standing reuse decision → ORANGE (conflict + warning)
                 "source": "ai",
-                "title": "Fresh OAuth + passkeys",
-                "summary": "Greenfield auth with social OAuth and WebAuthn passkeys.",
+                "title": "Adopt Auth0 managed identity",
+                "summary": "Outsource auth entirely to Auth0 instead of the in-house module.",
+                "rationale": "Less to maintain, but a new vendor dependency that cuts against the proven reuse path.",
+                "pros": ["No auth code to own", "SSO out of the box"],
+                "cons": ["New vendor lock-in", "Migration + data residency"],
+                "confidence": 66,
+                "grounded_on": [],
+                "conflict": True,
+                "conflict_reason": "Contradicts the team decision to reuse the QuantaPay JWT+TOTP module (prod-survived).",
+            },
+            {  # fresh + ungrounded → GREY (no memory backing it, the AI's own bet)
+                "source": "ai",
+                "title": "Greenfield passkeys + WebAuthn",
+                "summary": "Build passwordless auth from scratch with WebAuthn passkeys.",
                 "rationale": "Modern UX and fewer passwords, but unproven in our codebase and longer to harden.",
                 "pros": ["Modern UX", "Fewer passwords"],
                 "cons": ["Unproven here", "Longer to harden"],
-                "confidence": 64,
+                "confidence": 58,
                 "grounded_on": [],
-                "delta_note": "variant of LedgerLite + passkeys",
             },
         ],
     }
@@ -420,6 +432,15 @@ CANNED_DECISIONS = [
         outcome_validated=True, visibility="team", grade="shipped",
         merged=True, qa_passed=True, days_clean=4,
         created_at="2026-05-25T10:00:00Z", updated_at="2026-05-30T10:00:00Z",
+    ).model_dump(),
+    Decision(  # #33 — graded reference on the REUSED past project, so the canned auth Contract earns its green
+        id="dec_demo_3", owner_id="sprint0-se", domain="backend",
+        context_tags=["auth", "jwt", "totp"], recommendation="Reuse the QuantaPay JWT+TOTP auth module",
+        reasoning="Battle-tested and reused since QuantaPay; least risk for a security gate.",
+        project_id="seed-quantapay", project_name="QuantaPay (2024)", issue_ids=[],
+        outcome_validated=True, visibility="team", grade="prod_survived",
+        merged=True, qa_passed=True, days_clean=30,
+        created_at="2024-08-01T00:00:00Z", updated_at="2024-08-01T00:00:00Z",
     ).model_dump(),
 ]
 

@@ -240,8 +240,10 @@ essentially the same as the memory one, set `delta_note` to "variant of <project
 - NEVER output source="user" (that slot is the human's, added by the server).
 
 For each: a short `title` (<=7 words), a one-line `summary`, a `rationale` (<=200 chars), <=3 `pros` and \
-<=3 `cons` (each <=8 words), and an HONEST `confidence` 0-100 (do NOT inflate; below 60 is valid). Leave \
-`id` and `impacted_files` empty — the server fills them. Output structured data only, no prose."""
+<=3 `cons` (each <=8 words), and an HONEST `confidence` 0-100 (do NOT inflate; below 60 is valid). Set \
+`conflict=true` + a one-line `conflict_reason` ONLY when an option genuinely contradicts a listed PAST TEAM \
+DECISION; else `conflict=false`. Leave `id`, `impacted_files`, `grade`, `signal` empty — the server fills \
+them. Output structured data only, no prose."""
 
 solutions_agent = Agent(name="sprint0_solutions", model=MODEL, instruction=INSTRUCTION_SOLUTIONS, output_schema=SolutionSet)
 

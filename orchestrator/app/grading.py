@@ -31,3 +31,43 @@ def carries_routing_weight(decision: dict) -> bool:
     """Only a battle-tested reference can shift a gate's tier (the orange override). proposed/shipped
     are too green to override the router — they still SHOW in the card, just don't change the tier."""
     return _RANK.get(decision.get("grade", "proposed"), 0) >= _RANK["prod_survived"]
+
+
+# ── #33 Contract signal — Profile C "two-factor" (LOCKED). Green = confident AND real grounding. ──
+GREEN_CONFIDENCE = 60     # ≥ this + grounding (grade or a cited project) → green
+GREY_CONFIDENCE = 40      # < this → grey (too weak to trust)
+
+
+def _earned(grade: str | None) -> bool:
+    """A grade of "shipped" or better is battle-tested (carries green weight)."""
+    return _RANK.get(grade or "", 0) >= _RANK["shipped"]
+
+
+def grade_for(grounded_on: list[str], decisions: list[dict], discipline: str) -> str | None:
+    """Earned strength of a memory-grounded option (server-derived — never an LLM guess). Prefer a TEAM
+    decision graded on one of the grounded projects in this discipline (the real P4 grade); else a coarse
+    "shipped" since the agency's seeded past projects all shipped; ungrounded → None."""
+    if not grounded_on:
+        return None
+    best = None
+    for d in decisions:
+        if (d.get("project_name") in grounded_on and d.get("domain") == discipline
+                and d.get("visibility") == "team"):
+            g = d.get("grade", "proposed")
+            if best is None or _RANK.get(g, 0) > _RANK.get(best, 0):
+                best = g
+    return best or "shipped"
+
+
+def signal_for(card) -> str:
+    """Profile C (duck-typed on the SolutionCard): a conflict always wins (a contradiction is what a human
+    ratifies); green = confident AND backed (grade≥shipped OR a cited project); grey = too weak or an
+    unbacked guess; else the orange middle the human should weigh."""
+    if card.conflict:
+        return "orange"
+    grounded = bool(card.grounded_on)
+    if card.confidence >= GREEN_CONFIDENCE and (_earned(card.grade) or grounded):
+        return "green"
+    if card.confidence < GREY_CONFIDENCE or (card.source == "ai" and not grounded):
+        return "grey"
+    return "orange"
