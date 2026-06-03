@@ -139,6 +139,15 @@ export function Relays() {
   const awaiting = relays.filter((r) => r.baton.length > 0).length;
   const firstName = watched ? String(watched.name).split(" ")[0] : "";
 
+  // "On your baton" — relays where a gate personally waits on you (manager-as-dev or dev), shown detailed.
+  const myDisc: Discipline | undefined = me?.discipline;
+  const onBaton = myDisc ? relays.filter((r) => r.baton.includes(myDisc)) : [];
+  // The state-map: group relays under their project (a project's deltas sit with its initial plan),
+  // groups ordered by their hottest relay. JIT — the upstream filter already scopes a dev to their relays.
+  const groupMap = new Map<string, RelaySummary[]>();
+  relays.forEach((r) => { const arr = groupMap.get(r.project) ?? []; arr.push(r); groupMap.set(r.project, arr); });
+  const groups = [...groupMap.entries()].sort((a, b) => Math.max(...b[1].map(relayScore)) - Math.max(...a[1].map(relayScore)));
+
   // Peer-review: when scoped to a watched person, open the board on THEIR gate read-only (the granted Watch
   // un-gates that Contract). Otherwise managers open the full RelayBoard; devs land on their ratify queue.
   const openRelay = (r: RelaySummary, gate?: Discipline) => {
@@ -184,9 +193,32 @@ export function Relays() {
               {watched ? `No active relay ${firstName} is on.` : "No active relays."}
             </div>
           )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 18 }}>
-            {relays.map((r, i) => <RelayRow key={r.plan_id} r={r} rank={i + 1} onOpen={openRelay} />)}
-          </div>
+
+          {/* On your baton — the gates that personally wait on you, detailed */}
+          {onBaton.length > 0 && (
+            <div style={{ marginTop: 22 }}>
+              <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-primary)" }} />On your baton · {onBaton.length}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {onBaton.map((r, i) => <RelayRow key={"b-" + r.plan_id} r={r} rank={i + 1} onOpen={openRelay} />)}
+              </div>
+            </div>
+          )}
+
+          {/* By project — the state-map: a project's relays (initial plan + each feature-add) grouped together */}
+          {groups.map(([proj, rs]) => (
+            <div key={proj} style={{ marginTop: 22 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{proj}</span>
+                <Badge tone="outline" mono>{initials(proj)}</Badge>
+                <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{rs.length} relay{rs.length === 1 ? "" : "s"}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {rs.map((r, i) => <RelayRow key={r.plan_id} r={r} rank={i + 1} onOpen={openRelay} />)}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
