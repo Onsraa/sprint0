@@ -58,7 +58,7 @@ const STEPS = [
   { id: "clarify", label: "Clarify", sub: "Resolve ambiguities" },
   { id: "arch", label: "Architecture", sub: "Pick a stack" },
   { id: "plan", label: "Plan", sub: "Draft relay" },
-  { id: "contract", label: "Contract", sub: "Sign the gates" },
+  { id: "contract", label: "Gates", sub: "Ratify the gates" },
   { id: "review", label: "Review", sub: "Dispatch preview" },
 ];
 
@@ -217,7 +217,7 @@ export function WizardBrief() {
     setUiPlanId(planId);  // point useApp().gates + the Contract (RatifyPanel) at this plan
     runLoader(
       {
-        kicker: "sprint0 · contract",
+        kicker: "sprint0 · gates",
         headline: "Applying your posture",
         lines: ["Scoring trust × risk per gate", "Auto-passing the low-risk gates", "Surfacing the gates that need your call"],
       },
@@ -346,7 +346,7 @@ export function WizardBrief() {
               <div style={{ flex: 1 }} />
               {step < STEPS.length - 1 &&
               <Button variant="primary" size="md" iconRight="arrowRight" disabled={!canNext} style={{ opacity: canNext ? 1 : 0.45 }} onClick={onPrimary}>
-                  {step === 0 ? "Clarify spec" : step === 1 ? "Generate architectures" : step === 2 ? "Generate plan" : step === 3 ? "Sign the Contract" : "Review & dispatch"}
+                  {step === 0 ? "Clarify spec" : step === 1 ? "Generate architectures" : step === 2 ? "Generate plan" : step === 3 ? "Ratify the gates" : "Review & dispatch"}
                 </Button>}
             </div>
           )}
@@ -575,7 +575,7 @@ function StepContract({ gates, actGate }: { gates: any[]; actGate: (d: string, s
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
-        <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 5px" }}>Sign the Contract</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 5px" }}>Ratify the gates</h1>
         <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.55 }}>
           Your Autonomy posture auto-passed the low-risk gates. Sign the rest — reuse from agency memory, take a fresh option, or write your own — to clear the relay before dispatch.
         </p>

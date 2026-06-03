@@ -3,6 +3,7 @@
  * TanStack Query, never here. Keeping the two apart is what stops the "why is my state stale" class
  * of bugs. (Absorbed AppContext's UI fields across P4–P8 — the last of the spine.) */
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import type { Discipline, PlanJSON } from "./api";
 import type { WizardKind } from "../app/types";
 
@@ -19,6 +20,10 @@ interface UIState {
   /** Bell dropdown (P6). */
   bellOpen: boolean;
   setBellOpen: (open: boolean) => void;
+  /** Left-nav collapsed rail. In the store (not local state) so it survives shell remounts
+   *  (wizard / persona switch) and — via persist — a reload. */
+  navCollapsed: boolean;
+  toggleNav: () => void;
 
   /** Wizard modal (P8 — off AppContext). */
   wizardOpen: boolean;
@@ -86,7 +91,7 @@ const SESSION_DEFAULTS = {
   bellOpen: false,
 };
 
-export const useUI = create<UIState>((set) => ({
+export const useUI = create<UIState>()(persist((set) => ({
   paletteOpen: false,
   openPalette: () => set({ paletteOpen: true }),
   closePalette: () => set({ paletteOpen: false }),
@@ -96,6 +101,8 @@ export const useUI = create<UIState>((set) => ({
   closePanel: () => set({ panelTaskId: null }),
   bellOpen: false,
   setBellOpen: (bellOpen) => set({ bellOpen }),
+  navCollapsed: false,
+  toggleNav: () => set((s) => ({ navCollapsed: !s.navCollapsed })),
 
   wizardOpen: false,
   setWizardOpen: (wizardOpen) => set({ wizardOpen }),
@@ -135,4 +142,4 @@ export const useUI = create<UIState>((set) => ({
   removeDraftByName: (name) => set((s) => ({ drafts: s.drafts.filter((d: any) => d.name !== name) })),
 
   resetSession: () => set(SESSION_DEFAULTS),
-}));
+}), { name: "sprint0-ui", partialize: (s) => ({ navCollapsed: s.navCollapsed }) }));

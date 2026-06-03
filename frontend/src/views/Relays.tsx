@@ -258,7 +258,7 @@ function PeerReviewBanner({ m, onClear }: { m: any; onClear: () => void }) {
           Reviewing {String(m.name).split(" ")[0]}'s relays
           <Badge tone="outline" mono><Icon name="eye" size={10} />read-only · Watch</Badge>
         </div>
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 1 }}>Their Contracts open read-only — you review the call, not make it.</div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 1 }}>Their gates open read-only — you review the call, not make it.</div>
       </div>
       <Button variant="secondary" size="sm" icon="close" onClick={onClear}>Back to yours</Button>
     </div>

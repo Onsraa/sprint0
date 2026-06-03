@@ -145,7 +145,7 @@ function WatchersStrip() {
             background: "var(--bg-elevated)", border: "0.5px solid var(--border)" }}>
             <Avatar name={m?.name || u} size={18} />
             <span style={{ fontSize: 12, fontWeight: 500 }}>{first}</span>
-            <button onClick={() => removeWatcher(u)} title={`Revoke access — ${first} stops seeing your Contracts`}
+            <button onClick={() => removeWatcher(u)} title={`Revoke access — ${first} stops seeing your gates`}
               style={{ width: 19, height: 19, display: "grid", placeItems: "center", borderRadius: "50%", background: "transparent", color: "var(--text-quaternary)" }}>
               <Icon name="close" size={12} />
             </button>

@@ -47,12 +47,12 @@ function LandingHeader({ onEnter }: { onEnter: () => void }) {
     <header style={{ height: 60, display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 1180, width: "100%", margin: "0 auto", padding: "0 40px" }}>
       <Logo size={20} />
       <nav style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        {["Product", "Relay", "Docs", "Changelog"].map((l) => (
-          <a key={l} href="#" style={{ padding: "0 12px", height: 30, display: "inline-flex", alignItems: "center", fontSize: 13, fontWeight: 500, color: "var(--text-tertiary)" }}>{l}</a>
-        ))}
+        <a href="https://github.com/Onsraa/sprint0" target="_blank" rel="noopener noreferrer" aria-label="GitHub repository"
+          style={{ width: 30, height: 30, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--r-md)", color: "var(--text-tertiary)" }}>
+          <Icon name="github" size={17} />
+        </a>
         <span style={{ width: 1, height: 18, background: "var(--border)", margin: "0 8px" }} />
-        <button onClick={() => onEnter()} style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)", padding: "0 10px", height: 30 }}>Log in</button>
-        <Button variant="primary" size="md" onClick={() => onEnter()}>Try Demo</Button>
+        <Button variant="primary" size="md" onClick={() => onEnter()}>Enter the demo</Button>
       </nav>
     </header>
   );
@@ -140,9 +140,10 @@ function LandingFooter() {
   return (
     <footer style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 1180, width: "100%", margin: "0 auto", padding: "0 40px", borderTop: "0.5px solid var(--border)" }}>
       <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>© 2026 sprint0 · the relay orchestrator</span>
-      <div style={{ display: "flex", gap: 18 }}>
-        {["Status", "Security", "Careers"].map((l) => <a key={l} href="#" style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>{l}</a>)}
-      </div>
+      <a href="https://github.com/Onsraa/sprint0" target="_blank" rel="noopener noreferrer"
+        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>
+        <Icon name="github" size={14} /> GitHub
+      </a>
     </footer>
   );
 }

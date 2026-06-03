@@ -92,7 +92,8 @@ function SessionLoading() {
 
 function Sidebar({ onPalette }: { onPalette: () => void }) {
   const { view, setView, role, chrome } = useApp();
-  const [collapsed, setCollapsed] = useState(false);
+  const collapsed = useUI((s) => s.navCollapsed);   // store, not local state → survives shell remount + reload
+  const toggleNav = useUI((s) => s.toggleNav);
   return (
     <aside style={{ width: collapsed ? 60 : "var(--nav-w)", flexShrink: 0, height: "100vh", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4, transition: "width var(--t-reg) var(--ease-out)" }}>
       <Workspace collapsed={collapsed} />
@@ -117,7 +118,7 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
         })}
       </nav>
       <div style={{ flex: 1 }} />
-      <button onClick={() => setCollapsed((c) => !c)} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      <button onClick={toggleNav} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 28, padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", color: "var(--text-quaternary)" }}>
         <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={16} />{!collapsed && <span style={{ fontSize: 12, fontWeight: 500 }}>Collapse</span>}
       </button>

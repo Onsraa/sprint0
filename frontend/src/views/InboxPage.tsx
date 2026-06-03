@@ -103,7 +103,7 @@ function AccessRequestRow({ r, onAccept, onReject }: { r: any; onAccept: () => v
       <span style={{ marginTop: 1, color: "var(--text-primary)" }}><Icon name="eye" size={16} /></span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</div>
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>wants to watch your Contracts — accept to grant a peer-review Watch.</div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>wants to watch your gates — accept to grant a peer-review Watch.</div>
       </div>
       <Button variant="primary" size="sm" onClick={onAccept}>Accept</Button>
       <Button variant="ghost" size="sm" onClick={onReject}>Reject</Button>

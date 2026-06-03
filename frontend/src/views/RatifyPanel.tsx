@@ -360,7 +360,7 @@ export function RatifyPanel({ g }: { g: any }) {
       <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
         {/* a Contract is a Feature — this gate is the discipline's slice of it */}
         <div style={{ padding: "11px 13px", borderRadius: "var(--r-lg)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)", marginBottom: 16 }}>
-          <span className="kicker">Contract</span>
+          <span className="kicker">Gate</span>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7 }}>
             <DiscDot d={g.discipline} size={8} />
             <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>This gate — the <b style={{ fontWeight: 600 }}>{DISC[g.discipline].label}</b> slice. The AI proposes solutions; you pick one (or write your own).</span>
@@ -421,7 +421,7 @@ export function RatifyPanel({ g }: { g: any }) {
         {!ownsThisGate && !done && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)", marginBottom: 16 }}>
             <Icon name="eye" size={14} style={{ color: "var(--text-tertiary)" }} />
-            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{personFilter ? "Reviewing this Contract via your Watch — read-only, you can't make the call." : `This isn't your gate — ${byUser(g.owner)?.name?.split(" ")[0] || "the owner"} makes the call. You're viewing.`}</span>
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{personFilter ? "Reviewing this gate via your Watch — read-only, you can't make the call." : `This isn't your gate — ${byUser(g.owner)?.name?.split(" ")[0] || "the owner"} makes the call. You're viewing.`}</span>
           </div>
         )}
       </div>
