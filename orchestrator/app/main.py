@@ -829,6 +829,7 @@ async def _redraft_affected_interfaces(plan_id: str, plan: PlanJSON, discipline:
             new.ratifiers = agreements.ratifiers_for(new, members)
             await save_agreement(new.model_dump())
             await update_agreement(old["id"], {"state": "superseded", "superseded_by": new.id, "updated_at": now})
+            _apply_api_contract(plan_id, prod.id, json.dumps(agreements.mock_from_schema(draft.response_fields)))  # refresh the FE mock to the new shape (the old one is stale)
             for u in new.ratifiers:
                 await notify(u, "agreement_proposed", f"Interface contract changed · {new.subject}",
                              body=f"{discipline}'s gate choice reshaped this API — re-ratify the new version.",
@@ -1226,6 +1227,10 @@ async def _build_reuse_seeds(plan_id: str, plan: PlanJSON) -> dict[str, list[dic
     for (pid_key, disc), chosen in list(CHOSEN.items()):
         if pid_key != plan_id or not chosen.grounded_on:  # only memory-grounded (reuse) picks seed code
             continue
+        targets = [i.id for e in plan.epics for i in e.issues
+                   if i.discipline == disc and (i.kind or "code") in ("code", "infra")]
+        if not targets:
+            continue  # no code/infra branch in this gate → don't spend a GitLab fetch + a Gemini adapt
         try:
             rows = await reuse_pack(chosen.grounded_on, limit=6)
         except Exception:
@@ -1247,9 +1252,8 @@ async def _build_reuse_seeds(plan_id: str, plan: PlanJSON) -> dict[str, list[dic
             })
         if not seed_files:
             continue
-        for issue in (i for e in plan.epics for i in e.issues):
-            if issue.discipline == disc and (issue.kind or "code") in ("code", "infra"):
-                seeds[issue.id] = seed_files  # every branch in the reusing gate opens with the reference code
+        for iid in targets:
+            seeds[iid] = seed_files  # every branch in the reusing gate opens with the reference code
     return seeds
 
 
@@ -2293,22 +2297,26 @@ async def _verify_on_merge(req: MergeRequest) -> Optional[dict]:
         return None
     state = RELAYS.get(req.plan_id)
     now = datetime.now(timezone.utc).isoformat()
-    for raw in await agreements_for_plan(req.plan_id):
+    prod = next((i for e in plan.epics for i in e.issues if i.id == req.issue_id), None)
+    results: list[dict] = []
+    for raw in await agreements_for_plan(req.plan_id):  # a producer can own >1 contract (one per consuming lane) — check ALL
         if raw.get("type") != "interface" or raw.get("state") not in ("ratified", "auto_passed"):
             continue
         if raw.get("producer_issue_id") != req.issue_id:
             continue
         viol = agreements.verify_against(InterfaceDraft(**(raw.get("interface") or {})), req.output_sample)
+        results.append({"agreement_id": raw.get("id"), "subject": raw.get("subject"), "ok": not viol, "violations": viol})
         if viol and state is not None:  # drift → the existing integration gate enforces it
             relay.record_integration_signal(state, IntegrationSignal(
                 target_issue_id=req.issue_id, state="failing", by="sprint0", source="ai",
                 note=f"Contract violation on merge: {'; '.join(viol)}", created_at=now))
-            prod = next((i for e in plan.epics for i in e.issues if i.id == req.issue_id), None)
             if prod and prod.assignee:
                 await notify(prod.assignee, "qa_failed", f"Contract violation · {raw.get('subject')}",
                              body="; ".join(viol), ref={"plan_id": req.plan_id, "issue_id": req.issue_id}, actionable=True)
-        return {"agreement_id": raw.get("id"), "subject": raw.get("subject"), "ok": not viol, "violations": viol}
-    return None
+    if not results:
+        return None
+    return {"ok": all(r["ok"] for r in results),
+            "violations": [v for r in results for v in r["violations"]], "results": results}
 
 
 @app.post("/api/merge")

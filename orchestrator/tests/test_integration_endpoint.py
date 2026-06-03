@@ -197,6 +197,15 @@ def test_merge_unratified_contract_not_enforced(monkeypatch):
     assert relay.open_integration_failures(state) == [] and pings == []
 
 
+def test_merge_verifies_all_contracts_for_a_producer(monkeypatch):
+    _, state = _seed("m5", _be_fe())                                      # b1 = backend producer
+    two = [_iface_raw("m5", "b1"), {**_iface_raw("m5", "b1"), "id": "ag2", "subject": "backend↔devops · /api/y"}]
+    res, _pings = _merge("m5", monkeypatch, two, plan_id="m5", issue_id="b1", output_sample={"id": 1})  # missing `amount` → both violate
+    c = res["contract"]
+    assert len(c["results"]) == 2                                         # BOTH contracts checked, not just the first
+    assert c["ok"] is False and all(not r["ok"] for r in c["results"])
+
+
 # --- reject_issue: a real GitLab reopen must be demo-guarded AND authorized (the public/real-world boundary) ---
 
 def _reject(member, monkeypatch, *, demo, iid=5, to_runner=None):
@@ -240,8 +249,8 @@ def _iface_old(aid, producer_id, consumer_id, state):
 
 
 def _redraft(monkeypatch, existing, slice_ids):
-    """Drive _redraft_affected_interfaces with the AI + rag deps stubbed; returns (saved, updated, pings)."""
-    saved, updated, pings = [], [], []
+    """Drive _redraft_affected_interfaces with the AI + rag deps stubbed; returns (saved, updated, pings, applied)."""
+    saved, updated, pings, applied = [], [], [], []
     async def _afp(_pid):
         return existing
     async def _gi(_prompt):
@@ -258,14 +267,15 @@ def _redraft(monkeypatch, existing, slice_ids):
     monkeypatch.setattr(main, "save_agreement", _save)
     monkeypatch.setattr(main, "update_agreement", _upd)
     monkeypatch.setattr(main, "notify", _notify)
+    monkeypatch.setattr(main, "_apply_api_contract", lambda pid, iid, c: applied.append((pid, iid, c)))
     plan = _plan([_issue(i, "backend") for i in slice_ids] + [_issue("f1", "frontend")])
     slice_issues = [i for e in plan.epics for i in e.issues if i.id in slice_ids]
     asyncio.run(main._redraft_affected_interfaces("p1", plan, "backend", slice_issues))
-    return saved, updated, pings
+    return saved, updated, pings, applied
 
 
 def test_redraft_supersedes_and_recreates(monkeypatch):
-    saved, updated, pings = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "ratified")], {"b1"})
+    saved, updated, pings, _ap = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "ratified")], {"b1"})
     assert len(saved) == 1                                                # a new versioned contract
     assert saved[0]["state"] == "proposed" and saved[0]["producer_issue_id"] == "b1"
     assert saved[0]["interface"]["path"] == "/api/v2/auth"                # the freshly re-drafted shape
@@ -274,11 +284,18 @@ def test_redraft_supersedes_and_recreates(monkeypatch):
     assert set(pings) == {"sprint0-se", "sprint0-fe"}                     # both leads re-ratify the new version
 
 
+def test_redraft_refreshes_the_producer_mock(monkeypatch):
+    # superseding an auto_passed contract (whose mock was seeded) must refresh the producer mock to the NEW shape
+    _s, _u, _p, applied = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "auto_passed")], {"b1"})
+    assert len(applied) == 1 and applied[0][1] == "b1"                    # the producer's api_contract was refreshed
+    assert "token" in applied[0][2]                                      # to the new draft's shape, not the stale old one
+
+
 def test_redraft_noop_when_no_contract_touches_the_slice(monkeypatch):
-    saved, updated, pings = _redraft(monkeypatch, [_iface_old("agX", "other", "f1", "ratified")], {"b1"})
-    assert saved == [] and updated == [] and pings == []                 # producer isn't in this gate's slice
+    saved, updated, pings, applied = _redraft(monkeypatch, [_iface_old("agX", "other", "f1", "ratified")], {"b1"})
+    assert saved == [] and updated == [] and pings == [] and applied == []  # producer isn't in this gate's slice
 
 
 def test_redraft_skips_already_superseded(monkeypatch):
-    saved, updated, _p = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "superseded")], {"b1"})
-    assert saved == [] and updated == []                                 # only live contracts re-draft
+    saved, updated, _p, applied = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "superseded")], {"b1"})
+    assert saved == [] and updated == [] and applied == []               # only live contracts re-draft

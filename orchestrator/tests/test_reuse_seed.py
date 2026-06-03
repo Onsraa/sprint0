@@ -18,6 +18,12 @@ def test_file_ref_from_blob_url_rejects_non_blob():
     assert gitlab.file_ref_from_blob_url("https://gitlab.com/sprint0-demo/quantapay-2024") is None
 
 
+def test_file_ref_from_blob_url_strips_query_and_anchor():
+    # real GitLab API blob urls carry ?ref_type=heads (and sometimes #Ln) — they must not leak into the file path
+    out = gitlab.file_ref_from_blob_url("https://gitlab.com/g/r/-/blob/main/src/a.js?ref_type=heads#L10")
+    assert out == ("g/r", "main", "src/a.js")
+
+
 # ── handoff seeds the branch with the reused files + a manifest ──
 
 def _issue(i, t):
@@ -92,3 +98,18 @@ def test_build_reuse_seeds_skips_non_grounded_pick(monkeypatch):
     monkeypatch.setattr(main, "CHOSEN", {("p1", "backend"): SolutionCard(source="ai", grounded_on=[])})  # fresh, not reuse
     plan = _plan([_issue("b1", "backend")])
     assert asyncio.run(main._build_reuse_seeds("p1", plan)) == {}
+
+
+def test_build_reuse_seeds_skips_gate_with_no_code_issue(monkeypatch):
+    # a grounded gate whose only issue is NON-code (design) has no branch to seed → skip BEFORE any fetch/Gemini
+    calls = {"reuse_pack": 0}
+    async def _rp(projects, limit=6):
+        calls["reuse_pack"] += 1
+        return [{"web_url": "https://gitlab.com/g/r/-/blob/main/a.js", "project": "r"}]
+    monkeypatch.setattr(main.demo, "is_demo", lambda: False)
+    monkeypatch.setattr(main, "reuse_pack", _rp)
+    design = Issue(id="dz", title="D", description="d", type="design", estimate_days=1, risk="low",
+                   required_skill="", context_scope=ContextScope(files=["d"]), kind="design")
+    monkeypatch.setattr(main, "CHOSEN", {("p1", design.discipline): SolutionCard(source="memory", grounded_on=["X"])})
+    seeds = asyncio.run(main._build_reuse_seeds("p1", _plan([design])))
+    assert seeds == {} and calls["reuse_pack"] == 0              # skipped before the fetch — no wasted Vertex/GitLab

@@ -84,6 +84,7 @@ def file_ref_from_blob_url(web_url: str) -> tuple[str, str, str] | None:
     e.g. https://gitlab.com/grp/repo/-/blob/main/src/a.js → ('grp/repo', 'main', 'src/a.js')."""
     if "/-/blob/" not in web_url:
         return None
+    web_url = web_url.split("?", 1)[0].split("#", 1)[0]  # drop ?ref_type=heads / #L10 so the file path stays clean
     head, rest = web_url.split("/-/blob/", 1)
     project_path = head.split("://", 1)[-1].split("/", 1)[-1]  # strip scheme+host → group/repo
     ref, _, file_path = rest.partition("/")
