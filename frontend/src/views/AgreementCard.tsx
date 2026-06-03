@@ -1,6 +1,7 @@
 /* sprint0 — the Agreement Card: renders a coordination agreement (first: the INTERFACE CONTRACT — the
    CDD blueprint two disciplines ratify before building) + the two-party ratify state. Reuses the design's
    card shell; the API-blueprint body (method/path + request/response field tables + errors) is the new part. */
+import { useState } from "react";
 import { Badge, Button } from "../components/ui";
 import { Icon } from "../lib/icon";
 import type { Agreement } from "../lib/schemas";
@@ -35,21 +36,7 @@ export function AgreementCard({ a, onRatify, onReject, busy }: {
           {a.subteam.rationale && <div style={{ fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.45 }}>{a.subteam.rationale}</div>}
         </div>
       )}
-      {c && (
-        <div style={{ padding: "12px 13px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
-            <Badge tone="ink" mono>{c.method}</Badge>
-            <span className="mono" style={{ fontSize: 12.5, color: "var(--text-primary)" }}>{c.path}</span>
-          </div>
-          <FieldTable label="Request" fields={c.request_fields as Field[]} />
-          <FieldTable label="Response" fields={c.response_fields as Field[]} />
-          {!!c.errors?.length && (
-            <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 5 }}>
-              {c.errors.map((e) => <span key={e} className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", background: "var(--bg-secondary)", padding: "2px 6px", borderRadius: "var(--r-xs)" }}>{e}</span>)}
-            </div>
-          )}
-        </div>
-      )}
+      {c && <InterfaceBody c={c} />}
       <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 13px", borderTop: "0.5px solid var(--border-subtle)" }}>
         <span style={{ fontSize: 11, color: "var(--text-tertiary)", flex: 1, minWidth: 0 }}>
           {a.state === "auto_passed" ? "Auto-passed — the agency ratified this shape before; compounded, no meeting." :
@@ -59,6 +46,34 @@ export function AgreementCard({ a, onRatify, onReject, busy }: {
         {onReject && a.state === "proposed" && <Button variant="ghost" size="sm" disabled={busy} onClick={onReject}>Reject</Button>}
         {onRatify && a.state === "proposed" && <Button variant="primary" size="sm" icon="check" disabled={busy} onClick={onRatify}>Ratify</Button>}
       </div>
+    </div>
+  );
+}
+
+/* The API blueprint — method + path always shown; the request/response/error tables collapse on demand
+   (the card reads as a shape header, not a wall of tables — esp. inside the gate's folded contracts). */
+function InterfaceBody({ c }: { c: any }) {
+  const [open, setOpen] = useState(false);
+  const n = (c.request_fields?.length ?? 0) + (c.response_fields?.length ?? 0) + (c.errors?.length ?? 0);
+  return (
+    <div style={{ padding: "12px 13px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: open ? 8 : 0 }}>
+        <Badge tone="ink" mono>{c.method}</Badge>
+        <span className="mono" style={{ fontSize: 12.5, color: "var(--text-primary)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.path}</span>
+        <button onClick={() => setOpen((o) => !o)} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)" }}>
+          {open ? "Hide" : "Shape"} · {n} field{n === 1 ? "" : "s"}
+          <Icon name="chevronDown" size={12} style={{ color: "var(--text-quaternary)", transform: open ? "none" : "rotate(-90deg)", transition: "transform var(--t-quick)" }} />
+        </button>
+      </div>
+      {open && <>
+        <FieldTable label="Request" fields={c.request_fields as Field[]} />
+        <FieldTable label="Response" fields={c.response_fields as Field[]} />
+        {!!c.errors?.length && (
+          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {c.errors.map((e: string) => <span key={e} className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", background: "var(--bg-secondary)", padding: "2px 6px", borderRadius: "var(--r-xs)" }}>{e}</span>)}
+          </div>
+        )}
+      </>}
     </div>
   );
 }
