@@ -34,7 +34,7 @@ from app.contracts import (
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
-from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card
+from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card
 from app.execute import execute_plan, extend_project
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
@@ -1168,6 +1168,46 @@ async def gate_solutions(
     return sset
 
 
+async def _build_reuse_seeds(plan_id: str, plan: PlanJSON) -> dict[str, list[dict]]:
+    """Reuse layer-2: for each gate whose ratified pick is memory-grounded, fetch the cited source files,
+    AI-adapt them to this stack, and map them to that discipline's code/infra issue branches. The result
+    flows to handoff.commit_context_branches, which commits them into the dev's focus branch + a manifest.
+    Live only — demo `execute_plan` is a stub, so we never spend a fetch/Gemini call there."""
+    if demo.is_demo():
+        return {}
+    ts = plan.tech_stack
+    stack = f"frontend={ts.frontend}, backend={ts.backend}, db={ts.db}, infra={ts.infra}"
+    seeds: dict[str, list[dict]] = {}
+    for (pid_key, disc), chosen in list(CHOSEN.items()):
+        if pid_key != plan_id or not chosen.grounded_on:  # only memory-grounded (reuse) picks seed code
+            continue
+        try:
+            rows = await reuse_pack(chosen.grounded_on, limit=6)
+        except Exception:
+            continue
+        seed_files: list[dict] = []
+        for f in rows:
+            info = gitlab.file_ref_from_blob_url(str(f.get("web_url", "")))
+            if not info:
+                continue
+            proj, ref, src_path = info
+            try:
+                raw = await run_in_threadpool(gitlab.get_file_raw, proj, src_path, ref)
+            except Exception:
+                continue  # cross-org / deleted / permission — the manifest link still cites it
+            adapted = await generate_adapted_code(raw, stack, f"{disc} slice of {plan.project_name}")
+            seed_files.append({
+                "path": f"reused/{src_path}", "content": adapted,
+                "source_url": str(f.get("web_url", "")), "source_project": str(f.get("project", "")),
+            })
+        if not seed_files:
+            continue
+        for issue in (i for e in plan.epics for i in e.issues):
+            if issue.discipline == disc and (issue.kind or "code") in ("code", "infra"):
+                seeds[issue.id] = seed_files  # every branch in the reusing gate opens with the reference code
+    return seeds
+
+
 @app.post("/api/plans/{plan_id}/approve")
 async def approve_plan(plan_id: str, req: ApproveRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     plan = req.edits or PLANS.get(plan_id)
@@ -1177,8 +1217,9 @@ async def approve_plan(plan_id: str, req: ApproveRequest, _: DeveloperProfile = 
     if state is not None and not relay.all_ratified(state):
         pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
         raise HTTPException(409, f"Sign the Contract for {len(pending)} open gate(s) first: {', '.join(pending)}.")
-    # EXECUTE: scaffold real GitLab infra (sync httpx → threadpool).
-    result = await run_in_threadpool(execute_plan, plan)
+    # EXECUTE: scaffold real GitLab infra (sync httpx → threadpool); seed reuse drafts into focus branches.
+    seeds = await _build_reuse_seeds(plan_id, plan)
+    result = await run_in_threadpool(lambda: execute_plan(plan, reuse_seeds=seeds))
     RESULTS[plan_id] = result
     return {"plan_id": plan_id, "mode": req.mode, **result}
 
@@ -1220,9 +1261,10 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
     if not relay.all_ratified(state):
         pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
         raise HTTPException(409, f"Sign the Contract for {len(pending)} open gate(s) first: {', '.join(pending)}.")
+    seeds = await _build_reuse_seeds(plan_id, plan)  # reuse layer-2: adapted reference code → focus branches
     if plan_id in DELTA_TARGET:  # mid-prod: append to the existing project
         pid = DELTA_TARGET[plan_id]
-        result = await run_in_threadpool(extend_project, plan, pid)
+        result = await run_in_threadpool(lambda: extend_project(plan, pid, reuse_seeds=seeds))
         result["project_id"] = pid
         if pid in PROJECTS:  # grow the live plan so QA + later deltas see the new issues
             PROJECTS[pid].epics.extend(plan.epics)
@@ -1235,7 +1277,7 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
         except Exception as e:
             result["persist_warning"] = str(e)[:200]
     else:
-        result = await run_in_threadpool(execute_plan, plan)
+        result = await run_in_threadpool(lambda: execute_plan(plan, reuse_seeds=seeds))
         PROJECTS[result["project_id"]] = plan
         manifest = _manifest_of(plan)
         record = ProjectRecord(

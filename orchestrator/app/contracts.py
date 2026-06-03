@@ -659,6 +659,13 @@ class RegeneratedSlice(BaseModel):
     issues: list[RegenIssue] = Field(default_factory=list)
 
 
+class AdaptedCode(BaseModel):
+    """Reuse layer-2: a reused source file lightly adapted to the new project's stack/naming — the
+    seeded focus-branch draft. `code` is the adapted file content; `notes` is a one-line change summary."""
+    code: str = ""
+    notes: str = ""
+
+
 class RatifyRequest(BaseModel):
     edits: Optional[list[Issue]] = None  # the lead's adjusted slice; None = accept the draft as-is
     note: str = ""

@@ -20,8 +20,8 @@ from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 from app.contracts import (
-    ArchitectureOptions, ClarifiedSpec, ConflictVerdict, DecisionCardPass1, InterfaceDraft, ParsedCV, PlanJSON,
-    QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
+    AdaptedCode, ArchitectureOptions, ClarifiedSpec, ConflictVerdict, DecisionCardPass1, InterfaceDraft, ParsedCV,
+    PlanJSON, QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
 )
 from app import canned, demo
 
@@ -299,6 +299,31 @@ async def generate_solutions(prompt: str) -> SolutionSet:
     if demo.is_demo():
         return canned.CANNED_SOLUTIONS.model_copy(deep=True)
     return _parse(SolutionSet, await _run_agent(solutions_agent, prompt), solutions_agent.name)
+
+
+# ── Reuse layer-2: lightly adapt a reused source file to the new project's stack (the seeded draft) ──
+INSTRUCTION_ADAPT = """You adapt ONE reused source file to a new project so it can serve as a starting draft. \
+PRESERVE the logic, structure, and behavior — change as LITTLE as possible. Adjust only what the target stack \
+demands: imports, module paths, framework idioms, and obvious naming, so the file fits the new codebase. Do \
+NOT add features, refactor, or remove functionality. Put the full adapted file content in `code` (no markdown \
+fences, no commentary) and a one-line summary of what you changed in `notes`."""
+
+adapt_agent = Agent(name="sprint0_adapt", model=MODEL, instruction=INSTRUCTION_ADAPT, output_schema=AdaptedCode)
+
+_ADAPT_MAX_CHARS = 8000  # files larger than this are seeded verbatim (skip the AI pass — schema/latency guard)
+
+
+async def generate_adapted_code(source_code: str, target_stack: str, context: str) -> str:
+    """Adapt a reused file to the new stack; returns the adapted content. Best-effort: in demo, on error,
+    or for large files it returns the source unchanged (the manifest still cites the original)."""
+    if demo.is_demo() or len(source_code) > _ADAPT_MAX_CHARS:
+        return source_code
+    prompt = f"TARGET STACK: {target_stack}\nWHERE IT WILL LIVE: {context}\n\nSOURCE FILE:\n{source_code}"
+    try:
+        out = _parse(AdaptedCode, await _run_agent(adapt_agent, prompt), adapt_agent.name)
+        return out.code or source_code
+    except Exception:
+        return source_code  # never block a dispatch on an adaptation miss
 
 
 # ── Interface Contract (CDD): the two-party agreement between a producer + consumer discipline ──
