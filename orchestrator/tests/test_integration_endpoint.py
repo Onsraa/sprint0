@@ -299,3 +299,45 @@ def test_redraft_noop_when_no_contract_touches_the_slice(monkeypatch):
 def test_redraft_skips_already_superseded(monkeypatch):
     saved, updated, _p, applied = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "superseded")], {"b1"})
     assert saved == [] and updated == [] and applied == []               # only live contracts re-draft
+
+
+# --- JIT contract routing: producer signs at their gate → provisional mock + ping the consumer (no creation broadcast) ---
+
+def _iface_agreement(state="proposed", ratifications=None):
+    return {"id": "agI", "type": "interface", "plan_id": "p1", "state": state,
+            "subject": "backend→frontend · /api/x", "ratifiers": ["sprint0-se", "sprint0-fe"],
+            "ratifications": ratifications or [],
+            "producer_issue_id": "b1", "producer_discipline": "backend", "consumer_discipline": "frontend",
+            "interface": {"method": "GET", "path": "/api/x", "request_fields": [], "errors": [],
+                          "response_fields": [{"name": "id", "type": "integer", "required": True}]}}
+
+
+def _ratify_agreement(raw, member, monkeypatch, decision="ratified"):
+    applied, pings = [], []
+    async def _get(_id):
+        return dict(raw)
+    async def _upd(_id, patch):
+        pass
+    async def _notify(u, *a, **k):
+        pings.append(u)
+    monkeypatch.setattr(main, "get_agreement", _get)
+    monkeypatch.setattr(main, "update_agreement", _upd)
+    monkeypatch.setattr(main, "notify", _notify)
+    monkeypatch.setattr(main, "_apply_api_contract", lambda pid, iid, c: applied.append((pid, iid, c)))
+    res = asyncio.run(main.ratify_agreement("agI", main.RatifyAgreementBody(decision=decision), member=member))
+    return res, applied, pings
+
+
+def test_jit_producer_sign_seeds_provisional_mock_and_pings_consumer(monkeypatch):
+    res, applied, pings = _ratify_agreement(_iface_agreement(), _by("sprint0-se"), monkeypatch)  # backend = producer
+    assert res["state"] == "proposed"                                    # only 1 of 2 signed
+    assert len(applied) == 1 and applied[0][1] == "b1"                   # provisional mock seeded on producer-sign
+    assert pings == ["sprint0-fe"]                                       # consumer pinged JIT (not at creation)
+
+
+def test_jit_consumer_completes_finalizes_mock(monkeypatch):
+    raw = _iface_agreement(ratifications=[{"by": "sprint0-se", "decision": "ratified", "at": "t"}])  # producer already signed
+    res, applied, pings = _ratify_agreement(raw, _by("sprint0-fe"), monkeypatch)  # frontend = consumer completes it
+    assert res["state"] == "ratified"
+    assert len(applied) == 1 and applied[0][1] == "b1"                   # the mock is finalized
+    assert pings == []                                                   # both signed — no further ping

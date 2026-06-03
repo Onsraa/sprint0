@@ -783,11 +783,8 @@ async def _create_interface_agreements(plan_id: str, plan: PlanJSON) -> None:
                 await save_agreement(a.model_dump())
             else:
                 a.state = "proposed"
-                await save_agreement(a.model_dump())
-                for u in a.ratifiers:
-                    await notify(u, "agreement_proposed", f"Interface contract · {a.subject}",
-                                 body=f"{a.producer_discipline}↔{a.consumer_discipline}: ratify the API both sides build to.",
-                                 ref={"agreement_id": a.id, "plan_id": plan_id}, actionable=True)
+                await save_agreement(a.model_dump())  # JIT: no broadcast at creation — the producer acts on this
+                # contract folded into their gate; the consumer is pinged only once the producer signs (ratify_agreement).
             past.append(a.model_dump())  # a 2nd identical draft in this same plan also compounds
     except Exception:
         pass
@@ -863,11 +860,23 @@ async def ratify_agreement(agreement_id: str, body: RatifyAgreementBody,
     a = Agreement(**raw)
     if member.username not in a.ratifiers and member.role != "manager":
         raise HTTPException(403, "not a ratifier of this agreement")
-    agreements.apply_ratification(a, member.username, body.decision, body.note,
-                                  datetime.now(timezone.utc).isoformat())
-    # auto-mock: a ratified interface contract seeds the producer issue's api_contract (flows to the FE)
-    if a.state == "ratified" and a.type == "interface" and a.interface and a.producer_issue_id:
-        _apply_api_contract(a.plan_id, a.producer_issue_id, json.dumps(agreements.mock_from_schema(a.interface.response_fields)))
+    now = datetime.now(timezone.utc).isoformat()
+    agreements.apply_ratification(a, member.username, body.decision, body.note, now)
+    # Auto-mock, JIT-split: the producer signs FIRST (at their gate) → seed a PROVISIONAL mock so the
+    # consumer reviews a real shape at its (later) gate, and ping the consumer then — not at creation.
+    # Both signed → the SAME mock is finalized (what the FE builds against + QA verifies).
+    if a.type == "interface" and a.interface and a.producer_issue_id:
+        mock = json.dumps(agreements.mock_from_schema(a.interface.response_fields))
+        if a.state == "ratified":
+            _apply_api_contract(a.plan_id, a.producer_issue_id, mock)  # finalize
+        elif body.decision == "ratified" and member.discipline == a.producer_discipline:
+            _apply_api_contract(a.plan_id, a.producer_issue_id, mock)  # provisional, on the producer's sign
+            signed = {r["by"] for r in a.ratifications if r.get("decision") == "ratified"}
+            for u in a.ratifiers:
+                if u not in signed:  # ping the consumer JIT — the producer validated; review the API your side consumes
+                    await notify(u, "agreement_proposed", f"Interface contract ready · {a.subject}",
+                                 body="The producer signed — review + ratify the API your side consumes.",
+                                 ref={"agreement_id": a.id, "plan_id": a.plan_id}, actionable=True)
     await update_agreement(agreement_id, a.model_dump())
     return a.model_dump()
 
