@@ -118,8 +118,10 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
       </nav>
       <div style={{ flex: 1 }} />
       <button onClick={toggleNav} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 28, padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", color: "var(--text-quaternary)" }}>
-        <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={16} />{!collapsed && <span style={{ fontSize: 12, fontWeight: 500 }}>Collapse</span>}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "var(--bg-secondary)")}
+        style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 30, padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", color: "var(--text-secondary)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)", transition: "background var(--t-quick)" }}>
+        <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={16} />{!collapsed && <span style={{ fontSize: 12, fontWeight: 500 }}>Collapse sidebar</span>}
       </button>
       <SidebarFooter collapsed={collapsed} />
     </aside>
