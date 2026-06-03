@@ -1324,6 +1324,7 @@ async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile 
     DELTA_TARGET[plan_id] = project_id
     DELTA_PRIORITY[plan_id] = req.priority
     await _persist_draft_tasks(plan, plan_id)
+    await _create_interface_agreements(plan_id, plan)  # CDD: a delta's cross-discipline edges get contracts too (compounding from prior plans)
     return {"plan_id": plan_id, "project_id": project_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
 
