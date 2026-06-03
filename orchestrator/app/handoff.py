@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 
-from app import gitlab as gl
+from app import demo, gitlab as gl
 from app.contracts import PlanJSON
 
 _VSCODE_NOISE = {
@@ -109,5 +109,6 @@ def reroute(project_id: int, issue_iid: int, comment: str, to_runner: str | None
         f"sprint0 → re-routing to @{to_runner or 'responsible runner'} (the responsible layer), "
         f"reopened with the failing context."
     )
-    gl.reopen_issue(project_id, issue_iid, comment=note)
+    if not demo.is_demo():  # the public demo never mutates real GitLab (DEMO_MODE is the real boundary)
+        gl.reopen_issue(project_id, issue_iid, comment=note)
     return {"issue_iid": issue_iid, "rerouted_to": to_runner}

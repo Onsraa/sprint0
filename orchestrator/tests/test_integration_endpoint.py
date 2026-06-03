@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from app import main, relay
 from app.contracts import ContextScope, DeveloperProfile, Epic, Issue, PlanJSON, RatifyRequest, TechStack
-from app.main import IntegrationFlagRequest
+from app.main import IntegrationFlagRequest, RejectRequest
 
 
 def _dev(username, discipline, role="developer"):
@@ -195,3 +195,36 @@ def test_merge_unratified_contract_not_enforced(monkeypatch):
                         plan_id="m4", issue_id="b1", output_sample={"id": 1})          # would violate IF enforced
     assert res.get("contract") is None                                               # only ratified/auto_passed contracts bind
     assert relay.open_integration_failures(state) == [] and pings == []
+
+
+# --- reject_issue: a real GitLab reopen must be demo-guarded AND authorized (the public/real-world boundary) ---
+
+def _reject(member, monkeypatch, *, demo, iid=5, to_runner=None):
+    """Drive /reject with the GitLab call + demo flag stubbed; returns (response, [reopen calls])."""
+    calls = []
+    monkeypatch.setattr(main.handoff.demo, "is_demo", lambda: demo)
+    monkeypatch.setattr(main.handoff.gl, "reopen_issue", lambda *a, **k: calls.append(a) or {"iid": iid})
+    res = asyncio.run(main.reject_issue(1, iid, RejectRequest(comment="bad"), member=member))
+    return res, calls
+
+
+def test_reject_in_demo_makes_no_gitlab_call(monkeypatch):
+    res, calls = _reject(_by("gabinvr"), monkeypatch, demo=True, iid=51)  # qa owner, but demo
+    assert calls == []                                                    # the public demo never mutates real GitLab
+    assert 51 in main.REQA.get(1, set())                                  # in-mem re-QA flag still set
+
+
+def test_reject_live_qa_owner_reopens(monkeypatch):
+    res, calls = _reject(_by("gabinvr"), monkeypatch, demo=False, iid=52)  # authorized + live
+    assert len(calls) == 1                                                 # the real reopen fired
+
+
+def test_reject_live_manager_allowed(monkeypatch):
+    _, calls = _reject(_by("Onsraa"), monkeypatch, demo=False, iid=53)
+    assert len(calls) == 1
+
+
+def test_reject_unauthorized_dev_gets_403(monkeypatch):
+    with pytest.raises(HTTPException) as ei:                               # backend dev: not qa owner / manager
+        _reject(_by("sprint0-se"), monkeypatch, demo=False, iid=54)
+    assert ei.value.status_code == 403

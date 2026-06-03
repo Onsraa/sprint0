@@ -1349,10 +1349,16 @@ class MergeRequest(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/issues/{iid}/reject")
-async def reject_issue(project_id: int, iid: int, req: RejectRequest) -> dict:
+async def reject_issue(
+    project_id: int, iid: int, req: RejectRequest, member: DeveloperProfile = Depends(auth.current_member)
+) -> dict:
     """Tester reject → reopen + route back to the responsible-layer runner. Flags the issue for re-QA
     so it re-enters the checklist once the fix is merged. Two-plane: a failed check is a TICKET routed
-    to the runner's profile (never a new relay) — so ping their Inbox to make that routing visible."""
+    to the runner's profile (never a new relay) — so ping their Inbox to make that routing visible.
+    Authorized to the acceptance/qa-gate owner or the manager — it triggers a real GitLab reopen."""
+    await team.ensure_loaded()
+    if not (_is_qa_owner(member, team.all_members()) or member.role == "manager"):
+        raise HTTPException(403, "only the acceptance/qa owner or the manager can reject an item")
     res = await run_in_threadpool(handoff.reroute, project_id, iid, req.comment, req.to_runner)
     REQA.setdefault(project_id, set()).add(iid)
     if req.to_runner:  # surface the bounce as an actionable ticket on the runner's Inbox + watchers
