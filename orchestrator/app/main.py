@@ -11,11 +11,12 @@ import asyncio
 import difflib
 import io
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -32,7 +33,7 @@ from app.contracts import (
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
-from app.agent import DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card
+from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card
 from app.execute import execute_plan, extend_project
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
@@ -55,6 +56,12 @@ from app.reason import (
 )
 
 app = FastAPI(title="sprint0", version="0.4.0")
+
+
+@app.exception_handler(AIOutputError)
+async def _ai_output_error(_request, exc: AIOutputError) -> JSONResponse:
+    """A model returned schema-invalid output → 502 (a clean upstream-failure signal), not a 500."""
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
 
 
 class _LiveGateMiddleware:
@@ -97,6 +104,25 @@ async def _genai_error(_request, exc: ClientError) -> JSONResponse:
     if code == 429:
         return JSONResponse(status_code=503, content={"detail": "AI quota / rate-limit hit — retry shortly."})
     return JSONResponse(status_code=502, content={"detail": f"AI provider error ({code})."})
+
+
+# ── Rate-limit for the PUBLIC (unauthenticated) AI intake endpoints ──
+# clarify + architectures stay open by design (demo "drop a brief"), so cap anonymous Gemini
+# cost/quota abuse with a per-IP sliding window. Per-worker (in-process); swap to Redis if multi-worker.
+_AI_RATE_MAX = 5          # calls allowed
+_AI_RATE_WINDOW_S = 60    # per this many seconds, per client IP
+_ai_calls: dict[str, list[float]] = {}
+
+
+def _ai_throttle(request: Request) -> None:
+    ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    recent = [t for t in _ai_calls.get(ip, []) if now - t < _AI_RATE_WINDOW_S]
+    if len(recent) >= _AI_RATE_MAX:
+        raise HTTPException(429, "rate limited — too many AI requests, retry shortly")
+    recent.append(now)
+    _ai_calls[ip] = recent
+
 
 # Demo-grade in-memory stores.
 BRIEFS: dict[str, str] = {}
@@ -641,7 +667,8 @@ async def get_architectures(brief_id: str) -> ArchitectureOptions:
 
 
 @app.post("/api/briefs/{brief_id}/clarify", response_model=ClarifiedSpec)
-async def clarify(brief_id: str, constraints: Optional[Constraints] = None) -> ClarifiedSpec:
+async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
+                  _t: None = Depends(_ai_throttle)) -> ClarifiedSpec:
     """Intake: extract the spec, flag unclear features as ambiguity cards, propose reuse."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
@@ -663,13 +690,20 @@ async def resolve_clarify(brief_id: str, res: ClarifyResolution) -> ClarifiedSpe
 
 
 @app.post("/api/briefs/{brief_id}/architectures", response_model=ArchitectureOptions)
-async def architectures(brief_id: str, constraints: Optional[Constraints] = None) -> ArchitectureOptions:
+async def architectures(brief_id: str, constraints: Optional[Constraints] = None,
+                        _t: None = Depends(_ai_throttle)) -> ArchitectureOptions:
     """Idea 1: 2-3 grounded Architecture Cards for the manager to pick from."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
     opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints())
     ARCHS[brief_id] = opts  # cache for wizard resume
     return opts
+
+
+def _manifest_of(plan: PlanJSON) -> list[str]:
+    """The key files a plan touches — deduped, sorted union of every issue's context_scope.files.
+    Recomputed on each delta dispatch so mid-prod grounding never reads the dispatch-day snapshot."""
+    return sorted({f for e in plan.epics for i in e.issues for f in (i.context_scope.files or [])})
 
 
 def _plan_pid(plan_id: str) -> int:
@@ -1066,10 +1100,18 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
         result["project_id"] = pid
         if pid in PROJECTS:  # grow the live plan so QA + later deltas see the new issues
             PROJECTS[pid].epics.extend(plan.epics)
+        try:  # refresh the durable record so the NEXT feature-add grounds on current titles + files, not the dispatch-day snapshot
+            rec = await get_project_record(pid)
+            if rec and rec.get("plan"):
+                merged = PlanJSON(**rec["plan"])
+                merged.epics.extend(plan.epics)
+                await update_project_record(pid, {"plan": merged.model_dump(), "module_manifest": _manifest_of(merged)})
+        except Exception as e:
+            result["persist_warning"] = str(e)[:200]
     else:
         result = await run_in_threadpool(execute_plan, plan)
         PROJECTS[result["project_id"]] = plan
-        manifest = sorted({f for e in plan.epics for i in e.issues for f in i.context_scope.files})
+        manifest = _manifest_of(plan)
         record = ProjectRecord(
             project_id=result["project_id"], name=plan.project_name, web_url=result.get("web_url", ""),
             tech_stack=plan.tech_stack, grounded_on=plan.grounded_on, plan=plan, module_manifest=manifest,

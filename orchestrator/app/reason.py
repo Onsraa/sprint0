@@ -7,6 +7,7 @@ REASON only (RAG via MongoDB MCP + Gemini). Execution is the separate, human-gat
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 
@@ -18,8 +19,11 @@ from app.assign import assign_developers
 from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
 from app.rag import (
     DEV_COLL, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
-    all_profiles, cosine_score, embed_document, embed_queries, embed_query, record_postmortem, save_profile,
+    all_profiles, cosine_score, decisions_for_project, embed_document, embed_queries, embed_query,
+    record_postmortem, save_profile,
 )
+
+log = logging.getLogger(__name__)
 
 _PP_PROJECTION = {"name": 1, "tech_stack": 1, "total_estimate_days": 1, "actual_days": 1, "outcome_notes": 1}
 _DEV_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "skills_text": 1, "trust_level": 1}
@@ -94,7 +98,7 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)
     prompt = (
-        f"CLIENT BRIEF:\n{brief_text}\n\n"
+        f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
         f"SIMILAR PAST PROJECTS (agency memory):\n{_format_past(past)}\n\n"
         f"DEV ROSTER:\n{_format_roster(roster)}\n\n"
@@ -116,7 +120,7 @@ async def clarify_brief(brief_text: str, constraints: Constraints | None = None)
         except Exception:
             code = []  # code-RAG index not present yet (pre-reseed) → skip the reuse-code section
     prompt = (
-        f"CLIENT BRIEF:\n{brief_text}\n\n"
+        f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
         f"SIMILAR PAST PROJECTS (agency memory):\n{_format_past(past)}\n\n"
         f"REUSABLE CODE (chunk-level code-RAG over agency repos — cite specific files in reuse proposals):\n{_format_code(code)}\n\n"
@@ -192,7 +196,7 @@ def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | N
         vocab_line = ("KNOWN CAPABILITY PROFILES (reuse these capability_tags when one fits; only coin "
                       f"a new kebab-case tag if none match):\n{', '.join(vocab)}\n\n")
     return (
-        f"CLIENT BRIEF:\n{brief}\n\n"
+        f"<client_brief>\n{brief}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n"
         f"{chosen}\n"
         f"{vocab_line}"
@@ -284,11 +288,15 @@ async def delta_brief(feature_text: str, record: dict, constraints: Constraints 
     existing = record.get("plan", {}) or {}
     existing_titles = [i.get("title", "") for e in existing.get("epics", []) for i in e.get("issues", [])]
     manifest = record.get("module_manifest", [])
+    try:  # the "compound" grounding: prior ratified decisions ON THIS project (own MCP context, no re-entrancy)
+        decisions = (await decisions_for_project(record.get("name", "")))[:8]
+    except Exception:
+        decisions = []
     async with MongoMCP() as m:
         past = await m.hybrid_search(
             PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(feature_text), feature_text, k=3, projection=_PP_PROJECTION
         )
-        plan = await generate_plan(_build_delta_prompt(feature_text, record, existing_titles, manifest, past, stack, constraints))
+        plan = await generate_plan(_build_delta_prompt(feature_text, record, existing_titles, manifest, past, stack, constraints, decisions))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
         plan.grounded_on = plan.grounded_on or [record.get("name", "this project"), *(p["name"] for p in past)]
         await _match_and_assign(plan, m)
@@ -298,6 +306,7 @@ async def delta_brief(feature_text: str, record: dict, constraints: Constraints 
 def _build_delta_prompt(
     feature: str, record: dict, existing_titles: list[str], manifest: list[str],
     past: list[dict], stack: TechStack | None, constraints: Constraints | None,
+    decisions: list[dict] | None = None,
 ) -> str:
     locked = ""
     if stack:
@@ -312,9 +321,11 @@ def _build_delta_prompt(
         f"{locked}"
         f"EXISTING ISSUES (do NOT duplicate; integrate with these):\n{existing}\n\n"
         f"KEY MODULES already in the codebase (reference these in context_scope where relevant):\n{mods}\n\n"
+        f"PRIOR DECISIONS ON THIS PROJECT (respect these — do NOT contradict a shipped/validated call):\n"
+        f"{_format_decisions(decisions or [])}\n\n"
         f"SIMILAR PAST PROJECTS (agency memory):\n{_format_past(past)}\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"NEW FEATURE REQUEST:\n{feature}\n\n"
+        f"<feature_request>\n{feature}\n</feature_request>\n\n"
         f"Produce ONLY the incremental plan: 1-3 epics of new issues that integrate with the existing code."
     )
 
@@ -365,8 +376,8 @@ async def onboard_developer(cv_text: str) -> dict:
     try:
         from app import gitlab as gl
         gl_user = gl.search_user(username)  # link the real GitLab account (native assignee)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("onboard: gitlab link failed for @%s: %s", username, e)  # surfaced via link_status, not silent
     doc = {
         "name": profile.name,
         "gitlab_username": username,
