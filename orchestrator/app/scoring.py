@@ -35,21 +35,23 @@ def _history_score(cand: dict, tags: list[str]) -> float:
 _AVAIL_HORIZON = 15   # workdays; a candidate free this far out (or more) scores 0 on availability
 
 
-def _avail_factor(cand: dict) -> float:
+def _avail_factor(cand: dict, extra_days: float = 0.0) -> float:
     """Availability factor (0..1) — route new work to whoever can start SOONEST. Uses the real
     `free_in_days` (server-computed from the live schedule) when present; falls back to the static
-    `load` baseline when it isn't (e.g. a candidate dict that wasn't enriched)."""
+    `load` baseline. `extra_days` is the load already handed to this candidate WITHIN the current
+    planning pass — so a same-discipline slice spreads across devs instead of one sweeping it (P4)."""
     fid = cand.get("free_in_days")
     if fid is None:
-        return 1 - min(100, int(cand.get("load", 0) or 0)) / 100   # fallback: static load
-    return max(0.0, 1 - min(int(fid), _AVAIL_HORIZON) / _AVAIL_HORIZON)
+        base = 1 - min(100, int(cand.get("load", 0) or 0)) / 100   # fallback: static load
+        return max(0.0, base - min(extra_days, _AVAIL_HORIZON) / _AVAIL_HORIZON)
+    return max(0.0, 1 - min(int(fid) + extra_days, _AVAIL_HORIZON) / _AVAIL_HORIZON)
 
 
-def score(cand: dict, issue: Issue) -> float:
+def score(cand: dict, issue: Issue, extra_days: float = 0.0) -> float:
     lane = issue.lane or issue.discipline
     skill = max(0.0, min(1.0, float(cand.get("score", 0.0) or 0.0)))  # $vectorSearch cosine
     trust = _RANK.get(_trust_in(cand, lane), 0) / 2                   # 0..1
-    load = _avail_factor(cand)                                        # sooner free → higher (was static load)
+    load = _avail_factor(cand, extra_days)                            # sooner free → higher; running pass-load aware
     lane_match = 1.0 if cand.get("discipline") == lane else 0.0
     sen = _SENIORITY.get(cand.get("seniority", "mid"), 0.7)
     seniority_fit = sen if _RANK.get(issue.risk, 0) <= 1 else sen ** 2  # juniors penalized on high risk
@@ -59,13 +61,18 @@ def score(cand: dict, issue: Issue) -> float:
         + _W["lane"] * lane_match + _W["seniority"] * seniority_fit + _W["history"] * history, 4)
 
 
-def best_assignment(issue: Issue, candidates: list[dict]) -> tuple[dict | None, float, bool]:
+def best_assignment(issue: Issue, candidates: list[dict],
+                    assigned: dict[str, float] | None = None) -> tuple[dict | None, float, bool]:
     """(chosen, score, below_floor). Argmax available developer; below_floor flags a weak match (a
-    stretch the manager should eyeball). None when no developer is available."""
+    stretch the manager should eyeball). None when no developer is available. `assigned` is the running
+    per-dev load handed out earlier in THIS pass — so a multi-issue same-discipline slice spreads (P4)."""
+    assigned = assigned or {}
     avail = [c for c in candidates
              if c.get("role", "developer") == "developer" and int(c.get("load", 0) or 0) < 100]
     if not avail:
         return None, 0.0, True
-    chosen = max(avail, key=lambda c: score(c, issue))
-    s = score(chosen, issue)
+    def _extra(c: dict) -> float:
+        return assigned.get(c.get("gitlab_username") or c.get("username", ""), 0.0)
+    chosen = max(avail, key=lambda c: score(c, issue, _extra(c)))
+    s = score(chosen, issue, _extra(chosen))
     return chosen, s, s < _FLOOR

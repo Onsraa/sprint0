@@ -334,15 +334,24 @@ class InterfaceDraft(BaseModel):
     note: str = ""
 
 
+class SubteamDraft(BaseModel):
+    """For 2+ devs on ONE discipline's slice — the AI proposes pair (high-risk → review / junior+senior →
+    mentorship) or split (by skill, faster). The lane lead ratifies; the second dev's channel is Watch."""
+    discipline: str = ""
+    mode: Literal["pair", "split"] = "split"
+    members: list[str] = Field(default_factory=list)
+    rationale: str = ""
+
+
 class Agreement(BaseModel):
     """The coordination unit: an AI-drafted, async-ratified, compounding decision. One shape per kind; the
-    typed draft lives in a per-kind slot (only `interface` for P2 — subteam/etc. add later). Additive — does
-    NOT replace `Decision` (which stays the ratification portfolio)."""
+    typed draft lives in a per-kind slot (`interface`, `subteam`). Additive — does NOT replace `Decision`."""
     id: str
     type: Literal["interface", "subteam", "reuse", "reschedule", "handoff", "assign", "priority"]
     plan_id: str
     subject: str = ""                                         # human label of what it binds
     interface: Optional[InterfaceDraft] = None                # set when type == "interface"
+    subteam: Optional[SubteamDraft] = None                    # set when type == "subteam"
     grounded_on: list[str] = Field(default_factory=list)
     ratifiers: list[str] = Field(default_factory=list)        # the MINIMAL consent set (usernames)
     ratifications: list[dict] = Field(default_factory=list)   # [{by, decision: ratified|rejected, at, note}]

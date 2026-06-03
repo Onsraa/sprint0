@@ -21,11 +21,20 @@ export function AgreementCard({ a, onRatify, onReject, busy }: {
     <div style={{ borderRadius: "var(--r-lg)", border: "0.5px solid var(--border)", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)", overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "11px 13px", borderBottom: "0.5px solid var(--border-subtle)" }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: SIG[a.state] ?? "var(--text-quaternary)", flexShrink: 0 }} />
-        <span className="mono" style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-quaternary)" }}>Interface contract</span>
+        <span className="mono" style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-quaternary)" }}>{a.type === "subteam" ? "Sub-team" : "Interface contract"}</span>
         <span style={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0 }}>{a.subject}</span>
         {a.state === "ratified" && <Badge tone="green"><Icon name="check" size={10} />both signed</Badge>}
         {a.state === "auto_passed" && <Badge tone="ink"><Icon name="relay" size={10} />compounded</Badge>}
       </div>
+      {a.subteam && (
+        <div style={{ padding: "12px 13px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+            <Badge tone="ink" mono>{a.subteam.mode}</Badge>
+            <span style={{ fontSize: 12.5, color: "var(--text-primary)" }}>{(a.subteam.members ?? []).join(" + ")}</span>
+          </div>
+          {a.subteam.rationale && <div style={{ fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.45 }}>{a.subteam.rationale}</div>}
+        </div>
+      )}
       {c && (
         <div style={{ padding: "12px 13px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>

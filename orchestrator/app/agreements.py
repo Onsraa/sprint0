@@ -5,7 +5,7 @@ contract. The caller persists (rag.save_agreement). Pure + deterministic + testa
 """
 from __future__ import annotations
 
-from app.contracts import Agreement, DeveloperProfile, InterfaceDraft, SchemaField
+from app.contracts import Agreement, DeveloperProfile, InterfaceDraft, SchemaField, SubteamDraft
 
 _TRUST = {"low": 0, "medium": 1, "high": 2}
 _SENIORITY = {"junior": 0, "mid": 1, "senior": 2}
@@ -73,6 +73,42 @@ def _type_ok(value, t: str) -> bool:
     py = {"string": str, "number": (int, float), "integer": int, "boolean": bool,
           "object": dict, "array": list}.get(t)
     return isinstance(value, py) if py else True
+
+
+_RISK = {"low": 0, "medium": 1, "high": 2}
+
+
+def propose_subteams(plan, members: list[DeveloperProfile]) -> list[Agreement]:
+    """For each discipline whose slice has 2+ distinct assignees, draft a pair/split agreement. Heuristic:
+    a high-risk slice OR a junior+senior pair → PAIR (review / mentorship); else SPLIT (by skill, faster).
+    The lane lead ratifies; the second dev's channel is Watch. (No LLM — pure + deterministic.)"""
+    by_user = {m.username: m for m in members}
+    lanes: dict[str, dict] = {}
+    for e in plan.epics:
+        for i in e.issues:
+            if not i.assignee:
+                continue
+            d = lanes.setdefault(i.discipline, {"devs": set(), "risk": 0})
+            d["devs"].add(i.assignee)
+            d["risk"] = max(d["risk"], _RISK.get(i.risk, 1))
+    out: list[Agreement] = []
+    for disc, info in lanes.items():
+        devs = sorted(info["devs"])
+        if len(devs) < 2:
+            continue                                   # one dev → no sub-team to form
+        seniorities = {by_user[u].seniority for u in devs if u in by_user}
+        mixed = "junior" in seniorities and "senior" in seniorities
+        if info["risk"] >= 2 or mixed:
+            mode = "pair"
+            why = "high-risk slice → pair for review" if info["risk"] >= 2 else "junior + senior → pair for mentorship"
+        else:
+            mode, why = "split", "comparable devs, low risk → split by skill for speed"
+        out.append(Agreement(
+            id="", type="subteam", plan_id="", subject=f"{disc} sub-team · {mode}",
+            subteam=SubteamDraft(discipline=disc, mode=mode, members=devs, rationale=why),
+            producer_discipline=disc,
+        ))
+    return out
 
 
 def _iface_sig(a: dict) -> tuple:

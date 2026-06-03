@@ -316,9 +316,14 @@ export const InterfaceDraft = z.object({
   errors: z.array(z.string()), note: z.string().optional(),
 });
 export type InterfaceDraft = z.infer<typeof InterfaceDraft>;
+export const SubteamDraft = z.object({
+  discipline: z.string(), mode: z.string(), members: z.array(z.string()), rationale: z.string().optional(),
+});
+export type SubteamDraft = z.infer<typeof SubteamDraft>;
 export const Agreement = z.object({
   id: z.string(), type: z.string(), plan_id: z.string(), subject: z.string(),
   interface: InterfaceDraft.nullish(),
+  subteam: SubteamDraft.nullish(),
   grounded_on: z.array(z.string()).optional(), ratifiers: z.array(z.string()),
   ratifications: z.array(unknownRecord).optional(), state: z.string(),
   precedent_id: z.string().nullish(),   // P3: the past ratified agreement it auto-passed from (compounded)

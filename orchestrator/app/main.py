@@ -763,10 +763,10 @@ async def _create_interface_agreements(plan_id: str, plan: PlanJSON) -> None:
     """Draft an interface contract at every cross-discipline dependency edge + route each to its two lane
     leads' Inboxes (minimal-ratifier). Best-effort — a miss is still caught at the integration gate."""
     try:
-        drafts = await propose_interfaces(plan)
+        members = team.all_members()
+        drafts = list(await propose_interfaces(plan)) + agreements.propose_subteams(plan, members)
         if not drafts:
             return
-        members = team.all_members()
         now = datetime.now(timezone.utc).isoformat()
         past = await all_agreements()  # the precedent pool (the compounding memory)
         for a in drafts:

@@ -72,3 +72,15 @@ def test_availability_falls_back_to_load_when_absent():
     free = _cand("free", "backend", load=0)
     chosen, _, _ = scoring.best_assignment(issue, [busy, free])
     assert chosen["gitlab_username"] == "free"
+
+
+def test_within_pass_load_balancing_spreads_a_slice():
+    # two identical same-discipline devs → issue 1 picks one; once it's loaded THIS pass, issue 2 spreads
+    issue = _iss(typ="backend")
+    a = _cand("a", "backend"); a["free_in_days"] = 0
+    b = _cand("b", "backend"); b["free_in_days"] = 0
+    assigned: dict = {}
+    c1, _, _ = scoring.best_assignment(issue, [a, b], assigned)
+    assigned[c1["gitlab_username"]] = 20.0                       # the picked dev now carries this pass's load
+    c2, _, _ = scoring.best_assignment(issue, [a, b], assigned)
+    assert c1["gitlab_username"] != c2["gitlab_username"]        # the slice spreads, not one dev sweeping

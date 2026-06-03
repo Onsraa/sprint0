@@ -89,3 +89,30 @@ def test_find_precedent_none_when_unratified_or_different():
     assert A.find_precedent(new, unratified) is None                         # precedent not ratified → no auto-pass
     diff_path = [{**unratified[0], "state": "ratified", "interface": {"path": "/api/y", "response_fields": [{"name": "id"}]}}]
     assert A.find_precedent(new, diff_path) is None                          # different shape → no match
+
+
+# ── P4 sub-team: pair/split for 2+ devs on one lane ──────────────────────────
+from app.contracts import PlanJSON, Epic, Issue, ContextScope, TechStack
+def _plan(issues):
+    return PlanJSON(id="p", project_name="X", client_summary="", timeline_weeks=4,
+                    epics=[Epic(id="e", title="e", issues=issues)],
+                    tech_stack=TechStack(frontend="R", backend="F", db="P", infra="D"))
+def _iss(id, assignee, risk="low", disc="backend"):
+    return Issue(id=id, title=id, description="", type="backend", estimate_days=2, risk=risk,
+                 required_skill="backend:x", discipline=disc, context_scope=ContextScope(files=[], note=""),
+                 depends_on=[], assignee=assignee)
+
+def test_propose_subteams_pairs_on_mixed_seniority():
+    plan = _plan([_iss("i1", "sr"), _iss("i2", "jr")])
+    roster = [_dev("sr", "backend", seniority="senior"), _dev("jr", "backend", seniority="junior")]
+    ags = A.propose_subteams(plan, roster)
+    assert len(ags) == 1 and ags[0].type == "subteam"
+    assert ags[0].subteam.mode == "pair" and set(ags[0].subteam.members) == {"sr", "jr"}
+
+def test_propose_subteams_splits_comparable_low_risk():
+    plan = _plan([_iss("i1", "a"), _iss("i2", "b")])
+    roster = [_dev("a", "backend", seniority="mid"), _dev("b", "backend", seniority="mid")]
+    assert A.propose_subteams(plan, roster)[0].subteam.mode == "split"
+
+def test_propose_subteams_none_for_solo_lane():
+    assert A.propose_subteams(_plan([_iss("i", "solo")]), [_dev("solo", "backend")]) == []
