@@ -143,7 +143,7 @@ function InboxRow({ n, active, onClick }: { n: any; active: boolean; onClick: ()
   );
 }
 
-function InboxDetail({ n, go, onSnooze }: { n: any; go: (v: string) => void; onSnooze: () => void }) {
+export function InboxDetail({ n, go, onSnooze }: { n: any; go: (v: string) => void; onSnooze: () => void }) {
   const { members }: any = useApp();
   const meta = NOTIF_META[n.kind] || NOTIF_META.assigned;
   // notifications carry no structured actor — pull the @username from the title. Title shows the NAME;

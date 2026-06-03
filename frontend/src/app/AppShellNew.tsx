@@ -34,7 +34,7 @@ export const DEMO_PERSONAS = [
    QA gate. Devs/managers reach Contract from the Today "Start here" card, not a standing item. */
 const NAV = [
   { section: "Overview", items: [
-    { id: "today", label: "Today", icon: "today", kbd: ["G", "D"], roles: ["manager", "developer", "qa"] },
+    { id: "today", label: "Queue", icon: "inbox", kbd: ["G", "D"], roles: ["manager", "developer", "qa"] },
     { id: "relays", label: "Relays", icon: "pool", kbd: ["G", "L"], roles: ["manager", "developer", "qa"] },
   ] },
   { section: "Work", items: [
@@ -48,7 +48,6 @@ const NAV = [
     { id: "passport", label: "Passport", icon: "passport", roles: ["developer", "qa"] },
   ] },
   { section: "System", items: [
-    { id: "inbox", label: "Inbox", icon: "inbox", kbd: ["G", "I"], roles: ["manager", "developer", "qa"] },
     { id: "settings", label: "Settings", icon: "settings", roles: ["manager"] },
   ] },
 ] as const;

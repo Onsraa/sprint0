@@ -17,7 +17,7 @@ import { Profiles } from "../views/Profiles";
 import { Settings } from "../views/Settings";
 import { QAGate } from "../views/QAGate";
 import { Passport } from "../views/Passport";
-import { Today } from "../views/Today";
+import { Queue } from "../views/Queue";
 import { Relays } from "../views/Relays";
 
 const rootRoute = createRootRoute({
@@ -26,7 +26,7 @@ const rootRoute = createRootRoute({
 
 /** path (= `/${view}`) → the existing panel component. */
 const PANELS: { path: string; component: FC }[] = [
-  { path: "/today", component: Today },
+  { path: "/today", component: Queue },
   { path: "/relays", component: Relays },
   { path: "/inbox", component: InboxPage },
   { path: "/work", component: WorkHub },
