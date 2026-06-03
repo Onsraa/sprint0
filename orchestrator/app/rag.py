@@ -276,6 +276,20 @@ async def all_agreements(limit: int = 1000) -> list[dict]:
         return await m.find(AGREEMENTS_COLLECTION, projection={"_id": 0}, limit=limit)
 
 
+async def reuse_pack(projects: list[str], limit: int = 30) -> list[dict]:
+    """The reuse agreement's executable payload: the cited source files for a chosen MEMORY solution —
+    the CodeChunks of the grounded project(s) (file_path · web_url · excerpt). Loose-matched on the first
+    name token so 'QuantaPay (2024)' finds the 'quantapay-2024' repo's chunks. 'it was built before' →
+    'it's already in your branch'."""
+    toks = {p.split()[0].split("-")[0].lower() for p in projects if p}
+    if not toks:
+        return []
+    async with MongoMCP() as m:
+        rows = await m.find(CODE_COLL, projection={"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1}, limit=300)
+    out = [r for r in rows if str(r.get("project", "")).split("-")[0].lower() in toks]
+    return out[:limit]
+
+
 async def get_agreement(agreement_id: str) -> dict:
     if demo.is_demo():
         return dict(_DEMO_AGREEMENTS.get(agreement_id) or {})

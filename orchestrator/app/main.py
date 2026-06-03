@@ -50,7 +50,7 @@ from app.rag import (
     tasks_for_project, update_task,
     save_reschedule_proposal, open_reschedule_proposals,
     get_reschedule_proposal, update_reschedule_proposal,
-    save_agreement, agreements_for_plan, agreements_for_ratifier, get_agreement, update_agreement, all_agreements,
+    save_agreement, agreements_for_plan, agreements_for_ratifier, get_agreement, update_agreement, all_agreements, reuse_pack,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -858,6 +858,15 @@ async def verify_agreements(plan_id: str, member: DeveloperProfile = Depends(aut
                 await notify(prod.assignee, "qa_failed", f"Contract violation · {raw.get('subject')}",
                              body="; ".join(viol), ref={"plan_id": plan_id, "issue_id": prod.id}, actionable=True)
     return {"checked": len(results), "violations": len([r for r in results if not r["ok"]]), "results": results}
+
+
+@app.get("/api/reuse-pack")
+async def get_reuse_pack(projects: str = "", _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The REUSE agreement made executable: the cited source files for a chosen memory solution — the dev
+    pulls them (link → file list → seed the focus branch). 'it was built before' → 'it's in your branch'."""
+    names = [p.strip() for p in projects.split(",") if p.strip()]
+    files = await reuse_pack(names)
+    return {"count": len(files), "files": files}
 
 
 @app.get("/api/plans/{plan_id}", response_model=PlanJSON)

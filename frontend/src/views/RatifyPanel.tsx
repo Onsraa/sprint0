@@ -117,6 +117,27 @@ function FileRow({ file }: { file: string }) {
   );
 }
 
+/* §reuse — the cited source files for a chosen memory solution (the reuse agreement made executable):
+   link + file list now; the seed-the-focus-branch step lands at dispatch. "built before → here it is." */
+function ReusePack({ projects }: { projects: string[] }) {
+  const { data } = useQuery({ queryKey: ["reusePack", projects.join(",")], queryFn: () => api.reusePack(projects), enabled: projects.length > 0 });
+  const files = (data?.files ?? []).filter((f) => /\.(py|ts|tsx|js|jsx|sql|go|rs|vue)$/.test(f.file_path)).slice(0, 6);
+  if (!files.length) return null;
+  return (
+    <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: "var(--r-sm)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
+      <div className="mono" style={{ fontSize: 9.5, color: "var(--text-quaternary)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 5 }}>Reuse pack · {files.length} files</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        {files.map((f) => (
+          <a key={f.file_path} href={f.web_url} target="_blank" rel="noreferrer" className="mono"
+            style={{ fontSize: 11, color: "var(--text-secondary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <Icon name="relay" size={10} style={{ color: "var(--text-quaternary)" }} />{f.file_path}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* one selectable solution card — collapsed headline, detail on demand */
 function SolutionCardView({ s, selected, recommended, interactive, onSelect }:
   { s: SolutionCard; selected: boolean; recommended: boolean; interactive: boolean; onSelect: () => void }) {
@@ -152,6 +173,7 @@ function SolutionCardView({ s, selected, recommended, interactive, onSelect }:
               <span style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 500 }}>Reuse {s.grounded_on.join(" · ")}</span>
             </div>
           )}
+          {star && s.grounded_on.length > 0 && <ReusePack projects={s.grounded_on} />}
           {s.delta_note && (
             <div style={{ marginTop: 7 }}>
               <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", background: "var(--bg-secondary)", padding: "2px 7px", borderRadius: "var(--r-xs)" }}>{s.delta_note}</span>

@@ -630,6 +630,10 @@ export const api = {
   ratifyAgreement(id: string, decision: "ratified" | "rejected", note = ""): Promise<S.Agreement> {
     return jpost(`/api/agreements/${id}/ratify`, { decision, note });
   },
+  /* The reuse agreement made executable: the cited source files for a chosen memory solution */
+  reusePack(projects: string[]): Promise<{ count: number; files: { project: string; file_path: string; web_url: string; excerpt: string }[] }> {
+    return jget(`/api/reuse-pack?projects=${encodeURIComponent(projects.join(","))}`);
+  },
 
   /* QA */
   qaRun(projectId: number): Promise<QAReport> {
