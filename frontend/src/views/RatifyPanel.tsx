@@ -10,7 +10,9 @@
    conflict, client-side regen preview) collapse onto the real Zod shapes. TierBadge + GATE_META stay
    exported so RelayBoard composes them. */
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { AgreementCard } from "./AgreementCard";
+import { toast } from "sonner";
 import { Avatar, Badge, DiscDot, DISC, StatusIcon, CapTag, Button } from "../components/ui";
 import { Icon, ZeroMark } from "../lib/icon";
 import { useApp } from "../app/useApp";
@@ -412,6 +414,9 @@ export function RatifyPanel({ g }: { g: any }) {
           ))}
         </div>
 
+        {/* gate-folds-contract: the interface contracts this discipline produces/consumes, JIT + light (collapsed) */}
+        <GateContracts planId={planId} discipline={g.discipline} me={me} />
+
         {locked && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)", marginBottom: 16 }}>
             <Icon name="lock" size={14} style={{ color: "var(--text-tertiary)" }} />
@@ -439,6 +444,47 @@ export function RatifyPanel({ g }: { g: any }) {
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/* The interface contracts THIS gate produces or consumes — folded into the gate, surfaced just-in-time.
+   Light: collapsed by default (the slice pick stays primary); the header reads as a count-to-sign, not a
+   wall of API tables. Reuses the same planAgreements query + AgreementCard + ratify mutation as the board. */
+function GateContracts({ planId, discipline, me }: { planId: string | null; discipline: string; me: any }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const { data } = useQuery({ queryKey: ["planAgreements", planId], queryFn: () => api.planAgreements(planId as string), enabled: !!planId });
+  const ags = (data?.agreements ?? []).filter((a) => a.type === "interface"
+    && (a.producer_discipline === discipline || a.consumer_discipline === discipline));
+  const ratify = useMutation({
+    mutationFn: ({ id, d }: { id: string; d: "ratified" | "rejected" }) => api.ratifyAgreement(id, d),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["planAgreements", planId] }); qc.invalidateQueries({ queryKey: ["myAgreements"] }); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+  });
+  if (!ags.length) return null;
+  const toSign = ags.filter((a) => a.state === "proposed" && (a.ratifiers ?? []).includes(me.username)).length;
+  return (
+    <div style={{ marginBottom: 16, border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }}>
+      <button onClick={() => setOpen((o) => !o)}
+        style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", padding: "10px 13px", textAlign: "left", background: "var(--bg-secondary)", borderBottom: open ? "0.5px solid var(--border-subtle)" : "none" }}>
+        <Icon name="relay" size={14} style={{ color: toSign > 0 ? "var(--text-primary)" : "var(--text-tertiary)" }} />
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{toSign > 0 ? `${toSign} interface ${toSign === 1 ? "contract" : "contracts"} to sign` : "Interface contracts"}</span>
+        <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>— this gate produces / consumes, just-in-time</span>
+        <div style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{ags.length}</span>
+        <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)", transform: open ? "none" : "rotate(-90deg)", transition: "transform var(--t-quick)" }} />
+      </button>
+      {open && (
+        <div style={{ padding: 13, display: "flex", flexDirection: "column", gap: 10, background: "var(--bg-base)" }}>
+          {ags.map((a) => {
+            const canSign = a.state === "proposed" && (a.ratifiers ?? []).includes(me.username);
+            return <AgreementCard key={a.id} a={a} busy={ratify.isPending}
+              onRatify={canSign ? () => ratify.mutate({ id: a.id, d: "ratified" }) : undefined}
+              onReject={canSign ? () => ratify.mutate({ id: a.id, d: "rejected" }) : undefined} />;
+          })}
+        </div>
+      )}
     </div>
   );
 }
