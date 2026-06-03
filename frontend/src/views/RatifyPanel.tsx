@@ -326,7 +326,9 @@ export function RatifyPanel({ g }: { g: any }) {
     .filter((i: any) => i.discipline === g.discipline)
     .map((i: any) => ({ id: i.id, t: i.title, s: "planned", tags: i.capability_tags ?? [] })), [plan, g.discipline]);
   const done = g.status === "ratified" || g.status === "auto_passed";
-  const ownsThisGate = g.owner === me.username || chrome.seesAllGates;
+  // A dev owns their own discipline's gate; the manager sees all; a granted Watch (personFilter) is read-only.
+  // (Gate.owner is unset in the adapter, so ownership is by discipline — exact in the demo's one-dev-per-lane.)
+  const ownsThisGate = !personFilter && (me.discipline === g.discipline || chrome.seesAllGates);
   const locked = g.depends.length > 0 && !done;
   const interactive = !done && !locked && ownsThisGate;
   const flaggedHere = g.status === "changes_requested";
