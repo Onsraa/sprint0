@@ -8,7 +8,7 @@
    CoverageStrip, GateCard, FlowConnector, IntegrationStrip) are ported verbatim.
    TierBadge + GATE_META are imported from the sibling RatifyPanel.tsx. */
 import { useState, useEffect, Fragment } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Availability, Avatar, Badge, DiscDot, DISC, TrustDot, Button } from "../components/ui";
 import { Icon } from "../lib/icon";
@@ -18,6 +18,7 @@ import { useUI } from "../lib/store";
 import { api } from "../lib/api";
 import { qk } from "../lib/query";
 import { RatifyPanel, TierBadge, GATE_META } from "./RatifyPanel";
+import { AgreementCard } from "./AgreementCard";
 
 const isDone = (g: any) => g.status === "ratified" || g.status === "auto_passed";
 
@@ -97,6 +98,8 @@ export function RelayBoard() {
 
             <CoverageStrip />
 
+            <InterfaceContracts planId={planId} me={me} />
+
             {byStage.map((s, i) => (
               <Fragment key={s.stage}>
                 {i > 0 && <FlowConnector label={STAGE_CLEAR_LABEL[byStage[i - 1].stage] ?? "clears"} />}
@@ -111,6 +114,34 @@ export function RelayBoard() {
         </div>
 
         {selGate && <RatifyPanel g={selGate} />}
+      </div>
+    </div>
+  );
+}
+
+/* §CDD — the plan's interface contracts (the Agreement engine): each is the API two disciplines build
+   to. A `proposed` one shows ratify (if you're a lead); a `compounded`/`ratified` one is read-only —
+   this is where the auto-passed (compounded-from-a-past-project) contracts become visible. */
+function InterfaceContracts({ planId, me }: { planId: string | null; me: any }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["planAgreements", planId], queryFn: () => api.planAgreements(planId as string), enabled: !!planId });
+  const ags = (data?.agreements ?? []).filter((a: any) => a.type === "interface");
+  const ratify = useMutation({
+    mutationFn: ({ id, d }: { id: string; d: "ratified" | "rejected" }) => api.ratifyAgreement(id, d),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["planAgreements", planId] }); qc.invalidateQueries({ queryKey: ["myAgreements"] }); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+  });
+  if (!ags.length) return null;
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div className="kicker" style={{ marginBottom: 8 }}>Interface contracts · CDD</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {ags.map((a: any) => {
+          const canSign = a.state === "proposed" && (a.ratifiers ?? []).includes(me.username);
+          return <AgreementCard key={a.id} a={a} busy={ratify.isPending}
+            onRatify={canSign ? () => ratify.mutate({ id: a.id, d: "ratified" }) : undefined}
+            onReject={canSign ? () => ratify.mutate({ id: a.id, d: "rejected" }) : undefined} />;
+        })}
       </div>
     </div>
   );
