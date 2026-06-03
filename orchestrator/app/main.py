@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from app import agreements, auth, canned, demo, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
-    AccessGrant, Agreement, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
+    AccessGrant, Agreement, InterfaceDraft, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
@@ -814,6 +814,39 @@ async def ratify_agreement(agreement_id: str, body: RatifyAgreementBody,
         _apply_api_contract(a.plan_id, a.producer_issue_id, json.dumps(agreements.mock_from_schema(a.interface.response_fields)))
     await update_agreement(agreement_id, a.model_dump())
     return a.model_dump()
+
+
+@app.post("/api/plans/{plan_id}/agreements/verify")
+async def verify_agreements(plan_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The VERIFY beat (memory→ratify→verify→compound): shape-check each ratified interface contract's
+    producer output against the ratified shape. A violation = the merged reality diverging from a
+    ratified agreement → an IntegrationSignal that holds the gate + pings the producer. Clean = honored."""
+    plan = PLANS.get(plan_id)
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    issues = {i.id: i for e in plan.epics for i in e.issues}
+    state = RELAYS.get(plan_id)
+    results, now = [], datetime.now(timezone.utc).isoformat()
+    for raw in await agreements_for_plan(plan_id):
+        if raw.get("type") != "interface" or raw.get("state") not in ("ratified", "auto_passed"):
+            continue
+        prod = issues.get(raw.get("producer_issue_id"))
+        if not prod or not prod.api_contract:
+            continue
+        try:
+            payload = json.loads(prod.api_contract)
+        except Exception:
+            continue
+        viol = agreements.verify_against(InterfaceDraft(**(raw.get("interface") or {})), payload)
+        results.append({"agreement_id": raw["id"], "subject": raw.get("subject"), "ok": not viol, "violations": viol})
+        if viol and state is not None:  # drift → the existing integration gate enforces it
+            relay.record_integration_signal(state, IntegrationSignal(
+                target_issue_id=prod.id, state="failing", by="sprint0", source="ai",
+                note=f"Contract violation: {'; '.join(viol)}", created_at=now))
+            if prod.assignee:
+                await notify(prod.assignee, "qa_failed", f"Contract violation · {raw.get('subject')}",
+                             body="; ".join(viol), ref={"plan_id": plan_id, "issue_id": prod.id}, actionable=True)
+    return {"checked": len(results), "violations": len([r for r in results if not r["ok"]]), "results": results}
 
 
 @app.get("/api/plans/{plan_id}", response_model=PlanJSON)
