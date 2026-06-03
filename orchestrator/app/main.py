@@ -34,7 +34,7 @@ from app.contracts import (
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
-from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card
+from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card, generate_interface
 from app.execute import execute_plan, extend_project
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
@@ -793,6 +793,50 @@ async def _create_interface_agreements(plan_id: str, plan: PlanJSON) -> None:
         pass
 
 
+async def _redraft_affected_interfaces(plan_id: str, plan: PlanJSON, discipline: str, slice_issues: list) -> None:
+    """A gate's write-your-own choice just rewrote its issues — so any interface contract drafted from one
+    of those producer issues may no longer fit the new API surface. Re-draft each affected contract, version
+    it (old → superseded), and re-route the new draft to the two leads to re-ratify. Keeps CDD honest: the
+    contract follows the chosen implementation, automatically, no meeting. Best-effort — the gate stands."""
+    try:
+        slice_ids = {i.id for i in slice_issues}
+        affected = [a for a in await agreements_for_plan(plan_id)
+                    if a.get("type") == "interface" and a.get("producer_issue_id") in slice_ids
+                    and a.get("state") in ("proposed", "ratified", "auto_passed")]
+        if not affected:
+            return
+        members = team.all_members()
+        by_id = {i.id: i for e in plan.epics for i in e.issues}
+        now = datetime.now(timezone.utc).isoformat()
+        for old in affected:
+            prod, cons = by_id.get(old.get("producer_issue_id")), by_id.get(old.get("consumer_issue_id"))
+            if not prod or not cons:
+                continue
+            try:
+                draft = await generate_interface(
+                    f"FEATURE: {plan.project_name}\n"
+                    f"PRODUCER ({prod.discipline}): {prod.title} — {(prod.description or '')[:200]}\n"
+                    f"CONSUMER ({cons.discipline}): {cons.title} — {(cons.description or '')[:200]}\n"
+                    f"Draft the interface contract the consumer needs from the producer.")
+            except Exception:
+                continue  # best-effort; the old contract + the integration gate are the net
+            new = Agreement(
+                id=f"agr_{uuid.uuid4().hex[:8]}", type="interface", plan_id=plan_id,
+                subject=f"{prod.discipline}→{cons.discipline} · {draft.path or prod.title}",
+                interface=draft, producer_issue_id=prod.id, consumer_issue_id=cons.id,
+                producer_discipline=prod.discipline, consumer_discipline=cons.discipline,
+                state="proposed", created_at=now, updated_at=now)
+            new.ratifiers = agreements.ratifiers_for(new, members)
+            await save_agreement(new.model_dump())
+            await update_agreement(old["id"], {"state": "superseded", "superseded_by": new.id, "updated_at": now})
+            for u in new.ratifiers:
+                await notify(u, "agreement_proposed", f"Interface contract changed · {new.subject}",
+                             body=f"{discipline}'s gate choice reshaped this API — re-ratify the new version.",
+                             ref={"agreement_id": new.id, "plan_id": plan_id}, actionable=True)
+    except Exception:
+        pass
+
+
 @app.get("/api/plans/{plan_id}/agreements")
 async def list_agreements(plan_id: str, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
     return {"agreements": await agreements_for_plan(plan_id)}
@@ -936,6 +980,7 @@ async def ratify_gate(
                 except Exception:
                     pass  # best-effort; the choice is still recorded
                 SOLUTIONS.pop((plan_id, discipline), None)  # cached set is stale after a rewrite
+                await _redraft_affected_interfaces(plan_id, plan, discipline, sl)  # a reshaped slice → re-draft its interface contracts
             # Cross-gate impact: ONLY when the choice ADDED files (a user rewrite) that touch another gate.
             # A memory/ai pick changes no files → never bounces another discipline's already-ratified gate.
             added = sorted(soln.gate_slice_files(plan, discipline) - pre_files)

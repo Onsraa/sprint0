@@ -355,8 +355,9 @@ class Agreement(BaseModel):
     grounded_on: list[str] = Field(default_factory=list)
     ratifiers: list[str] = Field(default_factory=list)        # the MINIMAL consent set (usernames)
     ratifications: list[dict] = Field(default_factory=list)   # [{by, decision: ratified|rejected, at, note}]
-    state: Literal["proposed", "auto_passed", "ratified", "rejected", "active", "validated"] = "proposed"
+    state: Literal["proposed", "auto_passed", "ratified", "rejected", "active", "validated", "superseded"] = "proposed"
     precedent_id: Optional[str] = None                        # the past ratified agreement it matched (auto-pass)
+    superseded_by: Optional[str] = None                       # the newer versioned agreement that replaced this one (renegotiation)
     # interface routing/verify context
     producer_issue_id: Optional[str] = None
     consumer_issue_id: Optional[str] = None

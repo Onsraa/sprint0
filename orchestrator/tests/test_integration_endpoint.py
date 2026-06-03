@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from app import main, relay
-from app.contracts import ContextScope, DeveloperProfile, Epic, Issue, PlanJSON, RatifyRequest, TechStack
+from app.contracts import ContextScope, DeveloperProfile, Epic, Issue, InterfaceDraft, PlanJSON, RatifyRequest, SchemaField, TechStack
 from app.main import IntegrationFlagRequest, RejectRequest
 
 
@@ -228,3 +228,57 @@ def test_reject_unauthorized_dev_gets_403(monkeypatch):
     with pytest.raises(HTTPException) as ei:                               # backend dev: not qa owner / manager
         _reject(_by("sprint0-se"), monkeypatch, demo=False, iid=54)
     assert ei.value.status_code == 403
+
+
+# --- auto-redraft: a write-your-own gate choice that reshapes a producer issue re-drafts its contract ---
+
+def _iface_old(aid, producer_id, consumer_id, state):
+    return {"id": aid, "type": "interface", "plan_id": "p1", "state": state,
+            "producer_issue_id": producer_id, "consumer_issue_id": consumer_id,
+            "producer_discipline": "backend", "consumer_discipline": "frontend",
+            "interface": {"method": "GET", "path": "/api/old", "request_fields": [], "response_fields": [], "errors": []}}
+
+
+def _redraft(monkeypatch, existing, slice_ids):
+    """Drive _redraft_affected_interfaces with the AI + rag deps stubbed; returns (saved, updated, pings)."""
+    saved, updated, pings = [], [], []
+    async def _afp(_pid):
+        return existing
+    async def _gi(_prompt):
+        return InterfaceDraft(method="GET", path="/api/v2/auth",
+                              response_fields=[SchemaField(name="token", type="string", required=True)])
+    async def _save(doc):
+        saved.append(doc)
+    async def _upd(aid, patch):
+        updated.append((aid, patch))
+    async def _notify(u, *a, **k):
+        pings.append(u)
+    monkeypatch.setattr(main, "agreements_for_plan", _afp)
+    monkeypatch.setattr(main, "generate_interface", _gi)
+    monkeypatch.setattr(main, "save_agreement", _save)
+    monkeypatch.setattr(main, "update_agreement", _upd)
+    monkeypatch.setattr(main, "notify", _notify)
+    plan = _plan([_issue(i, "backend") for i in slice_ids] + [_issue("f1", "frontend")])
+    slice_issues = [i for e in plan.epics for i in e.issues if i.id in slice_ids]
+    asyncio.run(main._redraft_affected_interfaces("p1", plan, "backend", slice_issues))
+    return saved, updated, pings
+
+
+def test_redraft_supersedes_and_recreates(monkeypatch):
+    saved, updated, pings = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "ratified")], {"b1"})
+    assert len(saved) == 1                                                # a new versioned contract
+    assert saved[0]["state"] == "proposed" and saved[0]["producer_issue_id"] == "b1"
+    assert saved[0]["interface"]["path"] == "/api/v2/auth"                # the freshly re-drafted shape
+    assert len(updated) == 1 and updated[0][0] == "agOLD"
+    assert updated[0][1]["state"] == "superseded" and updated[0][1]["superseded_by"] == saved[0]["id"]
+    assert set(pings) == {"sprint0-se", "sprint0-fe"}                     # both leads re-ratify the new version
+
+
+def test_redraft_noop_when_no_contract_touches_the_slice(monkeypatch):
+    saved, updated, pings = _redraft(monkeypatch, [_iface_old("agX", "other", "f1", "ratified")], {"b1"})
+    assert saved == [] and updated == [] and pings == []                 # producer isn't in this gate's slice
+
+
+def test_redraft_skips_already_superseded(monkeypatch):
+    saved, updated, _p = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "superseded")], {"b1"})
+    assert saved == [] and updated == []                                 # only live contracts re-draft
