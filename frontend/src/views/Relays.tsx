@@ -1,10 +1,13 @@
-/* sprint0 — Relays: the cross-project pool board (§35). Wires GET /api/relays (the `relays` route).
-   One ranked row per active relay — project · a DAG mini (which gates ratified / active / blocked) ·
-   where the baton sits · is_delta · all_ratified. Ranked by baton + blocks aggregated per relay, so
-   the hottest front floats to the top. Ported 1:1 from the v6 design (Relays.jsx); the mock relaysFor()
-   is replaced by useApp().relaySummaries, GATE_META is reused from RatifyPanel, and live dispatch is
-   deferred — a ready relay's button deep-links into the relay board. */
-import { useState } from "react";
+/* sprint0 — Relays: the cross-project pool, grouped by PROJECT with a manager STATE-MAP + JIT.
+   Ported from the v6 design (Relays.jsx): a project's relays sit under one header with a sibling-relay
+   switcher (the initial plan + each feature-add delta); the manager sees a state-map of EVERY relay plus a
+   detailed "On your baton" section for the gates they personally hold; a lead sees ONLY the relays they're
+   on (JIT). The mock relaysFor/relaysByProject/ownedBatonGate are derived from useApp().relaySummaries +
+   the roster (a discipline with no seated dev = an orphan gap). GATE_META reused from RatifyPanel.
+
+   The "On your baton" detailed section is MANAGER-ONLY — that's what kills the duplicate a dev used to see
+   (their relay rendered both there and in the project groups). A dev sees each relay once, in its group. */
+import { useState, Fragment } from "react";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { ViewChrome } from "../components/ViewChrome";
@@ -16,15 +19,20 @@ import { blocksForGate } from "../features/today/rank";
 import type { RelaySummary, Discipline } from "../lib/api";
 
 type Gate = RelaySummary["gates"][number];
-const BUILD = ["uiux", "backend", "devops"] as const;
+const STATE_ORDER: Discipline[] = ["uiux", "backend", "devops", "frontend", "qa"];
 const DONE = ["ratified", "auto_passed"];
 const initials = (s: string) => (s || "?").split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 3).join("").toUpperCase();
 const relayBlocks = (r: RelaySummary) => r.gates.reduce((n, g) => n + (DONE.includes(g.status) ? 0 : blocksForGate(g.discipline, r)), 0);
 const relayScore = (r: RelaySummary) => (r.baton.length ? 1000 : 0) + relayBlocks(r) * 100;
-const noteFor = (r: RelaySummary) =>
-  r.all_ratified ? "All gates ratified — ready to dispatch."
-    : r.baton.length ? `${r.baton.map((d) => DISC[d]?.label ?? d).join(" · ")} ${r.baton.length === 1 ? "holds" : "hold"} the baton.`
-    : "Waiting on upstream gates.";
+
+/* the baton gate THIS viewer owns — an orphan gap (no seated dev) routes to the manager, otherwise the
+   viewer's own discipline. */
+function ownedBatonGate(r: RelaySummary, disc: Discipline | undefined, isManager: boolean, seated: Set<string>): Gate | null {
+  return r.gates.find((g) => r.baton.includes(g.discipline)
+    && ((!seated.has(g.discipline) && isManager) || g.discipline === disc)) ?? null;
+}
+/* the project key (deltas group with their initial plan) + a per-relay display name within the group. */
+const projectKey = (r: RelaySummary) => String(r.target_project_id ?? r.project);
 
 function DagLegend() {
   const items = [
@@ -46,76 +54,145 @@ function DagLegend() {
   );
 }
 
-/* one gate in the DAG mini — discipline dot + status glyph, baton flagged in ink */
-function GateNode({ g, baton }: { g?: Gate; baton: boolean }) {
-  if (!g) return null;
+/* one gate's state dot — discipline mark + status colour, baton flagged in ink, orphan gap marked. */
+function GateDot({ g, baton, gap }: { g: Gate; baton: boolean; gap: boolean }) {
   const done = DONE.includes(g.status);
   const dim = g.status === "locked" || g.status === "pending";
   return (
-    <span title={`${DISC[g.discipline]?.label} · ${GATE_META[g.status]?.label ?? g.status}`}
-      style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 9px",
+    <span title={`${DISC[g.discipline]?.label} · ${GATE_META[g.status]?.label ?? g.status}${gap ? " · orphan gap" : ""}`}
+      style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 5, height: 24, padding: "0 8px",
         borderRadius: "var(--r-pill)", border: `0.5px solid ${baton ? "var(--text-primary)" : "var(--border)"}`,
-        background: baton ? "var(--bg-active)" : "var(--bg-elevated)", opacity: dim ? 0.55 : 1 }}>
-      {baton && <span style={{ position: "absolute", top: -8, left: "50%", transform: "translateX(-50%)", color: "var(--text-primary)" }}><Icon name="flag" size={11} /></span>}
-      <DiscDot d={g.discipline} size={8} />
-      <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-secondary)" }}>{DISC[g.discipline]?.label}</span>
+        background: baton ? "var(--bg-active)" : "var(--bg-secondary)", opacity: dim ? 0.55 : 1 }}>
+      {baton && <span style={{ position: "absolute", top: -8, left: "50%", transform: "translateX(-50%)", color: "var(--text-primary)" }}><Icon name="flag" size={10} /></span>}
+      <DiscDot d={g.discipline} size={7} />
       {done
-        ? <Icon name="check" size={12} style={{ color: g.status === "ratified" ? "var(--green)" : "var(--blue)" }} />
-        : g.status === "changes_requested" ? <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--amber)" }} />
-        : g.status === "blocked" ? <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--red)" }} />
-        : <span style={{ width: 7, height: 7, borderRadius: "50%", border: "1.5px solid var(--border-strong)" }} />}
+        ? <Icon name="check" size={11} style={{ color: g.status === "ratified" ? "var(--green)" : "var(--blue)" }} />
+        : g.status === "changes_requested" ? <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--amber)" }} />
+        : g.status === "blocked" ? <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--red)" }} />
+        : <span style={{ width: 6, height: 6, borderRadius: "50%", border: "1.5px solid var(--border-strong)" }} />}
+      {gap && <span title="orphan gap" style={{ fontSize: 9, color: "var(--text-primary)" }}>▲</span>}
     </span>
   );
 }
 
-function FlowArrow() {
-  return <Icon name="chevronRight" size={14} style={{ color: "var(--text-quaternary)", flexShrink: 0 }} />;
+function GateDots({ r, seated }: { r: RelaySummary; seated: Set<string> }) {
+  const ordered = STATE_ORDER.map((d) => r.gates.find((g) => g.discipline === d)).filter(Boolean) as Gate[];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {ordered.map((g) => (
+        <Fragment key={g.discipline}>
+          {(g.discipline === "frontend" || g.discipline === "qa") && <Icon name="chevronRight" size={12} style={{ color: "var(--text-quaternary)" }} />}
+          <GateDot g={g} baton={r.baton.includes(g.discipline)} gap={!seated.has(g.discipline)} />
+        </Fragment>
+      ))}
+    </div>
+  );
 }
 
-function RelayRow({ r, rank, onOpen }: { r: RelaySummary; rank: number; onOpen: (r: RelaySummary, g?: Discipline) => void }) {
-  const [h, setH] = useState(false);
+/* the selected relay's state-map (dots only — no choice detail) + the JIT open action. */
+function RelayStrip({ r, disc, isManager, seated, watchUser, onOpen }:
+  { r: RelaySummary; disc: Discipline | undefined; isManager: boolean; seated: Set<string>; watchUser: string | null; onOpen: (r: RelaySummary, g?: Discipline) => void }) {
   const batonDisc = r.baton[0];
-  const gateOf = (d: string) => r.gates.find((g) => g.discipline === d);
+  const mine = ownedBatonGate(r, disc, isManager, seated);
   const blocks = relayBlocks(r);
-  const fe = gateOf("frontend"); const qa = gateOf("qa");
   return (
-    <div onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ borderRadius: "var(--r-xl)", background: "var(--bg-elevated)",
-        border: `0.5px solid ${batonDisc ? "var(--text-primary)" : "var(--border)"}`,
-        boxShadow: h ? "var(--shadow-2)" : "var(--shadow-1)", transition: "box-shadow var(--t-quick)", overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 16px 13px" }}>
-        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", width: 16, textAlign: "center", flexShrink: 0 }}>{rank}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px" }}>{r.project}</span>
-            <Badge tone="outline" mono>{initials(r.project)}</Badge>
-            {r.is_delta && <Badge tone="neutral" mono><span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--blue)", display: "inline-block" }} />delta</Badge>}
-            {r.all_ratified && <Badge tone="green"><Icon name="check" size={10} />all ratified</Badge>}
-          </div>
-          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 3 }}>{noteFor(r)}</div>
-        </div>
-        {batonDisc ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 24, padding: "0 9px", borderRadius: "var(--r-pill)",
-            background: "var(--ink-fill)", color: "#fff", fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)" }}>
-            <Icon name="flag" size={11} /> baton · {DISC[batonDisc]?.label}
-          </span>
-        ) : (
-          <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{blocks === 0 ? "no blocks" : `blocks ${blocks}`}</span>
-        )}
+    <div style={{ padding: "12px 16px 15px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <span style={{ fontSize: 12.5, color: "var(--text-tertiary)", flex: 1, minWidth: 0 }}>
+          {r.all_ratified ? "All gates ratified — ready to dispatch." : batonDisc ? `${DISC[batonDisc]?.label} holds the baton.` : "Waiting on upstream gates."}
+        </span>
+        {batonDisc
+          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 22, padding: "0 9px", flexShrink: 0, borderRadius: "var(--r-pill)",
+              background: mine ? "var(--ink-fill)" : "var(--bg-secondary)", color: mine ? "#fff" : "var(--text-secondary)",
+              border: mine ? "none" : "0.5px solid var(--border)", fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)" }}>
+              <Icon name="flag" size={10} /> {mine ? "your call" : `baton · ${DISC[batonDisc]?.label}`}
+            </span>
+          : <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", flexShrink: 0 }}>{blocks === 0 ? "no blocks" : `blocks ${blocks}`}</span>}
       </div>
-
-      {/* DAG mini */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px 16px", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {BUILD.map((d) => { const g = gateOf(d); return g ? <GateNode key={d} g={g} baton={r.baton.includes(d)} /> : null; })}
-        </div>
-        {fe && <><FlowArrow /><GateNode g={fe} baton={r.baton.includes("frontend")} /></>}
-        {qa && <><FlowArrow /><GateNode g={qa} baton={r.baton.includes("qa")} /></>}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <GateDots r={r} seated={seated} />
         <div style={{ flex: 1 }} />
         {r.all_ratified
-          ? <Button variant="primary" size="sm" icon="bolt" onClick={() => onOpen(r)}>Dispatch</Button>
-          : <Button variant="secondary" size="sm" iconRight="arrowRight" onClick={() => onOpen(r, batonDisc)}>Open relay</Button>}
+          ? (watchUser
+              ? <Button variant="secondary" size="sm" icon="eye" onClick={() => onOpen(r, r.gates[0]?.discipline)}>View relay</Button>
+              : <Button variant="primary" size="sm" icon="bolt" onClick={() => onOpen(r)}>Dispatch</Button>)
+          : mine
+              ? <Button variant="primary" size="sm" icon="ratify" onClick={() => onOpen(r, mine.discipline)}>Open your gate</Button>
+              : <Button variant="secondary" size="sm" iconRight="arrowRight" onClick={() => onOpen(r, batonDisc)}>{watchUser ? "Open relay" : isManager ? "Open relay" : "View relay"}</Button>}
       </div>
+    </div>
+  );
+}
+
+/* a sibling-relay chip in the switcher (initial plan + each feature-add delta). */
+function RelayTab({ r, name, active, onClick }: { r: RelaySummary; name: string; active: boolean; onClick: () => void }) {
+  const [h, setH] = useState(false);
+  const baton = r.baton.length > 0;
+  return (
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 28, padding: "0 11px", borderRadius: "var(--r-pill)",
+        fontSize: 12, fontWeight: 500, whiteSpace: "nowrap",
+        background: active ? "var(--bg-active)" : h ? "var(--bg-hover)" : "var(--bg-secondary)",
+        color: active ? "var(--text-primary)" : "var(--text-secondary)",
+        border: `0.5px solid ${active ? "var(--text-primary)" : "var(--border)"}`, transition: "background var(--t-quick)" }}>
+      <span style={{ width: 5, height: 5, borderRadius: "50%", background: r.is_delta ? "var(--blue)" : "var(--text-quaternary)" }} />
+      {name}
+      {baton && <Icon name="flag" size={10} style={{ color: "var(--text-primary)" }} />}
+      {r.all_ratified && <Icon name="check" size={11} style={{ color: "var(--green)" }} />}
+    </button>
+  );
+}
+
+/* a project's relays: header ("FinTrack · 3 relays") + sibling switcher + the selected relay's strip. */
+function ProjectGroup({ relays, disc, isManager, seated, watchUser, onOpen }:
+  { relays: RelaySummary[]; disc: Discipline | undefined; isManager: boolean; seated: Set<string>; watchUser: string | null; onOpen: (r: RelaySummary, g?: Discipline) => void }) {
+  const [sel, setSel] = useState(0);
+  const r = relays[sel] || relays[0];
+  // per-relay names: the initial plan, then Feature / Feature 2 / … for each delta in the project
+  let di = 0;
+  const names = relays.map((rr) => rr.is_delta ? `Feature${(++di) > 1 ? " " + di : ""}` : "Initial plan");
+  return (
+    <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-xl)", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px 11px", borderBottom: "0.5px solid var(--border-subtle)" }}>
+        <Icon name="projects" size={15} style={{ color: "var(--text-tertiary)" }} />
+        <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px" }}>{r.project}</span>
+        <Badge tone="outline" mono>{initials(r.project)}</Badge>
+        <div style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{relays.length} {relays.length === 1 ? "relay" : "relays"}</span>
+      </div>
+      {relays.length > 1 && (
+        <div style={{ display: "flex", gap: 6, padding: "10px 16px 4px", flexWrap: "wrap" }}>
+          {relays.map((rr, i) => <RelayTab key={rr.plan_id} r={rr} name={names[i]} active={i === sel} onClick={() => setSel(i)} />)}
+        </div>
+      )}
+      <RelayStrip r={r} disc={disc} isManager={isManager} seated={seated} watchUser={watchUser} onOpen={onOpen} />
+    </div>
+  );
+}
+
+/* manager-only: a relay they personally hold a gate on (orphan gap or their own) — detailed, act here. */
+function MyBatonCard({ r, g, gap, onOpen }: { r: RelaySummary; g: Gate; gap: boolean; onOpen: (r: RelaySummary, d?: Discipline) => void }) {
+  const [h, setH] = useState(false);
+  return (
+    <div onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: "var(--r-xl)",
+        background: "var(--bg-elevated)", border: "0.5px solid var(--text-primary)",
+        boxShadow: h ? "var(--shadow-2)" : "var(--shadow-1)", transition: "box-shadow var(--t-quick)" }}>
+      <span style={{ width: 34, height: 34, borderRadius: "var(--r-md)", flexShrink: 0, display: "grid", placeItems: "center",
+        background: "var(--bg-secondary)", border: gap ? "1px dashed var(--text-primary)" : "0.5px solid var(--border)" }}>
+        <DiscDot d={g.discipline} size={10} />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{r.project}</span>
+          {gap && <Badge tone="outline" mono style={{ height: 16 }}>orphan gap</Badge>}
+          {r.is_delta && <Badge tone="neutral" mono><span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--blue)", display: "inline-block" }} />delta</Badge>}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
+          {gap ? `No ${DISC[g.discipline]?.label} dev — the gate routes to you.` : `${DISC[g.discipline]?.label} gate waits on your call.`}
+        </div>
+      </div>
+      <Button variant="primary" size="sm" icon="ratify" onClick={() => onOpen(r, g.discipline)}>Ratify the gate</Button>
     </div>
   );
 }
@@ -127,36 +204,32 @@ export function Relays() {
   const projectFilter = useUI((s) => s.projectFilter);
   const selName = (projects as any[]).find((p) => p.project_id === projectFilter)?.name ?? null;
   const all: RelaySummary[] = relaySummaries ?? [];
-  // a granted Watch lets you review a teammate's relays — scope to their lane (the backend has no per-gate
-  // assignee; one dev per discipline in the demo makes the lane filter exact). Else your own role filter.
+  // orphan gap = a discipline with no seated dev (derived from the roster — the relay summary has no gap flag)
+  const seated = new Set<string>((members ?? []).filter((m: any) => m.discipline).map((m: any) => m.discipline));
   const watched = personFilter ? members.find((m: any) => m.username === personFilter) : null;
+  const isManager = role === "manager" && !watched;
+  const scopeDisc: Discipline | undefined = watched ? watched.discipline : me?.discipline;
+  // JIT scope: a lead/watcher sees only the relays they're ON (their lane has a gate); the manager sees all.
   const onLane = (r: RelaySummary, d?: Discipline) => !!d && (r.gates.some((g) => g.discipline === d) || r.baton.includes(d));
-  const base = watched
-    ? all.filter((r) => onLane(r, watched.discipline))
-    : role === "manager" ? all : all.filter((r) => onLane(r, me?.discipline));
-  const mine = selName ? base.filter((r) => r.project === selName) : base;
-  const relays = [...mine].sort((a, b) => relayScore(b) - relayScore(a));
+  const base = isManager ? all : all.filter((r) => onLane(r, scopeDisc));
+  const scoped = selName ? base.filter((r) => r.project === selName) : base;
+  const relays = [...scoped].sort((a, b) => relayScore(b) - relayScore(a));
   const awaiting = relays.filter((r) => r.baton.length > 0).length;
   const firstName = watched ? String(watched.name).split(" ")[0] : "";
 
-  // "On your baton" — relays where a gate personally waits on you (manager-as-dev or dev), shown detailed.
-  const myDisc: Discipline | undefined = me?.discipline;
-  const onBaton = myDisc ? relays.filter((r) => r.baton.includes(myDisc)) : [];
-  // The state-map: group relays under their project (a project's deltas sit with its initial plan),
-  // groups ordered by their hottest relay. JIT — the upstream filter already scopes a dev to their relays.
-  const groupMap = new Map<string, RelaySummary[]>();
-  relays.forEach((r) => { const arr = groupMap.get(r.project) ?? []; arr.push(r); groupMap.set(r.project, arr); });
-  const groups = [...groupMap.entries()].sort((a, b) => Math.max(...b[1].map(relayScore)) - Math.max(...a[1].map(relayScore)));
+  // manager-only "On your baton" — the gates the manager personally holds (orphan gap or their own).
+  const myBaton = isManager
+    ? relays.map((r) => ({ r, g: ownedBatonGate(r, me?.discipline, true, seated) })).filter((x): x is { r: RelaySummary; g: Gate } => !!x.g)
+    : [];
 
-  // Peer-review: when scoped to a watched person, open the board on THEIR gate read-only (the granted Watch
-  // un-gates that Contract). Otherwise managers open the full RelayBoard; devs land on their ratify queue.
+  // group by project (deltas sit with their initial plan); groups ordered by their hottest relay
+  const groupMap = new Map<string, RelaySummary[]>();
+  relays.forEach((r) => { const k = projectKey(r); const arr = groupMap.get(k) ?? []; arr.push(r); groupMap.set(k, arr); });
+  const groups = [...groupMap.values()].sort((a, b) => Math.max(...b.map(relayScore)) - Math.max(...a.map(relayScore)));
+
   const openRelay = (r: RelaySummary, gate?: Discipline) => {
     setPlanId(r.plan_id);
-    if (watched?.discipline) {
-      setActiveGate(watched.discipline);
-      setView("relay");
-      return;
-    }
+    if (watched?.discipline) { setActiveGate(watched.discipline); setView("relay"); return; }
     if (gate) setActiveGate(gate);
     setView(role === "manager" ? "relay" : "ratify");
   };
@@ -169,51 +242,46 @@ export function Relays() {
       </ViewChrome>
 
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-        <div style={{ maxWidth: 860, margin: "0 auto", padding: "26px 28px 56px" }}>
+        <div style={{ maxWidth: 880, margin: "0 auto", padding: "26px 28px 56px" }}>
           <div style={{ marginBottom: 4 }}>
             <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: 0 }}>
-              {watched ? `${firstName}'s relays, ranked` : role === "manager" ? "Every relay, ranked" : "Your relays, ranked"}
+              {watched ? `${firstName}'s relays` : isManager ? "Studio state-map" : "Your relays"}
             </h1>
             <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: "5px 0 0", lineHeight: 1.5 }}>
-              Hottest front first — <b style={{ color: "var(--text-primary)" }}>{awaiting}</b> await a call.
+              {isManager
+                ? <>Every relay, grouped by project. <b style={{ color: "var(--text-primary)" }}>{awaiting}</b> await a call · {myBaton.length} on your baton.</>
+                : watched
+                ? <>Read-only via a granted Watch — their relays, grouped by project.</>
+                : <>The relays you're on, grouped by project — your gate opens when the baton reaches you.</>}
             </p>
           </div>
 
           {watched && <PeerReviewBanner m={watched} onClear={() => setPersonFilter(null)} />}
 
+          {/* manager-only: relays they personally hold a gate on — detailed, act here */}
+          {isManager && myBaton.length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-primary)" }} />On your baton · {myBaton.length}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {myBaton.map(({ r, g }) => <MyBatonCard key={r.plan_id} r={r} g={g} gap={!seated.has(g.discipline)} onOpen={openRelay} />)}
+              </div>
+            </div>
+          )}
+
           <DagLegend />
 
-          {relays.length === 0 && (
-            <div style={{ padding: 28, textAlign: "center", color: "var(--text-quaternary)", fontSize: 13, marginTop: 18 }}>
-              {watched ? `No active relay ${firstName} is on.` : "No active relays."}
-            </div>
-          )}
-
-          {/* On your baton — the gates that personally wait on you, detailed */}
-          {onBaton.length > 0 && (
-            <div style={{ marginTop: 22 }}>
-              <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-primary)" }} />On your baton · {onBaton.length}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 18 }}>
+            {groups.map((rs) => (
+              <ProjectGroup key={projectKey(rs[0])} relays={rs} disc={scopeDisc} isManager={isManager} seated={seated} watchUser={watched ? personFilter : null} onOpen={openRelay} />
+            ))}
+            {groups.length === 0 && (
+              <div style={{ padding: "32px 20px", textAlign: "center", color: "var(--text-quaternary)", fontSize: 13 }}>
+                {watched ? `No active relay ${firstName} is on.` : selName ? "No active relay for this project." : "No active relays you're on."}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {onBaton.map((r, i) => <RelayRow key={"b-" + r.plan_id} r={r} rank={i + 1} onOpen={openRelay} />)}
-              </div>
-            </div>
-          )}
-
-          {/* By project — the state-map: a project's relays (initial plan + each feature-add) grouped together */}
-          {groups.map(([proj, rs]) => (
-            <div key={proj} style={{ marginTop: 22 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{proj}</span>
-                <Badge tone="outline" mono>{initials(proj)}</Badge>
-                <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{rs.length} relay{rs.length === 1 ? "" : "s"}</span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {rs.map((r, i) => <RelayRow key={r.plan_id} r={r} rank={i + 1} onOpen={openRelay} />)}
-              </div>
-            </div>
-          ))}
+            )}
+          </div>
         </div>
       </div>
     </div>
