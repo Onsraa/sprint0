@@ -1,9 +1,10 @@
 /* sprint0 × Linear — app shell (ported from the v4 design Shell.jsx). 244px role-gated nav rail with
  * the persona switcher, then the content as a floating white pane. Wired to the useApp() adapter; auth
  * gates the Landing (logged out) vs the shell (logged in). The wizard + ⌘K palette mount here. */
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Outlet } from "@tanstack/react-router";
 import { useApp } from "./useApp";
+import { useNavShortcuts } from "../features/nav/useNavShortcuts";
 import { useMe } from "../features/auth/useAuth";
 import { useUI } from "../lib/store";
 import { useRoleGate } from "../features/nav/nav";
@@ -96,6 +97,10 @@ function SessionLoading() {
 function Sidebar({ onPalette }: { onPalette: () => void }) {
   const collapsed = useUI((s) => s.navCollapsed);   // store, not local state → survives shell remount + reload
   const toggleNav = useUI((s) => s.toggleNav);
+  const { setView, role } = useApp();
+  // "g then key" nav shortcuts (collision-free vs ⌘) — only the views this role actually has are reachable.
+  const allowed = useMemo(() => new Set(NAV.flatMap((grp) => grp.items).filter((it) => (it.roles as readonly string[]).includes(role)).map((it) => it.id)), [role]);
+  useNavShortcuts(setView, (v) => allowed.has(v));
   return (
     <aside style={{ width: collapsed ? 54 : "var(--nav-w)", flexShrink: 0, height: "100vh", transition: "width var(--t-reg) var(--ease-out)" }}>
       {collapsed
