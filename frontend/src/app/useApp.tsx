@@ -168,7 +168,8 @@ export function useApp() {
   const next = useMemo(() => rankNext({
     role, myDiscipline: member?.discipline ?? null, myUsername: member?.username ?? "",
     queue, relays: relaySummaries, myTasks, needs: inbox?.needs_action ?? [], projectNames,
-  }), [role, member, queue, relaySummaries, myTasks, inbox, projectNames]);
+    seatedDisciplines: members.filter((m: any) => m.discipline).map((m: any) => m.discipline),
+  }), [role, member, queue, relaySummaries, myTasks, inbox, projectNames, members]);
   const drafts = useUI((s) => s.drafts);
   const addDraft = useUI((s) => s.addDraft);
 
