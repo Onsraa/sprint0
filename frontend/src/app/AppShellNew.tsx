@@ -95,7 +95,25 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
   const toggleNav = useUI((s) => s.toggleNav);
   return (
     <aside style={{ width: collapsed ? 60 : "var(--nav-w)", flexShrink: 0, height: "100vh", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4, transition: "width var(--t-reg) var(--ease-out)" }}>
-      <Workspace collapsed={collapsed} />
+      {!collapsed ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <div style={{ flex: 1, minWidth: 0 }}><Workspace collapsed={false} /></div>
+          <button onClick={toggleNav} title="Collapse sidebar"
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            style={{ width: 28, height: 28, display: "grid", placeItems: "center", borderRadius: "var(--r-md)", color: "var(--text-tertiary)", flexShrink: 0, transition: "background var(--t-quick)" }}>
+            <Icon name="chevronLeft" size={16} />
+          </button>
+        </div>
+      ) : (
+        <>
+          <Workspace collapsed />
+          <button onClick={toggleNav} title="Expand sidebar"
+            style={{ width: "100%", height: 28, display: "grid", placeItems: "center", borderRadius: "var(--r-md)", color: "var(--text-tertiary)" }}>
+            <Icon name="chevronRight" size={16} />
+          </button>
+        </>
+      )}
       <SearchTrigger onClick={onPalette} collapsed={collapsed} />
       {chrome.canDispatch && (
         <button onClick={() => setView("wizard")} title="New from brief" style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, height: 32, margin: "2px 0", padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", fontSize: 13, fontWeight: 500 }}>
@@ -117,12 +135,6 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
         })}
       </nav>
       <div style={{ flex: 1 }} />
-      <button onClick={toggleNav} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
-        onMouseLeave={(e) => (e.currentTarget.style.background = "var(--bg-secondary)")}
-        style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 30, padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", color: "var(--text-secondary)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)", transition: "background var(--t-quick)" }}>
-        <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={16} />{!collapsed && <span style={{ fontSize: 12, fontWeight: 500 }}>Collapse sidebar</span>}
-      </button>
       <SidebarFooter collapsed={collapsed} />
     </aside>
   );
