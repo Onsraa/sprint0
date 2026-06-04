@@ -121,6 +121,30 @@ def ensure_search_index(coll, name: str) -> None:
     print(f"   created search index '{name}'")
 
 
+# Plain B-tree indexes on the runtime collections' filter fields, so reads filter server-side
+# (indexed) instead of fetch-all-then-filter-in-Python. One entry per field a query filters on.
+_FIELD_INDEXES = {
+    "Agreements": ["id", "plan_id", "ratifiers"],
+    "Notifications": ["id", "user_id"],
+    "Tasks": ["id", "project_id"],
+    "Decisions": ["id", "owner_id", "project_name"],
+    "ProjectRecords": ["project_id"],
+    "Subscriptions": ["watcher_id", "subject_id"],
+    "AccessGrants": ["id", "subject_id", "requester_id"],
+    "RescheduleProposals": ["id", "status"],
+    "GraphNodes": ["project_id"],
+    "GraphEdges": ["project_id"],
+    "Profiles": ["id"],
+    "DeveloperProfiles": ["gitlab_username", "username"],
+}
+
+
+def ensure_field_indexes(db) -> None:
+    """Provision the runtime collections' field indexes. create_index is idempotent (same spec = no-op)."""
+    n = sum(1 for coll, fields in _FIELD_INDEXES.items() for f in fields if db[coll].create_index(f))
+    print(f"{GREEN}✅ field indexes ensured ({n} across {len(_FIELD_INDEXES)} collections){RST}")
+
+
 def create_repo(name: str) -> dict:
     """Create a private repo in the `sprint0-demo` group, topic-tagged `sprint0-seed` so the
     selective reset_demo() keeps it. Idempotent: deletes a same-named owned project first."""
@@ -235,6 +259,7 @@ def main() -> int:
         ensure_search_index(db[PP_COLL], PP_TEXT_INDEX)
     except Exception as e:
         print(f"{YEL}   ⚠ full-text index '{PP_TEXT_INDEX}' skipped (M0 cap; hybrid → vector-only for now): {str(e)[:90]}{RST}")
+    ensure_field_indexes(db)
 
     print(f"\n{GREEN}Agency seeded. {len(projects)} repos live + memory (summaries + {len(chunk_docs)} code chunks) in Atlas.{RST}")
     for p in projects:

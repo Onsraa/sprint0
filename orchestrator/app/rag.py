@@ -258,14 +258,14 @@ async def agreements_for_plan(plan_id: str) -> list[dict]:
 
 
 async def agreements_for_ratifier(username: str) -> list[dict]:
-    """The agreements awaiting THIS person's signature (their Inbox queue) — array-membership filtered
-    client-side to stay portable across the demo in-mem store + Atlas."""
+    """The agreements awaiting THIS person's signature (their Inbox queue). Demo: filter the in-mem
+    store. Atlas: push the filter server-side (indexed on `ratifiers`) — array membership + state."""
     if demo.is_demo():
-        rows = [dict(d) for d in _DEMO_AGREEMENTS.values()]
-    else:
-        async with MongoMCP() as m:
-            rows = await m.find(AGREEMENTS_COLLECTION, projection={"_id": 0}, limit=500)
-    return [r for r in rows if username in (r.get("ratifiers") or []) and r.get("state") == "proposed"]
+        return [r for r in (dict(d) for d in _DEMO_AGREEMENTS.values())
+                if username in (r.get("ratifiers") or []) and r.get("state") == "proposed"]
+    async with MongoMCP() as m:
+        return await m.find(AGREEMENTS_COLLECTION, query={"ratifiers": username, "state": "proposed"},
+                            projection={"_id": 0}, limit=200)
 
 
 async def all_agreements(limit: int = 1000) -> list[dict]:
@@ -577,20 +577,6 @@ def _parse_docs(text: str) -> list[dict]:
         return []
 
 
-def _rrf_fuse(ranked_lists: list[list[dict]], key: str, k: int = 3, c: int = 60) -> list[dict]:
-    """Reciprocal Rank Fusion — merge ranked result lists; a doc's score += 1/(c + rank)."""
-    scores: dict = {}
-    docs: dict = {}
-    for lst in ranked_lists:
-        for rank, d in enumerate(lst):
-            kk = d.get(key)
-            if kk is None:
-                continue
-            scores[kk] = scores.get(kk, 0.0) + 1.0 / (c + rank + 1)
-            docs[kk] = d
-    return [docs[x] for x in sorted(scores, key=scores.get, reverse=True)[:k]]
-
-
 # ── Persistent MCP session ──────────────────────────────────────────────────
 # The official MongoDB MCP runs as a stdio subprocess (npx). Spawning one per call costs
 # ~2-3s, so we keep ONE long-lived session, reused by every `async with MongoMCP()` block
@@ -675,25 +661,27 @@ class MongoMCP:
 
     async def hybrid_search(
         self, collection: str, vector_index: str, text_index: str, vpath: str,
-        query_vec: list[float], query_text: str, k: int = 3, key: str = "name", projection: dict | None = None,
+        query_vec: list[float], query_text: str, k: int = 3, projection: dict | None = None,
     ) -> list[dict]:
-        """Hybrid retrieval: fuse $vectorSearch + $search (full-text) by Reciprocal Rank Fusion.
-        Falls back to vector-only if the full-text index is absent (e.g. not seeded yet)."""
+        """Hybrid retrieval: native MongoDB $rankFusion (server-side reciprocal rank fusion of
+        $vectorSearch + $search full-text). Falls back to vector-only if fusion errors (e.g. the
+        full-text index is absent, or the server predates 8.1)."""
         proj: dict = {"_id": 0}
         proj.update(projection or {})
-        vec = await self._aggregate(collection, [
-            {"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k * 2}},
-            {"$project": proj},
-        ])
         try:
-            txt = await self._aggregate(collection, [
-                {"$search": {"index": text_index, "text": {"query": query_text, "path": {"wildcard": "*"}}}},
-                {"$limit": k * 2},
+            return await self._aggregate(collection, [
+                {"$rankFusion": {"input": {"pipelines": {
+                    "vector": [{"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k * 2}}],
+                    "text": [{"$search": {"index": text_index, "text": {"query": query_text, "path": {"wildcard": "*"}}}}, {"$limit": k * 2}],
+                }}}},
+                {"$limit": k},
                 {"$project": proj},
             ])
         except Exception:
-            return vec[:k]  # no full-text index yet → degrade to vector-only
-        return _rrf_fuse([vec, txt], key=key, k=k)
+            return await self._aggregate(collection, [
+                {"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k}},
+                {"$project": proj},
+            ])
 
     async def code_search(self, query_vec: list[float], k: int = 5, projection: dict | None = None) -> list[dict]:
         """Code-RAG: vector search over CodeChunks — reusable code across the agency's past repos."""
