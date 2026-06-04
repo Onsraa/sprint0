@@ -11,21 +11,7 @@ import { useApp } from "../app/useApp";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { AgreementCard } from "./AgreementCard";
-
-/* notification kind → icon + label. spark events render in ink, not hue. */
-const NOTIF_META: Record<string, { icon: any; label: string; spark?: boolean }> = {
-  assigned:            { icon: "board",    label: "Assigned" },
-  completed:           { icon: "check",    label: "Completed" },
-  qa_failed:           { icon: "bolt",     label: "QA failed",  spark: true },
-  drift_flagged:       { icon: "bolt",     label: "Drift",      spark: true },
-  reschedule_resolved: { icon: "calendar", label: "Reschedule" },
-  merge:               { icon: "merges",   label: "Merge" },
-  ratify:              { icon: "ratify",   label: "Ratify" },
-  ratify_needed:       { icon: "ratify",   label: "Review",     spark: true },
-  task_assigned:       { icon: "board",    label: "Assigned" },
-  task_completed:      { icon: "check",    label: "Done" },
-  reschedule_proposed: { icon: "calendar", label: "Reschedule", spark: true },
-};
+import { notifMeta, notifColor } from "../features/notify/notifMeta";
 
 /* concise notification timestamp → "DD-MM-YYYY at HH:MM" (was a raw ISO string). */
 function fmtNotifTime(t?: string): string {
@@ -64,6 +50,8 @@ export function InboxPage() {
   const other = visible.filter((n: any) => !NEEDS.includes(n.kind));
   const selN = visible.find((n: any) => n.id === sel) || visible[0] || null;
   const snooze = (id: string) => { setSnoozed((s) => new Set(s).add(id)); setSel(null); toast("Snoozed — we'll resurface it later"); };
+  // dismiss/delete — optimistically hide + best-effort DELETE (demo Mongo no-ops, but the hide persists)
+  const del = (id: string) => { setSnoozed((s) => new Set(s).add(id)); if (sel === id) setSel(null); api.inboxDelete(id).catch(() => {}); };
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <ViewChrome breadcrumb={["Studio", "Inbox"]}>
@@ -80,10 +68,10 @@ export function InboxPage() {
               </div>
             ))}
             {accessRequests.map((r: any) => <AccessRequestRow key={r.ref?.grant_id} r={r} onAccept={() => acceptAccess(r.ref.grant_id)} onReject={() => rejectAccess(r.ref.grant_id)} />)}
-            {needs.map((n: any) => <InboxRow key={n.id} n={n} active={selN?.id === n.id} onClick={() => setSel(n.id)} />)}
+            {needs.map((n: any) => <InboxRow key={n.id} n={n} active={selN?.id === n.id} onClick={() => setSel(n.id)} onDelete={() => del(n.id)} />)}
           </Group>
           <Group label="Notifications" count={other.length}>
-            {other.map((n: any) => <InboxRow key={n.id} n={n} active={selN?.id === n.id} onClick={() => setSel(n.id)} />)}
+            {other.map((n: any) => <InboxRow key={n.id} n={n} active={selN?.id === n.id} onClick={() => setSel(n.id)} onDelete={() => del(n.id)} />)}
           </Group>
         </div>
         <div style={{ flex: 1, minWidth: 0, overflow: "auto", padding: 28 }}>
@@ -123,29 +111,32 @@ function Group({ label, count, children }: { label: string; count: number; child
   );
 }
 
-function InboxRow({ n, active, onClick }: { n: any; active: boolean; onClick: () => void }) {
+function InboxRow({ n, active, onClick, onDelete }: { n: any; active: boolean; onClick: () => void; onDelete: () => void }) {
   const [h, setH] = useState(false);
-  const meta = NOTIF_META[n.kind] || NOTIF_META.assigned;
   return (
     <div onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ display: "flex", gap: 11, padding: "11px 16px", cursor: "pointer",
+      style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 16px", cursor: "pointer",
         background: active || h ? "var(--bg-hover)" : "transparent", borderBottom: "0.5px solid var(--border-subtle)" }}>
-      <span style={{ marginTop: 1, color: meta.spark ? "var(--text-primary)" : "var(--text-tertiary)" }}><Icon name={meta.icon} size={16} /></span>
+      <span style={{ marginTop: 1, color: notifColor(n.kind) }}><Icon name={notifMeta(n.kind).icon} size={16} /></span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {n.unread && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-primary)", flexShrink: 0 }} />}
+          {n.unread && <span style={{ width: 6, height: 6, borderRadius: "50%", background: notifColor(n.kind), flexShrink: 0 }} />}
           <span style={{ fontSize: 13, fontWeight: n.unread ? 500 : 450, color: "var(--text-primary)", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.title}</span>
           <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{fmtNotifTime(n.time)}</span>
         </div>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.body}</div>
       </div>
+      {h && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Dismiss"
+        style={{ width: 22, height: 22, flexShrink: 0, display: "grid", placeItems: "center", borderRadius: "var(--r-sm)", color: "var(--text-quaternary)" }}>
+        <Icon name="close" size={13} />
+      </button>}
     </div>
   );
 }
 
 export function InboxDetail({ n, go, onSnooze }: { n: any; go: (v: string) => void; onSnooze: () => void }) {
   const { members }: any = useApp();
-  const meta = NOTIF_META[n.kind] || NOTIF_META.assigned;
+  const meta = notifMeta(n.kind);
   // notifications carry no structured actor — pull the @username from the title. Title shows the NAME;
   // the byline carries the @username + a concise timestamp.
   const actorUser: string | null = (n.who && n.who !== "ai") ? n.who : (String(n.title || "").match(/@(\S+)/)?.[1] ?? null);
@@ -156,7 +147,7 @@ export function InboxDetail({ n, go, onSnooze }: { n: any; go: (v: string) => vo
     <div style={{ maxWidth: 560, animation: "s0-fade-in var(--t-reg) both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <span style={{ width: 32, height: 32, borderRadius: "var(--r-md)", display: "grid", placeItems: "center",
-          background: meta.spark ? "var(--text-primary)" : "var(--bg-secondary)", color: meta.spark ? "#fff" : "var(--text-tertiary)" }}>
+          background: `color-mix(in srgb, ${notifColor(n.kind)} 14%, transparent)`, color: notifColor(n.kind) }}>
           <Icon name={meta.icon} size={17} />
         </span>
         <div>
@@ -165,25 +156,26 @@ export function InboxDetail({ n, go, onSnooze }: { n: any; go: (v: string) => vo
         </div>
       </div>
       {n.body && <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text-secondary)" }}>{n.body}</p>}
-      {n.kind === "ratify" && (
+      {/* action notifications redirect to the subject (small ones — access/reschedule — act inline in the list) */}
+      {n.kind === "ratify_needed" && (
         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <Button variant="primary" size="md" icon="relay" onClick={() => go("relay")}>Open in Relay</Button>
+          <Button variant="primary" size="md" icon="ratify" onClick={() => go("relay")}>Ratify your slice</Button>
           <Button variant="secondary" size="md" onClick={onSnooze}>Snooze</Button>
         </div>
       )}
-      {(n.kind === "blocked" || n.kind === "qa_failed") && (
+      {n.kind === "agreement_proposed" && (
         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <Button variant="primary" size="md" icon="bolt" onClick={() => go("relay")}>View failing API</Button>
+          <Button variant="primary" size="md" icon="relay" onClick={() => go("relay")}>Open the Contract</Button>
+        </div>
+      )}
+      {n.kind === "qa_failed" && (
+        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+          <Button variant="primary" size="md" icon="bolt" onClick={() => go("relay")}>View the failing API</Button>
         </div>
       )}
       {n.kind === "drift_flagged" && (
         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <Button variant="primary" size="md" icon="merges" onClick={() => go("codegraph")}>Open Code Graph</Button>
-        </div>
-      )}
-      {n.kind === "merge" && (
-        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <Button variant="secondary" size="md" onClick={() => go("merges")}>Review attribution</Button>
+          <Button variant="primary" size="md" icon="board" onClick={() => go("mywork")}>Open the fix task</Button>
         </div>
       )}
     </div>

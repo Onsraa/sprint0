@@ -6,21 +6,7 @@
 import { Icon } from "../../lib/icon";
 import { useApp } from "../../app/useApp";
 import { Dropdown, IconButton } from "../../components/ui";
-
-/* notification kind → icon + label. spark events render in ink, not hue. */
-const NOTIF_META: Record<string, { icon: any; label: string; spark?: boolean }> = {
-  assigned:            { icon: "board",    label: "Assigned" },
-  completed:           { icon: "check",    label: "Completed" },
-  qa_failed:           { icon: "bolt",     label: "QA failed",  spark: true },
-  drift_flagged:       { icon: "bolt",     label: "Drift",      spark: true },
-  reschedule_resolved: { icon: "calendar", label: "Reschedule" },
-  merge:               { icon: "merges",   label: "Merge" },
-  ratify:              { icon: "ratify",   label: "Ratify" },
-  ratify_needed:       { icon: "ratify",   label: "Review",     spark: true },
-  task_assigned:       { icon: "board",    label: "Assigned" },
-  task_completed:      { icon: "check",    label: "Done" },
-  reschedule_proposed: { icon: "calendar", label: "Reschedule", spark: true },
-};
+import { notifMeta, notifColor } from "./notifMeta";
 
 /* ───────── Toast host — bottom-right live stack ───────── */
 export function ToastHost() {
@@ -29,20 +15,20 @@ export function ToastHost() {
     <div style={{ position: "fixed", right: 16, bottom: 16, zIndex: 120, display: "flex", flexDirection: "column",
       gap: 8, pointerEvents: "none" }}>
       {toasts.map((t: any) => {
-        const meta = NOTIF_META[t.kind] || NOTIF_META.assigned;
+        const meta = notifMeta(t.kind);
         return (
           <div key={t._tid} style={{ width: 320, background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)",
             borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-3)", padding: "11px 13px", display: "flex", gap: 11,
             pointerEvents: "auto", animation: "s0-toast-in var(--t-reg) var(--ease-out) both" }}>
             <span style={{ width: 28, height: 28, borderRadius: "var(--r-md)", flexShrink: 0, display: "grid", placeItems: "center",
-              background: meta.spark ? "var(--text-primary)" : "var(--bg-secondary)",
-              color: meta.spark ? "#fff" : "var(--text-tertiary)" }}>
+              background: `color-mix(in srgb, ${notifColor(t.kind)} 14%, transparent)`,
+              color: notifColor(t.kind) }}>
               <Icon name={meta.icon} size={15} />
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span className="mono" style={{ fontSize: 9.5, letterSpacing: "0.06em", textTransform: "uppercase",
-                  color: meta.spark ? "var(--text-primary)" : "var(--text-quaternary)", fontWeight: 600 }}>{meta.label}</span>
+                  color: notifColor(t.kind), fontWeight: 600 }}>{meta.label}</span>
                 <span style={{ flex: 1 }} />
                 <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--green)" }} />
                 <span className="mono" style={{ fontSize: 9.5, color: "var(--text-quaternary)" }}>live</span>
@@ -81,13 +67,13 @@ export function BellPanel() {
       </div>
       <div style={{ flex: 1, overflowY: "auto" }}>
         {notifs.map((n: any) => {
-          const meta = NOTIF_META[n.kind] || NOTIF_META.assigned;
+          const meta = notifMeta(n.kind);
           return (
             <button key={n.id} onClick={() => { setBellOpen(false); setView("inbox"); }}
               style={{ display: "flex", gap: 10, width: "100%", textAlign: "left", padding: "10px 14px",
                 borderBottom: "0.5px solid var(--border-subtle)", background: n.unread ? "var(--bg-hover)" : "transparent" }}>
               <span style={{ width: 26, height: 26, borderRadius: "var(--r-md)", flexShrink: 0, display: "grid", placeItems: "center",
-                background: meta.spark ? "var(--text-primary)" : "var(--bg-secondary)", color: meta.spark ? "#fff" : "var(--text-tertiary)" }}>
+                background: `color-mix(in srgb, ${notifColor(n.kind)} 14%, transparent)`, color: notifColor(n.kind) }}>
                 <Icon name={meta.icon} size={14} />
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>

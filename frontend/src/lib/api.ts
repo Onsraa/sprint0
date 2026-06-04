@@ -699,6 +699,7 @@ export const api = {
   /* Inbox / notifications */
   inbox(): Promise<InboxResponse> { return jget("/api/inbox", S.InboxResponse); },
   inboxReadAll(): Promise<{ ok: boolean }> { return jpost("/api/inbox/read-all"); },
+  inboxDelete(id: string): Promise<{ ok: boolean }> { return jdelete(`/api/notifications/${id}`); },
   requestAccess(subjectId: string): Promise<AccessGrant> { return jpost("/api/access/requests", { subject_id: subjectId }); },
   acceptAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/requests/${grantId}/accept`); },
   rejectAccess(grantId: string): Promise<AccessGrant> { return jpost(`/api/access/requests/${grantId}/reject`); },
