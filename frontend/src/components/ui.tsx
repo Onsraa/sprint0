@@ -163,7 +163,7 @@ export const DISC: Record<string, { label: string; color: string }> = {
   uiux: { label: "UI/UX", color: "var(--disc-uiux)" },
   backend: { label: "Backend", color: "var(--disc-backend)" },
   frontend: { label: "Frontend", color: "var(--disc-frontend)" },
-  qa: { label: "QA", color: "var(--disc-qa)" },
+  qa: { label: "Tester", color: "var(--disc-qa)" },
   devops: { label: "DevOps", color: "var(--disc-devops)" },
 };
 export function DiscDot({ d, size = 7 }: { d?: string | null; size?: number }) {

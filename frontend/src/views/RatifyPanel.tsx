@@ -474,7 +474,7 @@ function GateContracts({ planId, discipline, me }: { planId: string | null; disc
       <button onClick={() => setOpen((o) => !o)}
         style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", padding: "10px 13px", textAlign: "left", background: "var(--bg-secondary)", borderBottom: open ? "0.5px solid var(--border-subtle)" : "none" }}>
         <Icon name="relay" size={14} style={{ color: toSign > 0 ? "var(--text-primary)" : "var(--text-tertiary)" }} />
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{toSign > 0 ? `${toSign} interface ${toSign === 1 ? "contract" : "contracts"} to sign` : "Interface contracts"}</span>
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{toSign > 0 ? `${toSign} ${toSign === 1 ? "contract" : "contracts"} to sign` : "Contracts"}</span>
         <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>— this gate produces / consumes, just-in-time</span>
         <div style={{ flex: 1 }} />
         <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{ags.length}</span>

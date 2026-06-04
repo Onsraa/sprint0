@@ -236,7 +236,7 @@ function InterfaceContracts({ planId, me }: { planId: string | null; me: any }) 
   if (!ags.length) return null;
   return (
     <div style={{ marginBottom: 18 }}>
-      <div className="kicker" style={{ marginBottom: 8 }}>Interface contracts · CDD</div>
+      <div className="kicker" style={{ marginBottom: 8 }}>Contracts · CDD</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {ags.map((a: any) => {
           const canSign = a.state === "proposed" && (a.ratifiers ?? []).includes(me.username);
@@ -428,7 +428,7 @@ function IntegrationStrip() {
         borderBottom: "0.5px solid var(--border-subtle)" }}>
         <Icon name="bolt" size={14} style={{ color: "var(--text-primary)" }} />
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>API integration</span>
-        <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>— a failing API holds the QA gate until the producer fixes it.</span>
+        <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>— a failing API holds the acceptance gate until the producer fixes it.</span>
       </div>
 
       {sig.length === 0 ? (
@@ -441,7 +441,7 @@ function IntegrationStrip() {
           <Badge tone="red">failing</Badge>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 500 }}><span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 400 }}>{s.target_issue_id}</span></div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>reported by @{s.by} · {s.note} · qa gate <b style={{ color: "var(--text-primary)" }}>blocked</b></div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>reported by @{s.by} · {s.note} · acceptance gate <b style={{ color: "var(--text-primary)" }}>blocked</b></div>
           </div>
           <Badge tone="outline" mono>acceptance held</Badge>
         </div>
