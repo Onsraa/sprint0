@@ -47,18 +47,43 @@ export function Button({
   );
 }
 
-export function IconButton({ name, size = 28, icon = 16, title, active = false, onClick, style = {} }: {
-  name: IconName; size?: number; icon?: number; title?: string; active?: boolean; onClick?: () => void; style?: CSSProperties;
+export function IconButton({ name, size = 28, icon = 16, title, active = false, onClick, style = {}, children }: {
+  name: IconName; size?: number; icon?: number; title?: string; active?: boolean; onClick?: () => void; style?: CSSProperties; children?: ReactNode;
 }) {
   const [h, setH] = useState(false);
   return (
     <button title={title} onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ width: size, height: size, display: "grid", placeItems: "center", borderRadius: "var(--r-md)",
+      style={{ position: "relative", width: size, height: size, display: "grid", placeItems: "center", borderRadius: "var(--r-md)",
         background: active || h ? "var(--bg-hover)" : "transparent",
         color: active ? "var(--text-primary)" : "var(--text-tertiary)",
         transition: "background var(--t-quick), color var(--t-quick)", ...style }}>
       <Icon name={name} size={icon} />
+      {children}
     </button>
+  );
+}
+
+/* Anchored dropdown shell — the relative wrapper + click-away backdrop + the pop-in menu, factored out of
+   the persona / project / bell menus (which all hand-rolled the same three divs). Controlled: the caller
+   owns `open` (local state for the switchers, useApp for the bell) and renders its own `trigger`. */
+export function Dropdown({ open, onClose, trigger, align = "left", top = 38, width = 256, z = 60, menuStyle = {}, children }: {
+  open: boolean; onClose: () => void; trigger: ReactNode;
+  align?: "left" | "right"; top?: number; width?: number; z?: number; menuStyle?: CSSProperties; children?: ReactNode;
+}) {
+  return (
+    <div style={{ position: "relative" }}>
+      {trigger}
+      {open && (
+        <>
+          <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: z }} />
+          <div style={{ position: "absolute", top, ...(align === "right" ? { right: 0 } : { left: 0 }), width, zIndex: z + 1,
+            background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)",
+            boxShadow: "var(--shadow-3)", padding: 6, animation: "s0-pop-in var(--t-reg) var(--ease-out) both", ...menuStyle }}>
+            {children}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

@@ -7,9 +7,9 @@ import { useApp } from "./useApp";
 import { useMe } from "../features/auth/useAuth";
 import { useUI } from "../lib/store";
 import { useRoleGate } from "../features/nav/nav";
-import { Icon } from "../lib/icon";
-import { Avatar, Kbd } from "../components/ui";
-import { FullLogo } from "../lib/icon";
+import { Icon, FullLogo, ZeroMark } from "../lib/icon";
+import { Avatar, Kbd, IconButton, Dropdown } from "../components/ui";
+import { useHoverState } from "../lib/hooks";
 import { Landing } from "../views/Landing";
 import { Wizard } from "../wizard/Wizard";
 import { FeatureWizard } from "../wizard/FeatureWizard";
@@ -52,6 +52,10 @@ const NAV = [
   ] },
 ] as const;
 
+/** A single nav leaf, flattened out of NAV's grouped/role-gated structure (the collapsed rail drops the
+    section headers, so it maps leaves directly — NAV's heterogeneous `as const` tuple needs this shape). */
+type NavLeaf = { id: string; label: string; icon: string; kbd?: readonly string[]; roles: readonly string[] };
+
 export function AppShellNew() {
   const { member, authLoading, role } = useMe();
   const wizardOpen = useUI((s) => s.wizardOpen);
@@ -90,34 +94,30 @@ function SessionLoading() {
 }
 
 function Sidebar({ onPalette }: { onPalette: () => void }) {
-  const { view, setView, role, chrome } = useApp();
   const collapsed = useUI((s) => s.navCollapsed);   // store, not local state → survives shell remount + reload
   const toggleNav = useUI((s) => s.toggleNav);
   return (
-    <aside style={{ width: collapsed ? 60 : "var(--nav-w)", flexShrink: 0, height: "100vh", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4, transition: "width var(--t-reg) var(--ease-out)" }}>
-      {!collapsed ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <div style={{ flex: 1, minWidth: 0 }}><Workspace collapsed={false} /></div>
-          <button onClick={toggleNav} title="Collapse sidebar"
-            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-            style={{ width: 28, height: 28, display: "grid", placeItems: "center", borderRadius: "var(--r-md)", color: "var(--text-tertiary)", flexShrink: 0, transition: "background var(--t-quick)" }}>
-            <Icon name="chevronLeft" size={16} />
-          </button>
-        </div>
-      ) : (
-        <>
-          <Workspace collapsed />
-          <button onClick={toggleNav} title="Expand sidebar"
-            style={{ width: "100%", height: 28, display: "grid", placeItems: "center", borderRadius: "var(--r-md)", color: "var(--text-tertiary)" }}>
-            <Icon name="chevronRight" size={16} />
-          </button>
-        </>
-      )}
-      <SearchTrigger onClick={onPalette} collapsed={collapsed} />
+    <aside style={{ width: collapsed ? 54 : "var(--nav-w)", flexShrink: 0, height: "100vh", transition: "width var(--t-reg) var(--ease-out)" }}>
+      {collapsed
+        ? <CollapsedRail onExpand={toggleNav} onPalette={onPalette} />
+        : <ExpandedNav onCollapse={toggleNav} onPalette={onPalette} />}
+    </aside>
+  );
+}
+
+/* Full-width nav column. The collapse chevron is the shared IconButton. */
+function ExpandedNav({ onCollapse, onPalette }: { onCollapse: () => void; onPalette: () => void }) {
+  const { view, setView, role, chrome } = useApp();
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <div style={{ flex: 1, minWidth: 0 }}><Workspace /></div>
+        <IconButton name="chevronLeft" title="Collapse sidebar" onClick={onCollapse} />
+      </div>
+      <SearchTrigger onClick={onPalette} />
       {chrome.canDispatch && (
-        <button onClick={() => setView("wizard")} title="New from brief" style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, height: 32, margin: "2px 0", padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", fontSize: 13, fontWeight: 500 }}>
-          <Icon name="plus" size={15} />{!collapsed && " New from brief"}
+        <button onClick={() => setView("wizard")} title="New from brief" style={{ display: "flex", alignItems: "center", gap: 8, height: 32, margin: "2px 0", padding: "0 10px", borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", fontSize: 13, fontWeight: 500 }}>
+          <Icon name="plus" size={15} /> New from brief
         </button>
       )}
       <nav style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 4 }}>
@@ -126,91 +126,107 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
           if (!items.length) return null;
           return (
             <div key={gi} style={{ marginTop: grp.section ? 12 : 0 }}>
-              {grp.section && !collapsed && (
+              {grp.section && (
                 <div style={{ height: 24, display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11, fontWeight: 500, color: "var(--text-quaternary)", letterSpacing: "0.02em" }}>{grp.section}</div>
               )}
-              {items.map((it) => <NavItem key={it.label} item={it} active={view === it.id} onClick={() => setView(it.id)} collapsed={collapsed} />)}
+              {items.map((it) => <NavItem key={it.label} item={it} active={view === it.id} onClick={() => setView(it.id)} />)}
             </div>
           );
         })}
       </nav>
       <div style={{ flex: 1 }} />
-      <SidebarFooter collapsed={collapsed} />
-    </aside>
-  );
-}
-
-function Workspace({ collapsed }: { collapsed?: boolean }) {
-  const { me, switchPersona } = useApp();
-  const workspace = useWorkspace();
-  const [open, setOpen] = useState(false);
-  const [h, setH] = useState(false);
-  return (
-    <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen((o) => !o)} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} title={collapsed ? `· ${workspace}` : undefined}
-        style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 36, padding: collapsed ? 0 : "0 8px", borderRadius: "var(--r-md)", width: "100%", background: open || h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
-        <FullLogo size={17} />
-        {!collapsed && <>
-          <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· {workspace}</span>
-          <div style={{ flex: 1 }} />
-          <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
-        </>}
-      </button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
-          <div style={{ position: "absolute", top: 40, left: 0, width: 256, zIndex: 61, background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-3)", padding: 6, animation: "s0-pop-in var(--t-reg) var(--ease-out) both" }}>
-            <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)", padding: "6px 8px 4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Switch persona · demo</div>
-            {DEMO_PERSONAS.map((p) => (
-              <button key={p.username} onClick={() => { switchPersona(p.username); setOpen(false); }}
-                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: p.username === me.username ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>
-                <Avatar name={p.name} size={26} tone={p.role === "manager" ? "ink" : undefined} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
-                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
-                </div>
-                {p.username === me.username && <Icon name="check" size={15} style={{ color: "var(--text-primary)" }} />}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      <SidebarFooter />
     </div>
   );
 }
 
-function SearchTrigger({ onClick, collapsed }: { onClick: () => void; collapsed?: boolean }) {
-  const [h, setH] = useState(false);
+/* Collapsed 54px icon rail — the zero mark expands, the nav folds to centered IconButtons, the expand
+   chevron sits at the bottom above the avatar (mirrors the design's Shell.jsx collapsed layer). */
+function CollapsedRail({ onExpand, onPalette }: { onExpand: () => void; onPalette: () => void }) {
+  const { view, setView, role, chrome, me } = useApp();
+  const items = NAV.flatMap((g) => g.items as readonly NavLeaf[]).filter((it) => it.roles.includes(role));
   return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} title={collapsed ? "Search · ⌘K" : undefined}
-      style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, height: 30, padding: collapsed ? 0 : "0 8px", borderRadius: "var(--r-md)", background: h ? "var(--bg-hover)" : "transparent", color: "var(--text-tertiary)", transition: "background var(--t-quick)" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", padding: "10px 0 8px", gap: 3 }}>
+      <button onClick={onExpand} title="Expand sidebar" style={{ width: 36, height: 36, display: "grid", placeItems: "center", borderRadius: "var(--r-md)" }}>
+        <ZeroMark size={18} />
+      </button>
+      <IconButton name="search" title="Search · ⌘K" onClick={onPalette} />
+      {chrome.canDispatch && (
+        <button onClick={() => setView("wizard")} title="New from brief" style={{ width: 30, height: 30, display: "grid", placeItems: "center", borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", margin: "2px 0" }}>
+          <Icon name="plus" size={16} />
+        </button>
+      )}
+      <div style={{ height: 6 }} />
+      {items.map((it) => <IconButton key={it.label} name={it.icon as never} title={it.label} active={view === it.id} onClick={() => setView(it.id)} />)}
+      <div style={{ flex: 1 }} />
+      <IconButton name="chevronRight" title="Expand sidebar" onClick={onExpand} />
+      <button title={me.name ?? undefined} style={{ width: 34, height: 34, display: "grid", placeItems: "center" }}>
+        <Avatar name={me.name ?? "?"} size={26} tone={role === "manager" ? "ink" : undefined} />
+      </button>
+    </div>
+  );
+}
+
+function Workspace() {
+  const { me, switchPersona } = useApp();
+  const workspace = useWorkspace();
+  const [open, setOpen] = useState(false);
+  const [h, hover] = useHoverState();
+  return (
+    <Dropdown open={open} onClose={() => setOpen(false)} align="left" top={40} width={256} z={60}
+      trigger={
+        <button onClick={() => setOpen((o) => !o)} {...hover}
+          style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", width: "100%", background: open || h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
+          <FullLogo size={17} />
+          <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· {workspace}</span>
+          <div style={{ flex: 1 }} />
+          <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
+        </button>
+      }>
+      <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)", padding: "6px 8px 4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Switch persona · demo</div>
+      {DEMO_PERSONAS.map((p) => (
+        <button key={p.username} onClick={() => { switchPersona(p.username); setOpen(false); }}
+          style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: p.username === me.username ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>
+          <Avatar name={p.name} size={26} tone={p.role === "manager" ? "ink" : undefined} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
+            <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
+          </div>
+          {p.username === me.username && <Icon name="check" size={15} style={{ color: "var(--text-primary)" }} />}
+        </button>
+      ))}
+    </Dropdown>
+  );
+}
+
+function SearchTrigger({ onClick }: { onClick: () => void }) {
+  const [h, hover] = useHoverState();
+  return (
+    <button onClick={onClick} {...hover}
+      style={{ display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 8px", borderRadius: "var(--r-md)", background: h ? "var(--bg-hover)" : "transparent", color: "var(--text-tertiary)", transition: "background var(--t-quick)" }}>
       <Icon name="search" size={15} />
-      {!collapsed && <>
-        <span style={{ fontSize: 13, fontWeight: 500 }}>Search</span>
-        <div style={{ flex: 1 }} />
-        <span style={{ display: "inline-flex", gap: 2 }}><Kbd>⌘</Kbd><Kbd>K</Kbd></span>
-      </>}
+      <span style={{ fontSize: 13, fontWeight: 500 }}>Search</span>
+      <div style={{ flex: 1 }} />
+      <span style={{ display: "inline-flex", gap: 2 }}><Kbd>⌘</Kbd><Kbd>K</Kbd></span>
     </button>
   );
 }
 
-function NavItem({ item, active, onClick, collapsed }: { item: { id: string; label: string; icon: string; kbd?: readonly string[] }; active: boolean; onClick: () => void; collapsed?: boolean }) {
-  const [h, setH] = useState(false);
+function NavItem({ item, active, onClick }: { item: { id: string; label: string; icon: string; kbd?: readonly string[] }; active: boolean; onClick: () => void }) {
+  const [h, hover] = useHoverState();
   return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} title={collapsed ? item.label : undefined}
-      style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, width: "100%", height: 28, padding: collapsed ? 0 : "0 10px", borderRadius: "var(--r-md)", textAlign: "left",
+    <button onClick={onClick} {...hover}
+      style={{ position: "relative", display: "flex", alignItems: "center", gap: 9, width: "100%", height: 28, padding: "0 10px", borderRadius: "var(--r-md)", textAlign: "left",
         background: active ? "var(--bg-active)" : h ? "var(--bg-hover)" : "transparent", color: active ? "var(--text-primary)" : "var(--text-secondary)", transition: "background var(--t-quick), color var(--t-quick)" }}>
       <Icon name={item.icon as never} size={16} style={{ color: active ? "var(--text-secondary)" : "var(--text-tertiary)" }} />
-      {!collapsed && <>
-        <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: "-0.1px" }}>{item.label}</span>
-        <div style={{ flex: 1 }} />
-        {h && item.kbd && <span style={{ display: "inline-flex", gap: 2 }}>{item.kbd.map((k, i) => <Kbd key={i}>{k}</Kbd>)}</span>}
-      </>}
+      <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: "-0.1px" }}>{item.label}</span>
+      <div style={{ flex: 1 }} />
+      {h && item.kbd && <span style={{ display: "inline-flex", gap: 2 }}>{item.kbd.map((k, i) => <Kbd key={i}>{k}</Kbd>)}</span>}
     </button>
   );
 }
 
-function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
+function SidebarFooter() {
   const { me, role } = useApp();
   // REAL liveness — green when the gateway reaches Mongo/MCP, red when it can't, amber while checking.
   const { data: health } = useHealth();
@@ -219,20 +235,18 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
   const label = online === true ? "MCP · online" : online === false ? "MCP · offline" : "MCP · …";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 7, height: 28, padding: collapsed ? 0 : "0 10px" }} title={collapsed ? label : undefined}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, height: 28, padding: "0 10px" }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot }} />
-        {!collapsed && <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>{label}</span>}
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>{label}</span>
       </div>
-      <button title={collapsed ? `${me.name} · ${role}` : undefined} style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, height: 36, padding: collapsed ? 0 : "0 8px", borderRadius: "var(--r-md)" }}>
+      <button style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)" }}>
         <Avatar name={me.name ?? "?"} size={22} tone={role === "manager" ? "ink" : undefined} />
-        {!collapsed && <>
-          <div style={{ textAlign: "left", lineHeight: 1.2 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)" }}>{me.name}</div>
-            <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{role}{me.discipline ? " · " + me.discipline : ""}</div>
-          </div>
-          <div style={{ flex: 1 }} />
-          <Icon name="more" size={16} style={{ color: "var(--text-quaternary)" }} />
-        </>}
+        <div style={{ textAlign: "left", lineHeight: 1.2 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)" }}>{me.name}</div>
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{role}{me.discipline ? " · " + me.discipline : ""}</div>
+        </div>
+        <div style={{ flex: 1 }} />
+        <Icon name="more" size={16} style={{ color: "var(--text-quaternary)" }} />
       </button>
     </div>
   );
