@@ -87,7 +87,7 @@ export function Queue() {
           ))}
           {!items.length && <div style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>You're all clear — nothing waits on you.</div>}
         </div>
-        <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+        <div style={{ flex: 1, minWidth: 0, overflow: "auto", background: "var(--bg-base)" }}>
           {sel ? <QueueDetail item={sel} gates={gates} me={me} agRatify={ratifyAg} setView={setView} /> : null}
         </div>
       </div>
@@ -167,17 +167,17 @@ function QueueDetail({ item, gates, me, agRatify, setView }: { item: QItem; gate
   if (item.kind === "agreement") {
     const a = item.agreement;
     const canSign = a.state === "proposed" && (a.ratifiers ?? []).includes(me.username);
-    return <div style={{ padding: 28, maxWidth: 600 }}><AgreementCard a={a} busy={agRatify.isPending}
+    return <div style={{ padding: "24px 28px 40px", maxWidth: 720, margin: "0 auto" }}><AgreementCard a={a} busy={agRatify.isPending}
       onRatify={canSign ? () => agRatify.mutate({ id: a.id, d: "ratified" }) : undefined}
       onReject={canSign ? () => agRatify.mutate({ id: a.id, d: "rejected" }) : undefined} /></div>;
   }
-  if (item.kind === "reschedule") return <div style={{ padding: 28 }}><RescheduleConsent /></div>;
-  if (item.kind === "notif") return <div style={{ padding: 28 }}><InboxDetail n={item.notif} go={setView} onSnooze={() => toast("Snoozed")} /></div>;
+  if (item.kind === "reschedule") return <div style={{ padding: "24px 28px 40px", maxWidth: 640, margin: "0 auto" }}><RescheduleConsent /></div>;
+  if (item.kind === "notif") return <div style={{ padding: "24px 28px 40px", maxWidth: 640, margin: "0 auto" }}><InboxDetail n={item.notif} go={setView} onSnooze={() => toast("Snoozed")} /></div>;
   // an action: a gate renders RatifyPanel in place (the active plan/gate was pointed on select)
   const t = item.item.action.target;
   if (t.kind === "relay") {
     const gate = (gates ?? []).find((g: any) => g.discipline === t.discipline);
-    if (gate) return <RatifyPanel g={gate} />;
+    if (gate) return <div style={{ padding: "24px 28px 40px", maxWidth: 760, margin: "0 auto" }}><RatifyPanel g={gate} /></div>;
   }
   return <SimpleActionDetail item={item.item} setView={setView} />;
 }
@@ -186,7 +186,7 @@ function SimpleActionDetail({ item, setView }: { item: NextItem; setView: (v: st
   const t = item.action.target;
   const go = () => { setView(t.kind === "qagate" ? "qagate" : t.kind === "scope" ? "mywork" : t.kind === "relays" ? "relays" : "relay"); };
   return (
-    <div style={{ padding: 28, maxWidth: 560 }}>
+    <div style={{ padding: "24px 28px 40px", maxWidth: 560, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         {item.discipline ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-tertiary)" }}><DiscDot d={item.discipline} />{DISC[item.discipline]?.label}</span> : null}
         {item.project && <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>· {item.project}</span>}

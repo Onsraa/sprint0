@@ -9,7 +9,7 @@ import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { ViewChrome } from "../components/ViewChrome";
 import { ProjectSwitcher } from "../components/ProjectSwitcher";
-import { Avatar, Button, Tab, Badge, DiscDot, DISC } from "../components/ui";
+import { Avatar, Button, Badge, DiscDot, DISC } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { GATE_META } from "./RatifyPanel";
 import { blocksForGate } from "../features/today/rank";
@@ -164,11 +164,6 @@ export function Relays() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <ViewChrome breadcrumb={["Studio", "Relays"]}>
-        <div style={{ display: "flex", gap: 6, marginRight: 6 }}>
-          <Tab active={false} onClick={() => setView("today")}>Today</Tab>
-          <Tab active={true}>By relay</Tab>
-        </div>
-        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{relays.length} active</span>
         <ProjectSwitcher />
         <PersonSwitcher />
       </ViewChrome>

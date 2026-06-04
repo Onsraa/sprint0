@@ -315,7 +315,7 @@ function SolutionsBlock({ planId, disc, interactive, choice, onPick, onWriteOwn,
 }
 
 /* Right sub-panel: the feature frame · the solution choice · the slice · forward-only ratify. */
-export function RatifyPanel({ g }: { g: any }) {
+export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" | "page" }) {
   const { me, chrome, members, planId, ratifyWith, personFilter }: any = useApp();
   const byUser = (u: string) => members?.find((m: any) => m.username === u);
   const meta = GATE_META[g.status];
@@ -351,8 +351,10 @@ export function RatifyPanel({ g }: { g: any }) {
   };
 
   return (
-    <div style={{ width: 400, flexShrink: 0, borderLeft: "0.5px solid var(--border)", display: "flex", flexDirection: "column",
-      minHeight: 0, background: "var(--bg-elevated)", animation: "s0-panel-in var(--t-reg) var(--ease-out) both" }} key={g.discipline}>
+    <div style={{ ...(layout === "page"
+        ? { flex: 1, minWidth: 0, border: "0.5px solid var(--border)", borderRadius: "var(--r-xl)", overflow: "hidden" }
+        : { width: 400, flexShrink: 0, borderLeft: "0.5px solid var(--border)" }),
+      display: "flex", flexDirection: "column", minHeight: 0, background: "var(--bg-elevated)", animation: "s0-panel-in var(--t-reg) var(--ease-out) both" }} key={g.discipline}>
       <div style={{ height: "var(--topbar-h)", display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderBottom: "0.5px solid var(--border-subtle)" }}>
         <DiscDot d={g.discipline} size={9} />
         <span style={{ fontSize: 13, fontWeight: 600 }}>{DISC[g.discipline].label} gate</span>

@@ -178,7 +178,7 @@ function Workspace() {
         <button onClick={() => setOpen((o) => !o)} {...hover}
           style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)", width: "100%", background: open || h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
           <FullLogo size={17} />
-          <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>· {workspace}</span>
+          <span style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>· {workspace}</span>
           <div style={{ flex: 1 }} />
           <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
         </button>
@@ -227,27 +227,46 @@ function NavItem({ item, active, onClick }: { item: { id: string; label: string;
 }
 
 function SidebarFooter() {
-  const { me, role } = useApp();
+  const { me, role, switchPersona } = useApp();
   // REAL liveness — green when the gateway reaches Mongo/MCP, red when it can't, amber while checking.
   const { data: health } = useHealth();
   const online = health?.ok;
   const dot = online === true ? "var(--green)" : online === false ? "var(--red)" : "var(--amber)";
   const label = online === true ? "MCP · online" : online === false ? "MCP · offline" : "MCP · …";
+  const [open, setOpen] = useState(false);
+  const [h, hover] = useHoverState();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, height: 28, padding: "0 10px" }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot }} />
         <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>{label}</span>
       </div>
-      <button style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 8px", borderRadius: "var(--r-md)" }}>
-        <Avatar name={me.name ?? "?"} size={22} tone={role === "manager" ? "ink" : undefined} />
-        <div style={{ textAlign: "left", lineHeight: 1.2 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)" }}>{me.name}</div>
-          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{role}{me.discipline ? " · " + me.discipline : ""}</div>
-        </div>
-        <div style={{ flex: 1 }} />
-        <Icon name="more" size={16} style={{ color: "var(--text-quaternary)" }} />
-      </button>
+      <Dropdown open={open} onClose={() => setOpen(false)} align="left" top={44} width={236} z={70} dropUp
+        trigger={
+          <button onClick={() => setOpen((o) => !o)} {...hover} title="Account · switch persona"
+            style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", height: 36, padding: "0 8px", borderRadius: "var(--r-md)", background: open || h ? "var(--bg-hover)" : "transparent", transition: "background var(--t-quick)" }}>
+            <Avatar name={me.name ?? "?"} size={22} tone={role === "manager" ? "ink" : undefined} />
+            <div style={{ textAlign: "left", lineHeight: 1.2, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.name}</div>
+              <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{role}{me.discipline ? " · " + me.discipline : ""}</div>
+            </div>
+            <div style={{ flex: 1 }} />
+            <Icon name="more" size={16} style={{ color: "var(--text-quaternary)" }} />
+          </button>
+        }>
+        <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)", padding: "6px 8px 4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Switch persona · demo</div>
+        {DEMO_PERSONAS.map((p) => (
+          <button key={p.username} onClick={() => { switchPersona(p.username); setOpen(false); }}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: p.username === me.username ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>
+            <Avatar name={p.name} size={26} tone={p.role === "manager" ? "ink" : undefined} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
+              <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
+            </div>
+            {p.username === me.username && <Icon name="check" size={15} style={{ color: "var(--text-primary)" }} />}
+          </button>
+        ))}
+      </Dropdown>
     </div>
   );
 }

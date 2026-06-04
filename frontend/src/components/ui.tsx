@@ -66,9 +66,9 @@ export function IconButton({ name, size = 28, icon = 16, title, active = false, 
 /* Anchored dropdown shell — the relative wrapper + click-away backdrop + the pop-in menu, factored out of
    the persona / project / bell menus (which all hand-rolled the same three divs). Controlled: the caller
    owns `open` (local state for the switchers, useApp for the bell) and renders its own `trigger`. */
-export function Dropdown({ open, onClose, trigger, align = "left", top = 38, width = 256, z = 60, menuStyle = {}, children }: {
+export function Dropdown({ open, onClose, trigger, align = "left", top = 38, width = 256, z = 60, dropUp = false, menuStyle = {}, children }: {
   open: boolean; onClose: () => void; trigger: ReactNode;
-  align?: "left" | "right"; top?: number; width?: number; z?: number; menuStyle?: CSSProperties; children?: ReactNode;
+  align?: "left" | "right"; top?: number; width?: number; z?: number; dropUp?: boolean; menuStyle?: CSSProperties; children?: ReactNode;
 }) {
   return (
     <div style={{ position: "relative" }}>
@@ -76,7 +76,7 @@ export function Dropdown({ open, onClose, trigger, align = "left", top = 38, wid
       {open && (
         <>
           <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: z }} />
-          <div style={{ position: "absolute", top, ...(align === "right" ? { right: 0 } : { left: 0 }), width, zIndex: z + 1,
+          <div style={{ position: "absolute", ...(dropUp ? { bottom: top } : { top }), ...(align === "right" ? { right: 0 } : { left: 0 }), width, zIndex: z + 1,
             background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)",
             boxShadow: "var(--shadow-3)", padding: 6, animation: "s0-pop-in var(--t-reg) var(--ease-out) both", ...menuStyle }}>
             {children}
