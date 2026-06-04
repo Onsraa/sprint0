@@ -509,6 +509,10 @@ async def revoke_access(grant_id: str, member: DeveloperProfile = Depends(auth.c
         raise HTTPException(404, "no such grant")
     if member.username not in (g["subject_id"], g["requester_id"]):
         raise HTTPException(403, "not your grant")
+    await team.ensure_loaded()
+    mgr = team.manager()
+    if mgr and g["requester_id"] == mgr.username and member.username != mgr.username:
+        raise HTTPException(403, "the manager always watches — that Watch can't be revoked")
     await update_access_grant(grant_id, {"status": "revoked", "updated_at": datetime.now(timezone.utc).isoformat()})
     return {**g, "status": "revoked"}
 

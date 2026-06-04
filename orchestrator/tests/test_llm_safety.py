@@ -9,7 +9,7 @@ import types
 import pytest
 
 from app.contracts import ContextScope, DeveloperProfile, Epic, Issue, PlanJSON, RescheduleStrategy, TechStack
-from app.reason import _build_delta_prompt, _build_plan_prompt, _normalize_plan_ids, _safe_username
+from app.reason import _build_delta_prompt, _build_plan_prompt, _norm_tag, _normalize_plan_ids, _safe_username
 from app.rag import cosine_score
 from app.strategist import guard_reassign
 
@@ -170,3 +170,12 @@ def test_manifest_of_unions_dedups_sorts():
     # a simulated delta (old + new epics) sees BOTH file sets — not just the dispatch-day snapshot
     plan.epics.append(Epic(id="e2", title="t2", issues=[_iss_files("c", ["new.py"])]))
     assert _manifest_of(plan) == ["a.py", "new.py", "z.py"]
+
+
+def test_norm_tag_collapses_spelling_variants():
+    # case · spaces · underscores · punctuation · double-hyphens all collapse to one stable id, so the
+    # capability taxonomy doesn't spawn a near-duplicate profile per spelling (bounds unbounded growth).
+    variants = ["Stripe Webhooks", "stripe webhooks", "stripe_webhooks", "stripe-webhooks!", "  Stripe--Webhooks  "]
+    assert {_norm_tag(v) for v in variants} == {"stripe-webhooks"}
+    assert _norm_tag("API v2") == "api-v2"
+    assert _norm_tag("") == "" and _norm_tag("  -- ") == ""

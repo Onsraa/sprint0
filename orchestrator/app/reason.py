@@ -261,14 +261,25 @@ async def _known_profile_labels() -> list[str]:
         return []
 
 
+def _norm_tag(raw: str) -> str:
+    """Normalize a capability tag to a stable id — lowercase kebab, punctuation→hyphen, collapse hyphens.
+    So 'Stripe Webhooks', 'stripe_webhooks', and 'stripe-webhooks!' all map to ONE profile (bounds the
+    otherwise-unbounded taxonomy: no near-duplicate profiles per spelling)."""
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", raw.lower())).strip("-")
+
+
 async def _discover_profiles(plan: PlanJSON) -> None:
     """Any capability_tag the planner emitted that isn't already a known profile becomes a `proposed`
-    CapabilityProfile (the growing dictionary). A manager confirms it before it can shape the lanes."""
+    CapabilityProfile (the growing dictionary). A manager confirms it before it can shape the lanes.
+    Tags are normalized + matched against existing ids AND labels, so spelling variants don't each spawn a
+    profile (bounds unbounded growth)."""
     try:
-        known = {p.get("id") for p in await all_profiles()}
+        profs = await all_profiles()
+        known = {_norm_tag(p.get("id") or "") for p in profs} | {_norm_tag(p.get("label") or "") for p in profs}
+        known.discard("")
         tags = sorted({t for e in plan.epics for i in e.issues for t in i.capability_tags})
         for tag in tags:
-            pid = tag.strip().lower().replace(" ", "-")
+            pid = _norm_tag(tag)
             if pid and pid not in known:
                 await save_profile(CapabilityProfile(id=pid, label=tag, status="proposed").model_dump())
                 known.add(pid)
