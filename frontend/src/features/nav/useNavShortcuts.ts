@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 
 // second-key → view id (matches the NAV ids + the displayed kbd hints in AppShellNew)
 const NAV_KEYS: Record<string, string> = {
-  d: "today",     // Queue
+  i: "inbox",     // Inbox
   l: "relays",
   w: "mywork",
   p: "projects",

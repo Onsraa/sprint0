@@ -17,7 +17,7 @@ import { Profiles } from "../views/Profiles";
 import { Settings } from "../views/Settings";
 import { QAGate } from "../views/QAGate";
 import { Passport } from "../views/Passport";
-import { Queue } from "../views/Queue";
+// Queue (merged Today⊕Inbox) retired — the classic Inbox (InboxPage) is the home.
 import { Relays } from "../views/Relays";
 
 const rootRoute = createRootRoute({
@@ -26,7 +26,6 @@ const rootRoute = createRootRoute({
 
 /** path (= `/${view}`) → the existing panel component. */
 const PANELS: { path: string; component: FC }[] = [
-  { path: "/today", component: Queue },
   { path: "/relays", component: Relays },
   { path: "/inbox", component: InboxPage },
   { path: "/work", component: WorkHub },
@@ -46,7 +45,7 @@ const indexRoute = createRoute({
   path: "/",
   // a sensible default; the AppContext role-gate effect redirects to the persona home if invalid.
   // (cast: the router type isn't registered yet inside a route definition.)
-  beforeLoad: () => { throw redirect({ to: "/today" as "/" }); },
+  beforeLoad: () => { throw redirect({ to: "/inbox" as "/" }); },
 });
 
 const panelRoutes = PANELS.map(({ path, component }) =>

@@ -12,7 +12,7 @@ export const DEV_VIEWS: View[] = ["today", "work", "relays", "relay", "issue", "
 
 /** Where each persona lands on a fresh login. Leads land on the cross-project ratify queue. */
 export const ROLE_HOME: Record<Role, View> = {
-  manager: "today", uiux: "today", backend: "today", frontend: "today", qa: "today",
+  manager: "inbox", uiux: "inbox", backend: "inbox", frontend: "inbox", qa: "inbox",
 };
 
 /** Manager → "manager"; a dev's discipline drives the rest (devops → generic dev nav via "backend"). */

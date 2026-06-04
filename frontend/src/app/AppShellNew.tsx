@@ -35,7 +35,7 @@ export const DEMO_PERSONAS = [
    QA gate. Devs/managers reach Contract from the Today "Start here" card, not a standing item. */
 const NAV = [
   { section: "Overview", items: [
-    { id: "today", label: "Queue", icon: "inbox", kbd: ["G", "D"], roles: ["manager", "developer", "qa"] },
+    { id: "inbox", label: "Inbox", icon: "inbox", kbd: ["G", "I"], roles: ["manager", "developer", "qa"] },
     { id: "relays", label: "Relays", icon: "pool", kbd: ["G", "L"], roles: ["manager", "developer", "qa"] },
   ] },
   { section: "Work", items: [
@@ -99,7 +99,7 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
   const toggleNav = useUI((s) => s.toggleNav);
   const { setView, role } = useApp();
   // "g then key" nav shortcuts (collision-free vs ⌘) — only the views this role actually has are reachable.
-  const allowed = useMemo(() => new Set(NAV.flatMap((grp) => grp.items).filter((it) => (it.roles as readonly string[]).includes(role)).map((it) => it.id)), [role]);
+  const allowed = useMemo(() => new Set(NAV.flatMap((grp) => grp.items as readonly NavLeaf[]).filter((it) => it.roles.includes(role)).map((it) => it.id)), [role]);
   useNavShortcuts(setView, (v) => allowed.has(v));
   return (
     <aside style={{ width: collapsed ? 54 : "var(--nav-w)", flexShrink: 0, height: "100vh", transition: "width var(--t-reg) var(--ease-out)" }}>

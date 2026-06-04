@@ -23,12 +23,12 @@ import type { Member, WorkTask, ProjectSummary, Attribution, Gate, RelayState } 
 
 type MockRole = "manager" | "developer" | "qa";
 const ROLE_CHROME: Record<MockRole, { land: string; canDispatch: boolean; canOnboard: boolean; canGovern: boolean; canRefactor: boolean; seesAllGates: boolean }> = {
-  manager: { land: "today", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
-  developer: { land: "today", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
-  qa: { land: "today", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
+  manager: { land: "inbox", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
+  developer: { land: "inbox", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
+  qa: { land: "inbox", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
 };
 const VIEW_TO_ROUTE: Record<string, string> = {
-  today: "today", relays: "relays",
+  today: "inbox", relays: "relays",
   inbox: "inbox", mywork: "work", projects: "dashboard", relay: "relay", ratify: "queue",
   qagate: "qa", team: "team", profiles: "profiles", codegraph: "codegraph", merges: "attributions",
   portfolio: "portfolio", passport: "passport", settings: "settings",
