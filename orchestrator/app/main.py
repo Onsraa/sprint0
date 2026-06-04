@@ -44,7 +44,7 @@ from app.rag import (
     save_subscription, delete_subscription, subscriptions_of, watchers_of,
     get_access_grant, get_project_record, past_projects, record_merge, set_developer_discipline,
     save_access_grant, save_decision, save_notification, notifications_for_user, mark_all_read,
-    notification_exists, dedup_notifications,
+    notification_exists, dedup_notifications, delete_notification,
     save_project_record, update_access_grant, update_project_record,
     all_events, all_tasks, delete_tasks_for_project, get_task, mongo_close, save_event, save_tasks,
     tasks_for_project, update_task,
@@ -436,6 +436,13 @@ async def inbox(member: DeveloperProfile = Depends(auth.current_member)) -> dict
 @app.post("/api/inbox/read-all")
 async def inbox_read_all(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     await mark_all_read(member.username)
+    return {"ok": True}
+
+
+@app.delete("/api/notifications/{notif_id}")
+async def inbox_delete(notif_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Dismiss a notification from the caller's own inbox."""
+    await delete_notification(member.username, notif_id)
     return {"ok": True}
 
 

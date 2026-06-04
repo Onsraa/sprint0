@@ -24,7 +24,7 @@ const trustOf = (m: Member) => (m as Member & { trust?: unknown }).trust_level ?
 const ORPHAN_GAP = "uiux";
 
 export function TeamView() {
-  const { chrome, members } = useApp();
+  const { chrome, members, role } = useApp();
   const setWizardKind = useUI((s) => s.setWizardKind);
   const setWizardOpen = useUI((s) => s.setWizardOpen);
   const openHire = () => { setWizardKind("hire"); setWizardOpen(true); };
@@ -49,7 +49,8 @@ export function TeamView() {
         <div style={{ flex: 1, overflow: "auto" }}><Profiles embedded /></div>
       ) : (
       <div style={{ flex: 1, overflow: "auto" }}>
-        {/* staffing gap banner */}
+        {/* staffing gap banner — manager-only (it's a staffing decision; leads don't act on it) */}
+        {role === "manager" && (
         <div style={{ margin: "16px 20px 0", border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: "13px 14px", background: "var(--bg-secondary)", display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ width: 28, height: 28, borderRadius: "var(--r-md)", display: "grid", placeItems: "center", background: "var(--bg-elevated)", border: "1px dashed var(--text-primary)" }}><DiscDot d={gap} size={9} /></span>
           <div style={{ flex: 1 }}>
@@ -58,6 +59,7 @@ export function TeamView() {
           </div>
           {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus" onClick={openHire}>Onboard</Button>}
         </div>
+        )}
 
         <WatchersStrip />
 
@@ -95,7 +97,7 @@ function TeamRow({ m }: { m: Member }) {
       </div>
       <div style={{ width: 160 }}><Availability a={m.availability} /></div>
       <div style={{ width: 96, display: "flex", justifyContent: "flex-end" }}>
-        {!isSelf && <WatchControl username={m.username} />}
+        {!isSelf && m.role !== "manager" && <WatchControl username={m.username} />}
       </div>
     </div>
   );
@@ -140,15 +142,16 @@ function WatchersStrip() {
         <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{list.length}</span>
       </span>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {list.map((u) => { const m = byUser(u); const first = m?.name?.split(" ")[0] || ("@" + u); return (
-          <span key={u} style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 28, padding: "0 4px 0 7px", borderRadius: "var(--r-pill)",
+        {list.map((u) => { const m = byUser(u); const first = m?.name?.split(" ")[0] || ("@" + u); const isMgr = m?.role === "manager"; return (
+          <span key={u} style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 28, padding: isMgr ? "0 10px 0 7px" : "0 4px 0 7px", borderRadius: "var(--r-pill)",
             background: "var(--bg-elevated)", border: "0.5px solid var(--border)" }}>
             <Avatar name={m?.name || u} size={18} />
             <span style={{ fontSize: 12, fontWeight: 500 }}>{first}</span>
-            <button onClick={() => removeWatcher(u)} title={`Revoke access — ${first} stops seeing your gates`}
+            {/* the manager always watches — can't be revoked */}
+            {!isMgr && <button onClick={() => removeWatcher(u)} title={`Revoke access — ${first} stops seeing your gates`}
               style={{ width: 19, height: 19, display: "grid", placeItems: "center", borderRadius: "50%", background: "transparent", color: "var(--text-quaternary)" }}>
               <Icon name="close" size={12} />
-            </button>
+            </button>}
           </span>
         ); })}
       </div>

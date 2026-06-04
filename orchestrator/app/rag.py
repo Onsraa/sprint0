@@ -410,6 +410,12 @@ async def mark_all_read(user_id: str) -> None:
         await m.update_many(NOTIFICATIONS_COLL, {"user_id": user_id}, {"$set": {"read": True}})
 
 
+async def delete_notification(user_id: str, notif_id: str) -> None:
+    """Dismiss one of the caller's own notifications (scoped to user_id; demo writes no-op)."""
+    async with MongoMCP() as m:
+        await m.delete_many(NOTIFICATIONS_COLL, {"user_id": user_id, "id": notif_id})
+
+
 async def notification_exists(user_id: str, type: str, ref: dict) -> bool:
     """Dedup: True if an UNREAD notification of this type for this user + ref already exists."""
     q: dict = {"user_id": user_id, "type": type, "read": False}

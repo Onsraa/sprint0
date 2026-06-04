@@ -285,7 +285,8 @@ function SolutionsBlock({ planId, disc, interactive, choice, onPick, onWriteOwn,
   { planId: string | null; disc: Discipline; interactive: boolean; choice: Choice | null;
     onPick: (id: string) => void; onWriteOwn: (c: { title: string; reasoning: string }) => void; meName?: string }) {
   const { data: set, isLoading } = useGateSolutions(planId, disc);
-  const sols: SolutionCard[] = set?.solutions ?? [];
+  // AI/memory cards only — the write-your-own is the frontend's own slot below (filter guards a stale set).
+  const sols: SolutionCard[] = (set?.solutions ?? []).filter((s) => s.source !== "user");
   const recommended = sols.reduce<SolutionCard | null>((best, s) => (!best || s.confidence > best.confidence ? s : best), null)?.id;
   return (
     <div style={{ marginBottom: 18 }}>

@@ -64,10 +64,10 @@ export function Dashboard() {
             <div style={{ display: "flex", alignItems: "center", height: 30, padding: "0 20px",
               borderBottom: "0.5px solid var(--border-subtle)", position: "sticky", top: 0, background: "var(--bg-elevated)", zIndex: 1 }}>
               <span className="kicker" style={{ flex: 1, minWidth: 0 }}>Project</span>
-              {!selP && <span className="kicker" style={{ width: 168, flexShrink: 0 }}>Stack</span>}
-              <span className="kicker" style={{ width: 58, flexShrink: 0 }}>Issues</span>
-              {!selP && <span className="kicker" style={{ width: 96, flexShrink: 0 }}>Team</span>}
-              <span className="kicker" style={{ width: 78, flexShrink: 0, textAlign: "right" }}>Status</span>
+              {!selP && <span className="kicker" style={{ width: 196, flexShrink: 0 }}>Stack</span>}
+              <span className="kicker" style={{ width: 76, flexShrink: 0 }}>Issues</span>
+              {!selP && <span className="kicker" style={{ width: 116, flexShrink: 0 }}>Team</span>}
+              <span className="kicker" style={{ width: 92, flexShrink: 0, textAlign: "right" }}>Status</span>
             </div>
 
             {/* drafts — above a divider */}
@@ -119,23 +119,23 @@ function ProjectRow({ p, members, selected, onOpen, compact }: { p: any; members
         </div>
       </div>
       {!compact && (
-        <div style={{ width: 168, flexShrink: 0, display: "flex", gap: 4, overflow: "hidden" }}>
+        <div style={{ width: 196, flexShrink: 0, display: "flex", gap: 4, overflow: "hidden" }}>
           {(p.stack || []).slice(0, 2).map((s: string) => <Badge key={s} tone="outline">{s}</Badge>)}
           {(p.stack || []).length > 2 && <Badge tone="neutral">+{p.stack.length - 2}</Badge>}
         </div>
       )}
-      <div style={{ width: 58, flexShrink: 0 }}>
+      <div style={{ width: 76, flexShrink: 0 }}>
         {isRef || isDraft ? <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>—</span>
           : <span className="mono" style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{p.issues}</span>}
       </div>
       {!compact && (
-        <div style={{ width: 96, flexShrink: 0 }}>
+        <div style={{ width: 116, flexShrink: 0, overflow: "hidden" }}>
           {isRef ? <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>memory</span>
             : isDraft ? <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>—</span>
             : <AvatarStack n={p.devs} members={members} />}
         </div>
       )}
-      <div style={{ width: 78, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ width: 92, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
         {isDraft
           ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 20, padding: "0 8px 0 7px", borderRadius: "var(--r-pill)",
               border: "1px dashed var(--border-strong)", fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)" }}>

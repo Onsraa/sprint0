@@ -37,7 +37,7 @@ def test_impacted_files_no_graph_is_just_the_slice():
     assert soln.impacted_files({"b.py", "a.py"}, None) == ["a.py", "b.py"]
 
 
-def test_finalize_assigns_ids_coerces_user_and_appends_slot():
+def test_finalize_assigns_ids_and_coerces_user():
     sset = SolutionSet(solutions=[
         SolutionCard(source="memory", title="Reuse X", grounded_on=["quantapay-2024"]),
         SolutionCard(source="ai", title="Fresh"),
@@ -45,10 +45,10 @@ def test_finalize_assigns_ids_coerces_user_and_appends_slot():
     ])
     out = soln.finalize_solution_set(sset, "backend", ["billing.py"])
     assert out.discipline == "backend"
-    assert [s.source for s in out.solutions] == ["memory", "ai", "ai", "user"]  # +1 appended user slot
-    assert [s.id for s in out.solutions] == ["sol_backend_0", "sol_backend_1", "sol_backend_2", "sol_backend_user"]
+    # No server-appended "user" slot — the write-your-own is the frontend's own (avoids a duplicate gate slot).
+    assert [s.source for s in out.solutions] == ["memory", "ai", "ai"]
+    assert [s.id for s in out.solutions] == ["sol_backend_0", "sol_backend_1", "sol_backend_2"]
     assert out.solutions[0].impacted_files == ["billing.py"]
-    assert out.solutions[-1].title == "Write your own"
 
 
 def test_cross_gate_overlap_flags_only_sharers():
