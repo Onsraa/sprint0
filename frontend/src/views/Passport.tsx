@@ -9,7 +9,7 @@
    verbatim local seed of the mock PASSPORTS — see TODO(reconcile) below. */
 import { useApp } from "../app/useApp";
 import { Icon, ZeroMark } from "../lib/icon";
-import { Availability, Avatar, Badge, DiscDot, DISC } from "../components/ui";
+import { Avatar, DiscDot, DISC } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 
 /* ───────── §26 Passport — per-discipline trust radar + merge history ─────────
@@ -90,9 +90,7 @@ export function Passport() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <ViewChrome breadcrumb={["You", "Passport"]}>
-        <Badge tone="outline" mono>portable · MongoDB</Badge>
-      </ViewChrome>
+      <ViewChrome breadcrumb={["You", "Passport"]} />
       <div style={{ flex: 1, overflow: "auto" }}>
         <div style={{ maxWidth: 820, margin: "0 auto", padding: "26px 28px 56px" }}>
           {/* identity */}
@@ -102,13 +100,8 @@ export function Passport() {
               <h1 style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.5px", margin: 0 }}>{me.name}</h1>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
                 {me.discipline && <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--text-tertiary)" }}><DiscDot d={me.discipline} />{DISC[me.discipline]?.label}</span>}
-                <span className="mono" style={{ fontSize: 11.5, color: "var(--text-quaternary)" }}>@{me.username} · gitlab:{me.gitlab}</span>
+                <span className="mono" style={{ fontSize: 11.5, color: "var(--text-quaternary)", display: "inline-flex", alignItems: "center", gap: 6 }}>@{me.username}<Icon name="gitlab" size={12} style={{ marginLeft: 2 }} />{me.gitlab}</span>
               </div>
-            </div>
-            <div style={{ display: "flex", gap: 22 }}>
-              <Stat label="Seniority" value={p.seniority} />
-              <Stat label="Availability" value={<Availability a={me.availability} />} />
-              <Stat label="Joined" value={<span className="mono" style={{ fontSize: 13 }}>{p.joined}</span>} />
             </div>
           </div>
 
@@ -177,15 +170,6 @@ export function Passport() {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: any }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
-      <span className="kicker" style={{ fontSize: 10 }}>{label}</span>
-      <span style={{ fontSize: 14, fontWeight: 500 }}>{value}</span>
     </div>
   );
 }
