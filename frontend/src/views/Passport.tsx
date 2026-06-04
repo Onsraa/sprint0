@@ -100,7 +100,7 @@ export function Passport() {
               <h1 style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.5px", margin: 0 }}>{me.name}</h1>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
                 {me.discipline && <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--text-tertiary)" }}><DiscDot d={me.discipline} />{DISC[me.discipline]?.label}</span>}
-                <span className="mono" style={{ fontSize: 11.5, color: "var(--text-quaternary)", display: "inline-flex", alignItems: "center", gap: 6 }}>@{me.username}<Icon name="gitlab" size={12} style={{ marginLeft: 2 }} />{me.gitlab && me.gitlab !== me.username ? me.gitlab : null}</span>
+                <span className="mono" style={{ fontSize: 11.5, color: "var(--text-quaternary)", display: "inline-flex", alignItems: "center", gap: 6 }}><Icon name="gitlab" size={12} />{me.gitlab || me.username}</span>
               </div>
             </div>
           </div>
