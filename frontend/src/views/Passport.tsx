@@ -8,7 +8,7 @@
    numeric radar + merge history + joined come from passportFor(me.username), a
    verbatim local seed of the mock PASSPORTS — see TODO(reconcile) below. */
 import { useApp } from "../app/useApp";
-import { Icon, ZeroMark } from "../lib/icon";
+import { Icon } from "../lib/icon";
 import { Avatar, DiscDot, DISC } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 
@@ -135,12 +135,6 @@ export function Passport() {
                     </div>
                   );
                 })}
-              </div>
-              <div style={{ display: "flex", gap: 9, padding: "12px 13px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)" }}>
-                <ZeroMark size={15} />
-                <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: 0, lineHeight: 1.55 }}>
-                  Per-discipline trust grows on every merge. Your passport lives in MongoDB — it travels with you between agencies, so a stretch into another lane is scored, never blocked.
-                </p>
               </div>
             </div>
           </div>
