@@ -11,7 +11,7 @@ import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 
 export function Dashboard() {
-  const { setView, projects, members, drafts } = useApp();
+  const { setView, projects, members, drafts, relaySummaries } = useApp();
   const setProjectFilter = useUI((s) => s.setProjectFilter);
   const [filter, setFilter] = useState("all"); // all | drafts | active | shipped | reference
   const [sel, setSel] = useState<any>(null);
@@ -87,7 +87,9 @@ export function Dashboard() {
             )}
           </div>
         </div>
-        {selP && <ProjectPanel p={selP} onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => setView("wizard")} />}
+        {selP && <ProjectPanel p={selP}
+          hasRelays={(relaySummaries as any[]).some((r) => r.target_project_id === selP.project_id || r.project === selP.name)}
+          onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => setView("wizard")} />}
       </div>
     </div>
   );
@@ -156,7 +158,7 @@ function AvatarStack({ n = 0, members }: { n?: number; members: any[] }) {
   );
 }
 
-function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRelays: () => void; onClose: () => void; onResume: () => void }) {
+function ProjectPanel({ p, hasRelays, onViewRelays, onClose, onResume }: { p: any; hasRelays: boolean; onViewRelays: () => void; onClose: () => void; onResume: () => void }) {
   const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
   const isRef = p.kind === "reference";
   const isDraft = p.kind === "draft";
@@ -208,9 +210,9 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
             : <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>not set</span>}
         </div>
 
-        {(p.grounded?.length || p.tags?.length) ? (
+        {isRef && (p.grounded?.length || p.tags?.length) ? (
           <>
-            <div className="kicker" style={{ marginBottom: 8 }}>{isRef ? "Reused modules" : "Grounded on memory"}</div>
+            <div className="kicker" style={{ marginBottom: 8 }}>Reused modules</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 16 }}>
               {(p.grounded || p.tags || []).map((g: string) => (
                 <span key={g} style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 22, padding: "0 8px",
@@ -223,9 +225,13 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
         ) : null}
 
         {!isRef && !isDraft && (
-          <Button variant="secondary" size="sm" iconRight="arrowRight" style={{ width: "100%" }} onClick={onViewRelays}>
-            View this project's relays
-          </Button>
+          hasRelays
+            ? <Button variant="secondary" size="sm" iconRight="arrowRight" style={{ width: "100%" }} onClick={onViewRelays}>
+                View this project's relays
+              </Button>
+            : <Button variant="secondary" size="sm" disabled style={{ width: "100%", opacity: 0.5, cursor: "default" }}>
+                No relays yet
+              </Button>
         )}
       </div>
       {isDraft ? (

@@ -2,9 +2,9 @@
 Phase 3. Kept schema-valid so the frontend + tests exercise the real contract.
 """
 from app.contracts import (
-    ArchitectureOptions, ClarifiedSpec, ConflictVerdict, Decision, DecisionCardPass1, DeveloperProfile,
-    InterfaceDraft, Notification, ParsedCV, PlanJSON, ProjectRecord, QAReport, RegeneratedSlice,
-    RescheduleStrategy, SolutionSet,
+    ArchitectureOptions, ClarifiedSpec, ConflictVerdict, ContractProposalSet, Decision, DecisionCardPass1,
+    DeveloperProfile, FileChange, InterfaceDraft, InterfaceProposal, Notification, ParsedCV, PlanJSON,
+    ProjectRecord, QAReport, RegeneratedSlice, RescheduleStrategy, SchemaField, SolutionSet,
 )
 
 CANNED_PLAN = PlanJSON.model_validate(
@@ -299,6 +299,8 @@ CANNED_SOLUTIONS = SolutionSet.model_validate(
                 "cons": ["Slightly dated deps"],
                 "confidence": 84,
                 "grounded_on": ["QuantaPay (2024)"],
+                # reused files exist in agency memory → modify; only the new route is an add (honest demo change-types)
+                "file_changes": [{"path": "services/auth/jwt.py", "change": "modify"}, {"path": "services/auth/totp.py", "change": "modify"}, {"path": "api/routes/auth.py", "change": "add"}],
                 "grade": "prod_survived",  # demo: pre-set (all canned data is fabricated); LIVE derives from real decisions
             },
             {  # fresh option that CONTRADICTS the standing reuse decision → ORANGE (conflict + warning)
@@ -308,6 +310,8 @@ CANNED_SOLUTIONS = SolutionSet.model_validate(
                 "rationale": "Less to maintain, but a new vendor dependency that cuts against the proven reuse path.",
                 "pros": ["No auth code to own", "SSO out of the box"],
                 "cons": ["New vendor lock-in", "Migration + data residency"],
+                # swap to a vendor → new client, drop the in-house module (remove is honest: legacy_jwt exists)
+                "file_changes": [{"path": "services/auth/auth0_client.py", "change": "add"}, {"path": "api/routes/auth.py", "change": "add"}, {"path": "services/auth/legacy_jwt.py", "change": "remove"}],
                 "confidence": 66,
                 "grounded_on": [],
                 "conflict": True,
@@ -320,6 +324,8 @@ CANNED_SOLUTIONS = SolutionSet.model_validate(
                 "rationale": "Modern UX and fewer passwords, but unproven in our codebase and longer to harden.",
                 "pros": ["Modern UX", "Fewer passwords"],
                 "cons": ["Unproven here", "Longer to harden"],
+                # greenfield → all new files (add)
+                "file_changes": [{"path": "services/auth/webauthn.py", "change": "add"}, {"path": "api/routes/auth.py", "change": "add"}, {"path": "models/credential.py", "change": "add"}],
                 "confidence": 58,
                 "grounded_on": [],
             },
@@ -327,27 +333,88 @@ CANNED_SOLUTIONS = SolutionSet.model_validate(
     }
 )
 
-# The cross-stack interface contract the demo drafts (backend producer ↔ frontend consumer). Reuse-grounded.
-CANNED_INTERFACE = InterfaceDraft.model_validate(
-    {
-        "method": "GET",
-        "path": "/api/transactions",
-        "request_fields": [
-            {"name": "since", "type": "string", "required": False, "note": "ISO date cursor"},
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        "response_fields": [
-            {"name": "id", "type": "integer", "required": True},
-            {"name": "amount", "type": "number", "required": True},
-            {"name": "currency", "type": "string", "required": True},
-            {"name": "merchant", "type": "string", "required": True},
-            {"name": "posted_at", "type": "string", "required": True},
-            {"name": "pending", "type": "boolean", "required": False},
-        ],
-        "errors": ["401 unauthorized", "404 not_found"],
-        "note": "Reuses QuantaPay's idempotent transaction-feed shape.",
-    }
-)
+# DEMO: discipline-appropriate solution sets so each gate's reuse-or-innovate reads coherently. ONLY the
+# backend set (the auth set above) reuses from memory — the agency genuinely has QuantaPay auth code. The
+# agency has NO CI/UI/e2e precedent, so devops/frontend/qa are honestly FRESH (innovate) — no `memory`
+# source / `grounded_on`, so no (mismatched) reuse pack is shown.
+_DEVOPS_SOLUTIONS = SolutionSet.model_validate({"discipline": "", "solutions": [
+    {"source": "ai", "title": "GitLab CI + multi-stage Docker", "summary": "Lint → test → build → push on GitLab CI, with a cached multi-stage Dockerfile.",
+     "rationale": "No CI precedent in agency memory; a fresh-but-conventional pipeline on the team's stack.",
+     "pros": ["Conventional", "Cache-warm builds", "One registry"], "cons": ["Tied to GitLab CI"], "confidence": 78, "grounded_on": [],
+     "file_changes": [{"path": ".gitlab-ci.yml", "change": "add"}, {"path": "Dockerfile", "change": "add"}]},
+    {"source": "ai", "title": "GitHub Actions matrix", "summary": "Re-platform CI onto a GitHub Actions build matrix (Py 3.11/3.12).",
+     "rationale": "More marketplace actions, but a re-platform away from the team's GitLab runners.",
+     "pros": ["Rich action ecosystem", "Matrix builds"], "cons": ["Re-platform cost", "Two CI systems"], "confidence": 60, "grounded_on": [],
+     "file_changes": [{"path": ".github/workflows/ci.yml", "change": "add"}, {"path": ".gitlab-ci.yml", "change": "remove"}]},
+    {"source": "ai", "title": "Self-hosted k8s runners", "summary": "Run CI on autoscaling self-hosted Kubernetes runners.",
+     "rationale": "Cheaper at scale, unproven here and more to operate.", "pros": ["Cheaper at scale"], "cons": ["Ops burden", "Unproven here"], "confidence": 52, "grounded_on": [],
+     "file_changes": [{"path": ".gitlab-ci.yml", "change": "add"}, {"path": "k8s/runners.yaml", "change": "add"}]},
+]})
+_FRONTEND_SOLUTIONS = SolutionSet.model_validate({"discipline": "", "solutions": [
+    {"source": "ai", "title": "Build on the design system", "summary": "Build the login screen + spend chart on the in-house design-system tokens + recharts.",
+     "rationale": "No reusable UI in agency memory; a fresh build on the design system keeps it consistent.",
+     "pros": ["Token-consistent", "A11y baseline", "No new deps"], "cons": ["Components to write"], "confidence": 76, "grounded_on": [],
+     "file_changes": [{"path": "src/views/Login.tsx", "change": "add"}, {"path": "src/views/SpendChart.tsx", "change": "add"}]},
+    {"source": "ai", "title": "Greenfield with shadcn/ui", "summary": "Rebuild the login + chart screens fresh on shadcn/ui + Tailwind.",
+     "rationale": "Cleaner modern components, but a fresh build vs the proven reuse path.",
+     "pros": ["Modern components", "Full control"], "cons": ["Longer to build", "No memory backing"], "confidence": 61, "grounded_on": [],
+     "file_changes": [{"path": "src/views/Login.tsx", "change": "add"}, {"path": "src/components/ui/button.tsx", "change": "add"}]},
+    {"source": "ai", "title": "Server-driven UI", "summary": "Render the dashboard from a server-described layout JSON.",
+     "rationale": "Flexible later, over-engineered for two screens and unproven here.", "pros": ["Config-driven"], "cons": ["Over-engineered here", "Unproven"], "confidence": 49, "grounded_on": [],
+     "file_changes": [{"path": "src/views/Dashboard.tsx", "change": "modify"}, {"path": "src/lib/layoutSchema.ts", "change": "add"}]},
+]})
+_QA_SOLUTIONS = SolutionSet.model_validate({"discipline": "", "solutions": [
+    {"source": "ai", "title": "Playwright e2e on critical paths", "summary": "A fresh Playwright suite over login + bank-sync, wired into CI.",
+     "rationale": "No acceptance suite in agency memory; build the critical-path coverage fresh.",
+     "pros": ["Real browser flows", "CI-wired"], "cons": ["Selectors to maintain"], "confidence": 75, "grounded_on": [],
+     "file_changes": [{"path": "e2e/login.spec.ts", "change": "add"}, {"path": "e2e/banksync.spec.ts", "change": "add"}]},
+    {"source": "ai", "title": "Contract tests with Pact", "summary": "Add consumer-driven contract tests on the auth + transactions APIs.",
+     "rationale": "Stronger interface guarantees, new tooling for the team.", "pros": ["Contract safety net"], "cons": ["New tooling", "Setup cost"], "confidence": 57, "grounded_on": [],
+     "file_changes": [{"path": "tests/pact/auth.pact.ts", "change": "add"}, {"path": "tests/pact/transactions.pact.ts", "change": "add"}]},
+]})
+CANNED_SOLUTIONS_BY_DISC: dict[str, SolutionSet] = {
+    "backend": CANNED_SOLUTIONS, "devops": _DEVOPS_SOLUTIONS, "frontend": _FRONTEND_SOLUTIONS, "qa": _QA_SOLUTIONS,
+}
+
+
+def solutions_for(discipline: str) -> SolutionSet:
+    """DEMO: the discipline's canned reuse-or-innovate set (deep copy — gate_solutions mutates grade/signal).
+    Fallback = a single neutral 'Define this slice' card so an unmapped lane never shows another lane's set."""
+    base = CANNED_SOLUTIONS_BY_DISC.get(discipline) or SolutionSet.model_validate(
+        {"discipline": "", "solutions": [{"source": "ai", "title": "Define this slice",
+         "summary": "Describe the approach for this gate, or write your own.", "confidence": 50}]})
+    s = base.model_copy(deep=True)
+    s.discipline = discipline
+    return s
+
+
+# DEMO: the contract shape options a producer discipline offers — generated JIT when its gate is ratified
+# (_generate_contracts_for_lane). Only backend produces a cross-discipline API in the demo (E1-1 auth → E1-2
+# frontend); other lanes have no real boundary → needed=False (the necessity-aware "no contract, no noise").
+def contract_options_for(discipline: str) -> ContractProposalSet:
+    if discipline != "backend":
+        return ContractProposalSet(needed=False, skip_reason="no cross-discipline API on this slice")
+    jwt = InterfaceDraft(
+        method="POST", path="/api/auth/login",
+        request_fields=[SchemaField(name="email"), SchemaField(name="password")],
+        response_fields=[SchemaField(name="access_token"), SchemaField(name="refresh_token"), SchemaField(name="expires_in", type="integer")],
+        errors=["401 invalid_credentials", "429 rate_limited"], note="Token in the body — the frontend stores + refreshes it.")
+    session = InterfaceDraft(
+        method="POST", path="/api/auth/session",
+        request_fields=[SchemaField(name="email"), SchemaField(name="password")],
+        response_fields=[SchemaField(name="user_id"), SchemaField(name="expires_in", type="integer")],
+        errors=["401 invalid_credentials"], note="Cookie session — no token handling in the frontend.")
+    return ContractProposalSet(needed=True, proposals=[
+        InterfaceProposal(id="p-reuse", source="memory", interface=jwt,
+            why="Reuse QuantaPay's proven login response", pros=["Battle-tested", "Fields the FE already knows"],
+            cons=["Token handling on the FE"], grounded_on=["QuantaPay (2024)"], confidence=84,
+            file_changes=[FileChange(path="services/auth/jwt.py", change="modify"), FileChange(path="api/routes/auth.py", change="add")]),
+        InterfaceProposal(id="p-fresh", source="ai", interface=session,
+            why="Cookie session instead of a token in the body", pros=["No token handling on the FE"],
+            cons=["Needs CSRF protection"], confidence=62,
+            file_changes=[FileChange(path="services/auth/session.py", change="add"), FileChange(path="api/routes/auth.py", change="add")]),
+    ])
+
 
 CANNED_CV = ParsedCV(
     name="Nia Petrova",

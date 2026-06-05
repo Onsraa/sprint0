@@ -9,16 +9,17 @@
    with `chosen_solution`. The mock's richer fields (grounded_on object, delta_note object, per-solution
    conflict, client-side regen preview) collapse onto the real Zod shapes. TierBadge + GATE_META stay
    exported so RelayBoard composes them. */
-import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgreementCard } from "./AgreementCard";
 import { toast } from "sonner";
 import { Avatar, Badge, DiscDot, DISC, StatusIcon, CapTag, Button } from "../components/ui";
-import { Icon, ZeroMark } from "../lib/icon";
+import { Icon, ZeroMark, type IconName } from "../lib/icon";
 import { useApp } from "../app/useApp";
 import { useGateSolutions } from "../features/relay/useRelay";
 import { api } from "../lib/api";
-import type { SolutionCard, Discipline } from "../lib/api";
+import { qk } from "../lib/query";
+import type { SolutionCard, Discipline, HandoffCandidate } from "../lib/api";
 
 /* ───────── routing-tier presentation (§10) — the two_expert tier is the ink "spark" ───────── */
 const TIER_META: Record<string, { label: string; experts: number; fg: string; bg: string }> = {
@@ -110,11 +111,24 @@ function Collapse({ open, children }: { open: boolean; children: React.ReactNode
   );
 }
 
-function FileRow({ file }: { file: string }) {
+/* a file the choice touches, tagged by change kind: add (green +) · modify (amber doc) · remove (red ×) */
+type FileChange = { path: string; change?: "add" | "modify" | "remove" };
+const FC_META: Record<string, { icon: IconName; color: string }> = {
+  add:    { icon: "plus",  color: "var(--green)" },
+  modify: { icon: "doc",   color: "var(--amber)" },
+  remove: { icon: "close", color: "var(--red)" },
+};
+/* prefer the typed file_changes; fall back to a bare impacted_files list (rendered as all-modify) */
+function fileChangesOf(s: { file_changes?: FileChange[]; impacted_files?: string[] } | null | undefined): FileChange[] {
+  if (s?.file_changes?.length) return s.file_changes;
+  return (s?.impacted_files ?? []).map((path) => ({ path, change: "modify" as const }));
+}
+function FileRow({ fc }: { fc: FileChange }) {
+  const m = FC_META[fc.change ?? "modify"] ?? FC_META.modify;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: "var(--r-sm)", background: "var(--bg-secondary)" }}>
-      <Icon name="list" size={12} style={{ color: "var(--text-quaternary)", flexShrink: 0 }} />
-      <span className="mono" style={{ fontSize: 11, color: "var(--text-secondary)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file}</span>
+      <Icon name={m.icon} size={12} style={{ color: m.color, flexShrink: 0 }} />
+      <span className="mono" style={{ fontSize: 11, color: "var(--text-secondary)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fc.path}</span>
     </div>
   );
 }
@@ -226,12 +240,7 @@ function SolutionCardView({ s, selected, recommended, interactive, onSelect }:
               )) : <span style={{ fontSize: 11.5, color: "var(--text-quaternary)" }}>None flagged.</span>}
             </div>
           </div>
-          {s.impacted_files.length > 0 && (
-            <>
-              <div className="kicker" style={{ marginBottom: 6 }}>Impacted files · {s.impacted_files.length}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>{s.impacted_files.map(f => <FileRow key={f} file={f} />)}</div>
-            </>
-          )}
+          {/* impacted files live ONLY in the "Your pick touches" panel below (one place, on selection) — no dup here */}
         </div>
       </Collapse>
     </div>
@@ -315,6 +324,55 @@ function SolutionsBlock({ planId, disc, interactive, choice, onPick, onWriteOwn,
   );
 }
 
+/* Hand off this gate (+ its slice) to a teammate — passport-ranked picker (★ = best fit). Human-in-control:
+   a lead who doesn't want to make this call passes it on; the recipient sees it OPEN in their Relays. */
+function HandoffControl({ planId, disc }: { planId: string; disc: string }) {
+  const qc = useQueryClient();
+  const [cands, setCands] = useState<HandoffCandidate[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.gateCandidates(planId, disc).then((r) => setCands(r.candidates)).catch(() => setCands([])); }, [planId, disc]);
+  const hand = (u: string) => {
+    setBusy(true);
+    api.handoffGate(planId, disc, u)
+      .then(() => { qc.invalidateQueries({ queryKey: qk.relay(planId) }); qc.invalidateQueries({ queryKey: qk.allRelays() }); toast.success(u ? "Gate handed off — it's now in their Relays." : "Delegation cleared."); })
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Failed"))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 10 }}>
+      <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Not your call to make? Hand off</span>
+      <select value="__" disabled={busy}
+        onChange={(e) => { const v = e.target.value; if (v === "__") return; hand(v === "__clear__" ? "" : v); e.currentTarget.value = "__"; }}
+        title="Ranked by passport fit — trust in this lane, availability, lane-match, seniority"
+        style={{ padding: "4px 8px", border: "0.5px solid var(--border-strong)", borderRadius: 8, fontSize: 11.5, background: "var(--bg-elevated)", fontFamily: "inherit", cursor: busy ? "not-allowed" : "pointer" }}>
+        <option value="__" disabled>Recommend &amp; hand off…</option>
+        {cands.map((c, i) => <option key={c.username} value={c.username}>{i === 0 ? "★ " : ""}{c.name} · {c.score}% · {c.in_lane ? "in-lane" : "stretch"}</option>)}
+        <option value="__clear__">— Clear delegation —</option>
+      </select>
+    </div>
+  );
+}
+
+/* Read-only review of a DONE gate — the single validated card (the ratified pick, or the sprint0 pick an
+   auto-pass cleared), instead of the picker. A decision receipt, not a choice. */
+function GateReview({ set, status }: { set: any; status: string }) {
+  const sols: SolutionCard[] = set?.solutions ?? [];
+  const recommended = sols.reduce<SolutionCard | null>((best, s) => (!best || s.confidence > best.confidence ? s : best), null);
+  const chosen: SolutionCard | null = set?.chosen ?? recommended;
+  const autoPassed = status === "auto_passed";
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div className="kicker" style={{ marginBottom: 8, display: "inline-flex", alignItems: "center", gap: 7 }}>
+        <Icon name={autoPassed ? "ratify" : "check"} size={13} style={{ color: autoPassed ? "var(--blue)" : "var(--green)" }} />
+        {autoPassed ? "Auto-passed · the sprint0 pick stands" : "Validated · what you chose"}
+      </div>
+      {chosen
+        ? <SolutionCardView s={chosen} selected recommended={autoPassed} interactive={false} onSelect={() => {}} />
+        : <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", padding: 14, border: "0.5px dashed var(--border-strong)", borderRadius: "var(--r-lg)", textAlign: "center" }}>No recorded choice for this gate.</div>}
+    </div>
+  );
+}
+
 /* Right sub-panel: the feature frame · the solution choice · the slice · forward-only ratify. */
 export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" | "page" }) {
   const { me, chrome, members, planId, ratifyWith, personFilter }: any = useApp();
@@ -329,13 +387,16 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
   const done = g.status === "ratified" || g.status === "auto_passed";
   // A dev owns their own discipline's gate; the manager sees all; a granted Watch (personFilter) is read-only.
   // (Gate.owner is unset in the adapter, so ownership is by discipline — exact in the demo's one-dev-per-lane.)
-  const ownsThisGate = !personFilter && (me.discipline === g.discipline || chrome.seesAllGates);
-  const locked = g.depends.length > 0 && !done;
+  // a delegated gate is the delegate's to ratify (not the original lead's); else the discipline lead's.
+  const ownsThisGate = !personFilter && (chrome.seesAllGates || (g.delegate ? g.delegate === me.username : me.discipline === g.discipline));
+  // a gate is actionable only when it's on the baton (deps cleared → relay flips locked→pending). Gating on
+  // depends.length wrongly locked every frontend/qa gate (they always have deps) — incl. a handed-off one.
+  const locked = !done && g.status !== "pending" && g.status !== "changes_requested";
   const interactive = !done && !locked && ownsThisGate;
   const flaggedHere = g.status === "changes_requested";
 
   const [choice, setChoice] = useState<Choice | null>(null);
-  const { data: set } = useGateSolutions(interactive ? planId : null, g.discipline);
+  const { data: set } = useGateSolutions(interactive || done ? planId : null, g.discipline);  // done → for the review
   const selectedSol = choice && choice.solutionId !== "user" ? (set?.solutions ?? []).find(s => s.id === choice.solutionId) ?? null : null;
   const isCustom = choice?.solutionId === "user";
   const customFilled = isCustom && !!choice?.custom?.title?.trim();
@@ -370,8 +431,15 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
           <span className="kicker">Gate</span>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7 }}>
             <DiscDot d={g.discipline} size={8} />
-            <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>This gate — the <b style={{ fontWeight: 600 }}>{DISC[g.discipline].label}</b> slice. The AI proposes solutions; you pick one (or write your own).</span>
+            <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>This gate — the <b style={{ fontWeight: 600 }}>{DISC[g.discipline].label}</b> slice. {done ? "The validated choice is shown below." : "The AI proposes solutions; you pick one (or write your own)."}</span>
           </div>
+          {g.delegate && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 9, height: 20, padding: "0 8px", borderRadius: "var(--r-pill)", background: "var(--bg-active)", border: "0.5px solid var(--text-primary)" }}>
+              <Icon name="eye" size={11} style={{ color: "var(--text-primary)" }} />
+              <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>Handed to <b style={{ fontWeight: 600 }}>@{g.delegate}</b></span>
+            </div>
+          )}
+          {ownsThisGate && !done && <HandoffControl planId={planId} disc={g.discipline} />}
         </div>
 
         {flaggedHere && (
@@ -383,26 +451,24 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
           </div>
         )}
 
-        {/* THE CHOICE */}
-        <SolutionsBlock planId={planId} disc={g.discipline} interactive={interactive} choice={choice} meName={me.name}
-          onPick={(id) => setChoice({ solutionId: id, custom: null })}
-          onWriteOwn={(c) => setChoice({ solutionId: "user", custom: c })} />
+        {/* done → a read-only review of the validated choice; else the reuse-or-innovate picker */}
+        {done
+          ? <GateReview set={set} status={g.status} />
+          : <SolutionsBlock planId={planId} disc={g.discipline} interactive={interactive} choice={choice} meName={me.name}
+              onPick={(id) => setChoice({ solutionId: id, custom: null })}
+              onWriteOwn={(c) => setChoice({ solutionId: "user", custom: c })} />}
 
-        {/* the picked solution's impacted files */}
-        {interactive && selectedSol && selectedSol.impacted_files.length > 0 && (
-          <div style={{ marginBottom: 18, animation: "s0-pop-in var(--t-reg) var(--ease-out) both" }}>
-            <div className="kicker" style={{ marginBottom: 8 }}>Your pick touches · {selectedSol.impacted_files.length} files</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>{selectedSol.impacted_files.map(f => <FileRow key={f} file={f} />)}</div>
-            <div style={{ fontSize: 11, color: "var(--text-quaternary)", marginTop: 7, lineHeight: 1.45 }}>If this overlaps another discipline's slice, ratifying flags that gate for a re-ratify — nothing is silently rewritten.</div>
-          </div>
-        )}
-
-        {done && g.status === "auto_passed" && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)", marginBottom: 16 }}>
-            <Icon name="ratify" size={14} style={{ color: "var(--blue)" }} />
-            <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>Autonomy cleared this — the <b style={{ color: "var(--text-secondary)", fontWeight: 600 }}>sprint0 pick</b> stands as the chosen solution.</span>
-          </div>
-        )}
+        {/* the picked solution's impacted files — per-choice, tagged add/modify/remove */}
+        {interactive && selectedSol && fileChangesOf(selectedSol).length > 0 && (() => {
+          const fcs = fileChangesOf(selectedSol);
+          return (
+            <div style={{ marginBottom: 18, animation: "s0-pop-in var(--t-reg) var(--ease-out) both" }}>
+              <div className="kicker" style={{ marginBottom: 8 }}>Your pick touches · {fcs.length} files</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>{fcs.map(fc => <FileRow key={fc.path} fc={fc} />)}</div>
+              <div style={{ fontSize: 11, color: "var(--text-quaternary)", marginTop: 7, lineHeight: 1.45 }}>If this overlaps another discipline's slice, ratifying flags that gate for a re-ratify — nothing is silently rewritten.</div>
+            </div>
+          );
+        })()}
 
         <div className="kicker" style={{ marginBottom: 8 }}>The slice · {slice.length} issues</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 1, marginBottom: 16 }}>
@@ -419,8 +485,9 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
           ))}
         </div>
 
-        {/* gate-folds-contract: the interface contracts this discipline produces/consumes, JIT + light (collapsed) */}
-        <GateContracts planId={planId} discipline={g.discipline} me={me} />
+        {/* gate-folds-contract: the interface contracts this discipline produces/consumes, JIT + light (collapsed).
+            Only in the side-panel layout — on the Gate × Contract page the right column owns the contract (no dup). */}
+        {layout !== "page" && <GateContracts planId={planId} discipline={g.discipline} me={me} />}
 
         {locked && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)", marginBottom: 16 }}>
@@ -457,18 +524,13 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
    Light: collapsed by default (the slice pick stays primary); the header reads as a count-to-sign, not a
    wall of API tables. Reuses the same planAgreements query + AgreementCard + ratify mutation as the board. */
 function GateContracts({ planId, discipline, me }: { planId: string | null; discipline: string; me: any }) {
-  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const { data } = useQuery({ queryKey: ["planAgreements", planId], queryFn: () => api.planAgreements(planId as string), enabled: !!planId });
   const ags = (data?.agreements ?? []).filter((a) => a.type === "interface"
     && (a.producer_discipline === discipline || a.consumer_discipline === discipline));
-  const ratify = useMutation({
-    mutationFn: ({ id, d }: { id: string; d: "ratified" | "rejected" }) => api.ratifyAgreement(id, d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["planAgreements", planId] }); qc.invalidateQueries({ queryKey: ["myAgreements"] }); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
-  });
   if (!ags.length) return null;
-  const toSign = ags.filter((a) => a.state === "proposed" && (a.ratifiers ?? []).includes(me.username)).length;
+  // contracts awaiting THIS viewer: their lane to pick/sign (proposed) or to agree/counter (active)
+  const toSign = ags.filter((a) => (a.ratifiers ?? []).includes(me.username) && (a.state === "proposed" || a.state === "active")).length;
   return (
     <div style={{ marginBottom: 16, border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }}>
       <button onClick={() => setOpen((o) => !o)}
@@ -482,12 +544,7 @@ function GateContracts({ planId, discipline, me }: { planId: string | null; disc
       </button>
       {open && (
         <div style={{ padding: 13, display: "flex", flexDirection: "column", gap: 10, background: "var(--bg-base)" }}>
-          {ags.map((a) => {
-            const canSign = a.state === "proposed" && (a.ratifiers ?? []).includes(me.username);
-            return <AgreementCard key={a.id} a={a} busy={ratify.isPending}
-              onRatify={canSign ? () => ratify.mutate({ id: a.id, d: "ratified" }) : undefined}
-              onReject={canSign ? () => ratify.mutate({ id: a.id, d: "rejected" }) : undefined} />;
-          })}
+          {ags.map((a) => <AgreementCard key={a.id} a={a} me={me} />)}
         </div>
       )}
     </div>

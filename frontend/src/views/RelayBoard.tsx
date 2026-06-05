@@ -225,25 +225,14 @@ function OwnCleared({ myGate, disc, setView }: { myGate: any; disc: any; setView
    to. A `proposed` one shows ratify (if you're a lead); a `compounded`/`ratified` one is read-only —
    this is where the auto-passed (compounded-from-a-past-project) contracts become visible. */
 function InterfaceContracts({ planId, me }: { planId: string | null; me: any }) {
-  const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["planAgreements", planId], queryFn: () => api.planAgreements(planId as string), enabled: !!planId });
   const ags = (data?.agreements ?? []).filter((a: any) => a.type === "interface");
-  const ratify = useMutation({
-    mutationFn: ({ id, d }: { id: string; d: "ratified" | "rejected" }) => api.ratifyAgreement(id, d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["planAgreements", planId] }); qc.invalidateQueries({ queryKey: ["myAgreements"] }); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
-  });
   if (!ags.length) return null;
   return (
     <div style={{ marginBottom: 18 }}>
       <div className="kicker" style={{ marginBottom: 8 }}>Contracts · CDD</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {ags.map((a: any) => {
-          const canSign = a.state === "proposed" && (a.ratifiers ?? []).includes(me.username);
-          return <AgreementCard key={a.id} a={a} busy={ratify.isPending}
-            onRatify={canSign ? () => ratify.mutate({ id: a.id, d: "ratified" }) : undefined}
-            onReject={canSign ? () => ratify.mutate({ id: a.id, d: "rejected" }) : undefined} />;
-        })}
+        {ags.map((a: any) => <AgreementCard key={a.id} a={a} me={me} />)}
       </div>
     </div>
   );

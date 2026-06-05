@@ -33,8 +33,8 @@ export function CommandPalette() {
   const isManager = role === "manager";
 
   const baseNav: Cmd[] = [
-    { id: "inbox", label: "Go to Inbox", icon: "inbox", run: go("/inbox") },
     { id: "relays", label: "Go to Relays", icon: "pool", run: go("/relays") },
+    { id: "gatecontract", label: "Open a Gate × Contract", icon: "ratify", run: go("/gatecontract") },
     { id: "work", label: "Go to My Work", icon: "board", run: go("/work") },
     { id: "projects", label: "Go to Projects", icon: "projects", run: go("/dashboard") },
     { id: "team", label: "Go to Team", icon: "team", run: go("/team") },

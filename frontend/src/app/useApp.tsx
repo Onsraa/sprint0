@@ -23,13 +23,13 @@ import type { Member, WorkTask, ProjectSummary, Attribution, Gate, RelayState } 
 
 type MockRole = "manager" | "developer" | "qa";
 const ROLE_CHROME: Record<MockRole, { land: string; canDispatch: boolean; canOnboard: boolean; canGovern: boolean; canRefactor: boolean; seesAllGates: boolean }> = {
-  manager: { land: "inbox", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
-  developer: { land: "inbox", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
-  qa: { land: "inbox", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
+  manager: { land: "relays", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
+  developer: { land: "relays", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
+  qa: { land: "relays", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
 };
 const VIEW_TO_ROUTE: Record<string, string> = {
-  today: "inbox", relays: "relays",
-  inbox: "inbox", mywork: "work", projects: "dashboard", relay: "relay", ratify: "queue",
+  relays: "relays", gatecontract: "gatecontract",
+  mywork: "work", projects: "dashboard", relay: "relay", ratify: "queue",
   qagate: "qa", team: "team", profiles: "profiles", codegraph: "codegraph", merges: "attributions",
   portfolio: "portfolio", passport: "passport", settings: "settings",
 };
@@ -97,6 +97,11 @@ export function useApp() {
   const setWizardOpen = useUI((s) => s.setWizardOpen);
   const setWizardKind = useUI((s) => s.setWizardKind);
   const setView = (id: string) => { if (id === "wizard") { setWizardKind("brief"); setWizardOpen(true); return; } setRoute((VIEW_TO_ROUTE[id] ?? id) as never); };
+  // goTo = setView + a transient deep-link payload the destination reads on mount (a notification redirect
+  // hands GateContract `{ disc, agr }`). navPayload lives in the UI store so it survives the route change.
+  const navPayload = useUI((s) => s.navPayload);
+  const setNavPayload = useUI((s) => s.setNavPayload);
+  const goTo = (id: string, payload: Record<string, any> | null = null) => { setNavPayload(payload); setView(id); };
   const login = useLogin();
   const switchPersona = (username: string) => login.mutate(username, {
     onSuccess: (res) => {
@@ -113,8 +118,12 @@ export function useApp() {
 
   // notifications + bell
   const { data: inbox } = useInbox();
-  const notifs = useMemo(() => (inbox?.notifications ?? []).map((n) => ({ ...n, kind: n.type, unread: !n.read, time: n.created_at })), [inbox]);
-  const unread = inbox?.unread ?? 0;
+  const dismissedNotifs = useUI((s) => s.dismissedNotifs);
+  const hideNotif = useUI((s) => s.hideNotif);
+  const notifs = useMemo(() => (inbox?.notifications ?? []).filter((n) => !dismissedNotifs.includes(n.id)).map((n) => ({ ...n, kind: n.type, unread: !n.read, time: n.created_at })), [inbox, dismissedNotifs]);
+  const unread = useMemo(() => notifs.filter((n) => n.unread).length, [notifs]);
+  // delete a notification: hide it client-side (the demo DELETE no-ops) + best-effort server delete.
+  const dismissNotif = (id: string) => { hideNotif(id); api.inboxDelete(id).catch(() => {}); };
   const bellOpen = useUI((s) => s.bellOpen);
   const setBellOpen = useUI((s) => s.setBellOpen);
   const markRead = useMarkAllRead();
@@ -221,6 +230,11 @@ export function useApp() {
   const proposal: any = (proposalNeed?.item as any) ?? null;
   const resolveProposal = (decision: "applied" | "rejected") => { const id = proposal?.id; if (!id) return; (decision === "applied" ? api.applyReschedule(id) : api.rejectReschedule(id)).then(() => qc.invalidateQueries({ queryKey: qk.inbox() })); };
 
+  // agreements (interface Contracts) for the active plan — GateContract pairs each gate with the Contracts
+  // its slice produces / consumes (filtered there by producer/consumer discipline).
+  const { data: agData } = useQuery({ queryKey: ["planAgreements", planId], queryFn: () => api.planAgreements(planId!), enabled: !!planId });
+  const agreements = useMemo(() => agData?.agreements ?? [], [agData]);
+
   // merge attributions
   const { data: attrsRaw } = useQuery({ queryKey: ["attributions"], queryFn: () => api.attributions(), enabled: role === "manager" });
   const attributions = useMemo(() => (attrsRaw ?? []).map(toMockAttribution), [attrsRaw]);
@@ -237,8 +251,9 @@ export function useApp() {
   };
 
   return {
-    me, role, chrome, view, setView, switchPersona, members, next,
-    notifs, unread, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
+    me, role, chrome, view, setView, goTo, navPayload, switchPersona, members, next,
+    notifs, unread, dismissNotif, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
+    agreements,
     gates, dial, applyDial, autonomy, setAutonomy, actGate, ratifyWith, cards, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,

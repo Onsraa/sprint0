@@ -94,6 +94,7 @@ export type ArchitectureOptions = z.infer<typeof ArchitectureOptions>;
 /* ── relay ───────────────────────────────────────────────────────────── */
 export const Gate = z.object({
   discipline: Discipline, status: GateStatus, depends_on: z.array(Discipline), note: z.string(),
+  delegate: z.string().nullish(),   // human-in-control: a lead handed this gate to this user to ratify
   // spine (P1): the router's per-gate decision; null on legacy gates
   tier: RoutingTier.nullish(), confidence: z.number().nullish(), blast_radius: z.number().nullish(),
   expected_cost: z.number().nullish(), routed_note: z.string().optional(),
@@ -199,7 +200,7 @@ export type QueueItem = z.infer<typeof QueueItem>;
 
 export const RelaySummary = z.object({
   plan_id: z.string(), project: z.string(), baton: z.array(Discipline),
-  gates: z.array(z.object({ discipline: Discipline, status: GateStatus, note: z.string() })),
+  gates: z.array(z.object({ discipline: Discipline, status: GateStatus, note: z.string(), delegate: z.string().nullish() })),
   is_delta: z.boolean(), target_project_id: z.number().nullable(), all_ratified: z.boolean(),
 });
 export type RelaySummary = z.infer<typeof RelaySummary>;
@@ -280,6 +281,11 @@ export type QAQueue = z.infer<typeof QAQueue>;
 
 // Reuse-or-Innovate (the Contract spine): per-gate solution options the lead selects.
 // Every field is always serialized by the backend (Pydantic defaults), so these are required.
+export const FileChange = z.object({
+  path: z.string(),
+  change: z.enum(["add", "modify", "remove"]).optional(),   // server-classified against the known file set; default modify
+});
+export type FileChange = z.infer<typeof FileChange>;
 export const SolutionCard = z.object({
   id: z.string(),
   source: z.enum(["memory", "ai", "user"]),
@@ -292,6 +298,7 @@ export const SolutionCard = z.object({
   grounded_on: z.array(z.string()),   // past project(s) reused (memory source)
   delta_note: z.string(),             // "variant of X + Δ" when a fresh option ≈ memory
   impacted_files: z.array(z.string()),
+  file_changes: z.array(FileChange).optional(),   // per-file change kind (add/modify/remove); falls back to impacted_files
   // #33 Contract richness — provenance signals (server-derived except conflict). Optional (symmetric
   // in/out) so jget's type inference stays clean; the backend always sends them.
   conflict: z.boolean().optional(),
@@ -303,6 +310,7 @@ export type SolutionCard = z.infer<typeof SolutionCard>;
 export const SolutionSet = z.object({
   discipline: z.string(),
   solutions: z.array(SolutionCard),
+  chosen: SolutionCard.nullish(),   // the ratified pick — the done-gate review renders it
 });
 export type SolutionSet = z.infer<typeof SolutionSet>;
 
@@ -316,6 +324,13 @@ export const InterfaceDraft = z.object({
   errors: z.array(z.string()), note: z.string().optional(),
 });
 export type InterfaceDraft = z.infer<typeof InterfaceDraft>;
+export const InterfaceProposal = z.object({
+  id: z.string(), source: z.string(), interface: InterfaceDraft,
+  why: z.string().optional(), pros: z.array(z.string()).optional(), cons: z.array(z.string()).optional(),
+  grounded_on: z.array(z.string()).optional(), confidence: z.number().optional(),
+  file_changes: z.array(FileChange).optional(),   // producer-side files this shape implies
+});
+export type InterfaceProposal = z.infer<typeof InterfaceProposal>;
 export const SubteamDraft = z.object({
   discipline: z.string(), mode: z.string(), members: z.array(z.string()), rationale: z.string().optional(),
 });
@@ -323,6 +338,8 @@ export type SubteamDraft = z.infer<typeof SubteamDraft>;
 export const Agreement = z.object({
   id: z.string(), type: z.string(), plan_id: z.string(), subject: z.string(),
   interface: InterfaceDraft.nullish(),
+  proposals: z.array(InterfaceProposal).optional(),   // reuse/fresh/write-own shape options the producer picks
+  chosen_proposal_id: z.string().nullish(),
   subteam: SubteamDraft.nullish(),
   grounded_on: z.array(z.string()).optional(), ratifiers: z.array(z.string()),
   ratifications: z.array(unknownRecord).optional(), state: z.string(),

@@ -12,11 +12,11 @@ import re
 from datetime import datetime, timezone
 
 from app.agent import (
-    generate_architectures, generate_clarification, generate_cv_profile, generate_interface, generate_plan,
+    generate_architectures, generate_clarification, generate_contract_options, generate_cv_profile, generate_plan,
     generate_qa_report, generate_regen, generate_solutions,
 )
 from app.assign import assign_developers
-from app.contracts import Agreement, ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
+from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
 from app.rag import (
     DEV_COLL, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
     all_profiles, cosine_score, decisions_for_project, embed_document, embed_queries, embed_query,
@@ -135,6 +135,9 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
     slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
     if not slice_issues:
         return SolutionSet(discipline=discipline, solutions=[])
+    from app import demo, canned
+    if demo.is_demo():  # no Vertex on the public tier → discipline-appropriate canned set (not the auth set for all)
+        return canned.solutions_for(discipline)
     slice_text = "\n".join(
         f"- {i.title}: {(i.description or '')[:160]} (files: {', '.join(i.context_scope.files)})"
         for i in slice_issues
@@ -169,39 +172,29 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
     return sset
 
 
-async def propose_interfaces(plan: PlanJSON) -> list[Agreement]:
-    """The CDD detector: every cross-discipline dependency edge → one drafted interface contract. The
-    dependency graph IS the contract coverage, so devs never hand-negotiate an interface. Returns
-    un-persisted Agreements (the caller assigns id + plan_id + ratifiers + routes to the Inbox)."""
-    by_id = {i.id: i for e in plan.epics for i in e.issues}
-    seen: set[tuple[str, str]] = set()
-    out: list[Agreement] = []
-    for cons in by_id.values():
-        for dep in cons.depends_on:
-            prod = by_id.get(dep)
-            if not prod or prod.discipline == cons.discipline:
-                continue                               # same-lane dep → no interface needed
-            key = (prod.id, cons.discipline)
-            if key in seen:
-                continue                               # one contract per (producer, consuming lane)
-            seen.add(key)
-            prompt = (
-                f"FEATURE: {plan.project_name}\n"
-                f"PRODUCER ({prod.discipline}): {prod.title} — {(prod.description or '')[:200]}\n"
-                f"CONSUMER ({cons.discipline}): {cons.title} — {(cons.description or '')[:200]}\n"
-                f"Draft the interface contract the consumer needs from the producer."
-            )
-            try:
-                draft = await generate_interface(prompt)
-            except Exception:
-                continue                               # best-effort; a miss is still caught at the integration gate
-            out.append(Agreement(
-                id="", type="interface", plan_id="",
-                subject=f"{prod.discipline}→{cons.discipline} · {draft.path or prod.title}",
-                interface=draft, producer_issue_id=prod.id, consumer_issue_id=cons.id,
-                producer_discipline=prod.discipline, consumer_discipline=cons.discipline,
-            ))
-    return out
+async def propose_contract_options(plan: PlanJSON, prod, cons, chosen=None) -> ContractProposalSet:
+    """JIT contract options for ONE producer→consumer edge, grounded on the producer's CHOSEN gate solution.
+    The AI returns either `needed=false` (no real API boundary — no contract) or 1-2 pickable shape options
+    (reuse/fresh). The server assigns each proposal an id. Called when the producer ratifies its gate."""
+    from app import demo, canned
+    if demo.is_demo():  # no Vertex on the public tier → the discipline's canned contract options (necessity-aware)
+        opts = canned.contract_options_for(prod.discipline)
+        for n, p in enumerate(opts.proposals):
+            if not p.id:
+                p.id = f"p{n + 1}"
+        return opts
+    choice = f"\nPRODUCER CHOSE: {chosen.title} — {(chosen.summary or '')[:160]}" if chosen and chosen.title else ""
+    prompt = (
+        f"FEATURE: {plan.project_name}\n"
+        f"PRODUCER ({prod.discipline}): {prod.title} — {(prod.description or '')[:200]}{choice}\n"
+        f"CONSUMER ({cons.discipline}): {cons.title} — {(cons.description or '')[:200]}\n"
+        f"Give the API shape options the consumer needs from the producer, or say none is needed."
+    )
+    opts = await generate_contract_options(prompt)
+    for n, p in enumerate(opts.proposals):
+        if not p.id:
+            p.id = f"p{n + 1}"
+    return opts
 
 
 async def regenerate_slice(issues: list, discipline: str, user_solution) -> RegeneratedSlice:

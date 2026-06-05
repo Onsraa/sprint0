@@ -52,10 +52,13 @@ def mock_from_schema(fields: list[SchemaField]) -> dict:
     return {f.name: _SAMPLE.get(f.type, "text") for f in fields if f.required and f.name}
 
 
-def apply_ratification(agreement: Agreement, by: str, decision: str, note: str, now: str) -> Agreement:
-    """Record one ratifier's call + advance the state. Any reject → rejected; every ratifier ratified → ratified."""
+def apply_ratification(agreement: Agreement, by: str, decision: str, note: str, now: str,
+                       is_producer: bool = False) -> Agreement:
+    """Record one signer's call + advance the state — SIGN-ASYNC. Any reject → rejected; ALL ratifiers
+    ratified → ratified (compounded); else the PRODUCER's sign → `active` (mock flows, sent to the consumer,
+    producer is NOT blocked). A non-producer partial sign leaves it `proposed`."""
     agreement.ratifications = [r for r in agreement.ratifications if r.get("by") != by]
-    agreement.ratifications.append({"by": by, "decision": decision, "at": now, "note": note})
+    agreement.ratifications.append({"by": by, "decision": decision, "at": now, "note": note, "kind": "sign"})
     agreement.updated_at = now
     if any(r["decision"] == "rejected" for r in agreement.ratifications):
         agreement.state = "rejected"
@@ -64,6 +67,19 @@ def apply_ratification(agreement: Agreement, by: str, decision: str, note: str, 
         for u in agreement.ratifiers
     ):
         agreement.state = "ratified"
+    elif is_producer and decision == "ratified":
+        agreement.state = "active"          # producer signed → sent to the consumer, not waiting
+    return agreement
+
+
+def apply_counter(agreement: Agreement, by: str, new_interface: InterfaceDraft, why: str, now: str) -> Agreement:
+    """The consumer (or producer) counters with a DIFFERENT shape + a one-line why → the contract bounces
+    back to the other side. Resets the round (the new shape needs fresh signs) and logs the counter + why."""
+    agreement.interface = new_interface
+    agreement.chosen_proposal_id = None
+    agreement.state = "proposed"            # back to the other side to sign or counter again
+    agreement.ratifications = [{"by": by, "decision": "counter", "at": now, "note": why, "kind": "counter"}]
+    agreement.updated_at = now
     return agreement
 
 

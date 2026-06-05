@@ -18,6 +18,9 @@ import { CommandPalette } from "../features/palette/CommandPalette";
 import { useNotificationsWS } from "../features/notify/useNotifications";
 import { useHealth } from "../features/health/useHealth";
 import { useWorkspace } from "../features/workspace/useWorkspace";
+import { live, api } from "../lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 /* The demo roster shown in the persona switcher (the 5 real seeded accounts). */
 export const DEMO_PERSONAS = [
@@ -35,7 +38,6 @@ export const DEMO_PERSONAS = [
    QA gate. Devs/managers reach Contract from the Today "Start here" card, not a standing item. */
 const NAV = [
   { section: "Overview", items: [
-    { id: "inbox", label: "Inbox", icon: "inbox", kbd: ["G", "I"], roles: ["manager", "developer", "qa"] },
     { id: "relays", label: "Relays", icon: "pool", kbd: ["G", "L"], roles: ["manager", "developer", "qa"] },
   ] },
   { section: "Work", items: [
@@ -99,7 +101,8 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
   const toggleNav = useUI((s) => s.toggleNav);
   const { setView, role } = useApp();
   // "g then key" nav shortcuts (collision-free vs ⌘) — only the views this role actually has are reachable.
-  const allowed = useMemo(() => new Set(NAV.flatMap((grp) => grp.items as readonly NavLeaf[]).filter((it) => it.roles.includes(role)).map((it) => it.id)), [role]);
+  // gatecontract has no standing nav item but is a valid G,C / deep-link destination for every role.
+  const allowed = useMemo(() => new Set([...NAV.flatMap((grp) => grp.items as readonly NavLeaf[]).filter((it) => it.roles.includes(role)).map((it) => it.id), "gatecontract"]), [role]);
   useNavShortcuts(setView, (v) => allowed.has(v));
   return (
     <aside style={{ width: collapsed ? 54 : "var(--nav-w)", flexShrink: 0, height: "100vh", transition: "width var(--t-reg) var(--ease-out)" }}>
@@ -188,7 +191,7 @@ function Workspace() {
           <Icon name="chevronDown" size={14} style={{ color: "var(--text-quaternary)" }} />
         </button>
       }>
-      <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)", padding: "6px 8px 4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Switch persona · demo</div>
+      <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)", padding: "6px 8px 4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Switch persona</div>
       {DEMO_PERSONAS.map((p) => (
         <button key={p.username} onClick={() => { switchPersona(p.username); setOpen(false); }}
           style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: p.username === me.username ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>
@@ -238,14 +241,38 @@ function SidebarFooter() {
   const online = health?.ok;
   const dot = online === true ? "var(--green)" : online === false ? "var(--red)" : "var(--amber)";
   const label = online === true ? "MCP · online" : online === false ? "MCP · offline" : "MCP · …";
+  // REAL mode — LIVE on a non-demo deploy, or once this tab unlocked via ?unlock=; else DEMO.
+  const isLive = health?.demo_mode === false || live.active();
+  const modeDot = isLive ? "var(--green)" : "var(--amber)";
+  const modeLabel = isLive ? "LIVE" : "DEMO";
   const [open, setOpen] = useState(false);
   const [h, hover] = useHoverState();
+  // DEMO-only: wipe this session's test mutations (handoffs/ratifies) back to the clean canned board.
+  const qc = useQueryClient();
+  const [resetting, setResetting] = useState(false);
+  const resetDemo = () => {
+    if (!window.confirm("Reset the demo to its clean mid-flight state? This clears test handoffs and ratifications.")) return;
+    setResetting(true);
+    api.demoReset().then(() => { qc.invalidateQueries(); toast.success("Demo reset to the clean board."); })
+      .catch(() => toast.error("Reset failed")).finally(() => setResetting(false));
+  };
+  const [rh, resetHover] = useHoverState();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, height: 28, padding: "0 10px" }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot }} />
         <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>{label}</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: modeDot }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", fontWeight: 500 }}>{modeLabel}</span>
       </div>
+      {!isLive && (
+        <button onClick={resetDemo} disabled={resetting} {...resetHover} title="Reset the demo to its clean state"
+          style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", height: 24, padding: "0 10px", borderRadius: "var(--r-md)",
+            background: rh ? "var(--bg-hover)" : "transparent", color: "var(--text-quaternary)", fontSize: 11, fontWeight: 500, transition: "background var(--t-quick)" }}>
+          <Icon name="relay" size={12} /> {resetting ? "Resetting…" : "Reset demo"}
+        </button>
+      )}
       <Dropdown open={open} onClose={() => setOpen(false)} align="left" top={44} width={236} z={70} dropUp
         trigger={
           <button onClick={() => setOpen((o) => !o)} {...hover} title="Account · switch persona"
@@ -259,7 +286,7 @@ function SidebarFooter() {
             <Icon name="more" size={16} style={{ color: "var(--text-quaternary)" }} />
           </button>
         }>
-        <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)", padding: "6px 8px 4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Switch persona · demo</div>
+        <div className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)", padding: "6px 8px 4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Switch persona</div>
         {DEMO_PERSONAS.map((p) => (
           <button key={p.username} onClick={() => { switchPersona(p.username); setOpen(false); }}
             style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: p.username === me.username ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>

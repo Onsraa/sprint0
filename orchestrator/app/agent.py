@@ -20,8 +20,8 @@ from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 from app.contracts import (
-    AdaptedCode, ArchitectureOptions, ClarifiedSpec, ConflictVerdict, DecisionCardPass1, InterfaceDraft, ParsedCV,
-    PlanJSON, QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
+    AdaptedCode, ArchitectureOptions, ClarifiedSpec, ConflictVerdict, ContractProposalSet, DecisionCardPass1,
+    ParsedCV, PlanJSON, QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
 )
 from app import canned, demo
 
@@ -279,9 +279,11 @@ INSTRUCTION_SOLUTIONS = """You propose competing SOLUTIONS for ONE discipline ga
 "Contract"). You are given the FEATURE, the gate's DISCIPLINE, THE SLICE (the issues this gate delivers), \
 the manager's CONSTRAINTS, SIMILAR PAST PROJECTS from agency memory, and REUSABLE CODE.
 
-Return 2-3 options in `solutions`:
-- EXACTLY ONE with source="memory" IF a past project genuinely fits — reuse what worked; put the project \
-name(s) in `grounded_on` and name the reused asset in the title (e.g. "Reuse QuantaPay Stripe auth").
+Return only the options that are GENUINELY DISTINCT — 1 to 3, never pad to a number. If the gate has one \
+sensible approach, return one. Each option must be a real, different way to build the slice.
+- EXACTLY ONE with source="memory" IF a past project genuinely fits — reuse what worked. Put the project \
+name(s) in `grounded_on` and name the reused asset in the title (e.g. "Reuse QuantaPay Stripe auth"). \
+If nothing in memory fits, skip the memory option — do NOT invent one.
 - ONE or TWO with source="ai" — a fresh approach you would design from scratch. If a fresh option is \
 essentially the same as the memory one, set `delta_note` to "variant of <project> + <what differs>".
 - NEVER output source="user" (that slot is the human's, added by the server).
@@ -326,22 +328,29 @@ async def generate_adapted_code(source_code: str, target_stack: str, context: st
         return source_code  # never block a dispatch on an adaptation miss
 
 
-# ── Interface Contract (CDD): the two-party agreement between a producer + consumer discipline ──
-INSTRUCTION_INTERFACE = """You draft ONE API interface contract between two disciplines that must integrate \
-(a PRODUCER slice and a CONSUMER slice of the same feature). You are given both slices' issues. Output the \
-contract BOTH sides build against — before either writes code:
-- `method` + `path` (REST), a `request_fields` list and a `response_fields` list (each field: name, a JSON \
-type in {string,number,integer,boolean,object,array,null}, required), and likely `errors` (e.g. "404 not_found").
-- Keep it minimal + honest — only the fields the consumer truly needs. Ground it in the slices' titles; if a \
-past project shipped this exact shape, reuse it. Output structured data only, no prose."""
+# ── Interface Contract (CDD): the API shape options a PRODUCER slice gives a CONSUMER slice ──
+INSTRUCTION_CONTRACT = """You set the API contract a PRODUCER slice gives a CONSUMER slice of one feature. \
+First decide if a contract is even needed.
+If the consumer does not call the producer's API here (they only share a data model, the link is just \
+ordering, or it repeats another contract) set needed=false with a short skip_reason and no proposals.
+Else set needed=true and give 1 or 2 shape options the producer can pick from. For each option:
+- `method` and `path`, a `request_fields` list and a `response_fields` list. Each field has a `name`, a JSON \
+`type` in {string, number, integer, boolean, object, array, null}, and `required`. Add likely `errors` like \
+"401 unauthorized".
+- a one-line `why` under 12 words, up to 3 short `pros`, up to 3 short `cons`, and an honest `confidence` 0-100.
+- if a past project shipped this shape set source=memory and name it in `grounded_on`, else source=ai.
+Keep every field short and plain. No semicolons. Leave `id` empty, the server fills it. Output structured \
+data only, no prose."""
 
-interface_agent = Agent(name="sprint0_interface", model=MODEL, instruction=INSTRUCTION_INTERFACE, output_schema=InterfaceDraft)
+contract_agent = Agent(name="sprint0_contract", model=MODEL, instruction=INSTRUCTION_CONTRACT, output_schema=ContractProposalSet)
 
 
-async def generate_interface(prompt: str) -> InterfaceDraft:
+async def generate_contract_options(prompt: str) -> ContractProposalSet:
+    """The necessity-aware contract generator: the AI returns either `needed=false` (no real API boundary —
+    no contract, no noise) or 1-2 pickable shape options. Demo never reaches here (the contracts are seeded)."""
     if demo.is_demo():
-        return canned.CANNED_INTERFACE.model_copy(deep=True)
-    return _parse(InterfaceDraft, await _run_agent(interface_agent, prompt), interface_agent.name)
+        return ContractProposalSet(needed=False, skip_reason="demo")
+    return _parse(ContractProposalSet, await _run_agent(contract_agent, prompt), contract_agent.name)
 
 
 INSTRUCTION_REGEN = """A lead chose to WRITE THEIR OWN solution for a gate instead of the AI's options. \

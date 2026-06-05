@@ -242,6 +242,11 @@ AGREEMENTS_COLLECTION = "Agreements"
 _DEMO_AGREEMENTS: dict[str, dict] = {}  # DEMO_MODE in-mem store — Atlas writes no-op, so agreements live here
 
 
+def reset_demo_agreements() -> None:
+    """DEMO reset/seed: drop every in-mem interface contract so the canned set is the only one left."""
+    _DEMO_AGREEMENTS.clear()
+
+
 async def save_agreement(doc: dict) -> None:
     if demo.is_demo():
         _DEMO_AGREEMENTS[doc["id"]] = dict(doc)

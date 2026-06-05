@@ -8,7 +8,8 @@ import pytest
 from fastapi import HTTPException
 
 from app import main, relay
-from app.contracts import ContextScope, DeveloperProfile, Epic, Issue, InterfaceDraft, PlanJSON, RatifyRequest, SchemaField, TechStack
+from app.contracts import (ContextScope, ContractProposalSet, DeveloperProfile, Epic, Issue, InterfaceDraft,
+                           InterfaceProposal, PlanJSON, RatifyRequest, SchemaField, TechStack)
 from app.main import IntegrationFlagRequest, RejectRequest
 
 
@@ -239,66 +240,119 @@ def test_reject_unauthorized_dev_gets_403(monkeypatch):
     assert ei.value.status_code == 403
 
 
-# --- auto-redraft: a write-your-own gate choice that reshapes a producer issue re-drafts its contract ---
+# --- JIT contracts: the producer's ratified gate choice (re)generates the interface contracts its slice produces ---
 
-def _iface_old(aid, producer_id, consumer_id, state):
+def _iface_old(aid, producer_id, consumer_id, state, path="/api/old", fields=()):
     return {"id": aid, "type": "interface", "plan_id": "p1", "state": state,
             "producer_issue_id": producer_id, "consumer_issue_id": consumer_id,
             "producer_discipline": "backend", "consumer_discipline": "frontend",
-            "interface": {"method": "GET", "path": "/api/old", "request_fields": [], "response_fields": [], "errors": []}}
+            "interface": {"method": "POST", "path": path, "request_fields": [],
+                          "response_fields": [{"name": n, "type": "string", "required": True} for n in fields], "errors": []}}
 
 
-def _redraft(monkeypatch, existing, slice_ids):
-    """Drive _redraft_affected_interfaces with the AI + rag deps stubbed; returns (saved, updated, pings, applied)."""
+def _opts(needed=True, path="/api/v2/auth", fields=("token",)):
+    if not needed:
+        return ContractProposalSet(needed=False, skip_reason="shared model, no API call")
+    iface = InterfaceDraft(method="POST", path=path,
+                           response_fields=[SchemaField(name=n, type="string", required=True) for n in fields])
+    return ContractProposalSet(needed=True, proposals=[
+        InterfaceProposal(id="p1", source="ai", interface=iface, why="standard token login", confidence=70)])
+
+
+def _genlane(monkeypatch, opts, existing=None, pool=None):
+    """Drive _generate_contracts_for_lane (backend slice b1 → frontend consumer f1) with the AI + rag deps
+    stubbed; returns (saved, updated, pings, applied)."""
     saved, updated, pings, applied = [], [], [], []
     async def _afp(_pid):
-        return existing
-    async def _gi(_prompt):
-        return InterfaceDraft(method="GET", path="/api/v2/auth",
-                              response_fields=[SchemaField(name="token", type="string", required=True)])
+        return existing or []
+    async def _all():
+        return pool or []
+    async def _pco(_plan, _prod, _cons, _chosen):
+        return opts
     async def _save(doc):
         saved.append(doc)
     async def _upd(aid, patch):
         updated.append((aid, patch))
     async def _notify(u, *a, **k):
         pings.append(u)
+    monkeypatch.setattr(main.demo, "is_demo", lambda: False)
     monkeypatch.setattr(main, "agreements_for_plan", _afp)
-    monkeypatch.setattr(main, "generate_interface", _gi)
+    monkeypatch.setattr(main, "all_agreements", _all)
+    monkeypatch.setattr(main, "propose_contract_options", _pco)
     monkeypatch.setattr(main, "save_agreement", _save)
     monkeypatch.setattr(main, "update_agreement", _upd)
     monkeypatch.setattr(main, "notify", _notify)
     monkeypatch.setattr(main, "_apply_api_contract", lambda pid, iid, c: applied.append((pid, iid, c)))
-    plan = _plan([_issue(i, "backend") for i in slice_ids] + [_issue("f1", "frontend")])
-    slice_issues = [i for e in plan.epics for i in e.issues if i.id in slice_ids]
-    asyncio.run(main._redraft_affected_interfaces("p1", plan, "backend", slice_issues))
+    plan = _plan([_issue("b1", "backend"), _issue("f1", "frontend", deps=["b1"])])
+    asyncio.run(main._generate_contracts_for_lane("p1", plan, "backend", None, "sprint0-se"))
     return saved, updated, pings, applied
 
 
-def test_redraft_supersedes_and_recreates(monkeypatch):
-    saved, updated, pings, _ap = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "ratified")], {"b1"})
-    assert len(saved) == 1                                                # a new versioned contract
+def test_jit_generates_contract_from_choice(monkeypatch):
+    saved, updated, pings, _ap = _genlane(monkeypatch, _opts())
+    assert len(saved) == 1                                                # one contract per producer→consumer edge
     assert saved[0]["state"] == "proposed" and saved[0]["producer_issue_id"] == "b1"
-    assert saved[0]["interface"]["path"] == "/api/v2/auth"                # the freshly re-drafted shape
+    assert saved[0]["consumer_discipline"] == "frontend"
+    assert saved[0]["interface"]["path"] == "/api/v2/auth"                # the shape generated from the choice
+    assert len(saved[0]["proposals"]) == 1                                # the producer picks from the offered shapes
+    assert updated == []                                                  # nothing to supersede
+    assert pings == ["sprint0-se"]                                        # routed to the producer to pick + sign
+
+
+def test_jit_regenerates_and_supersedes_on_change(monkeypatch):
+    # a changed gate choice → supersede the prior live contract for the edge and recreate from the new choice
+    saved, updated, pings, _ap = _genlane(monkeypatch, _opts(path="/api/v3/auth"),
+                                          existing=[_iface_old("agOLD", "b1", "f1", "active")])
+    assert len(saved) == 1 and saved[0]["interface"]["path"] == "/api/v3/auth"
     assert len(updated) == 1 and updated[0][0] == "agOLD"
     assert updated[0][1]["state"] == "superseded" and updated[0][1]["superseded_by"] == saved[0]["id"]
-    assert set(pings) == {"sprint0-se", "sprint0-fe"}                     # both leads re-ratify the new version
 
 
-def test_redraft_refreshes_the_producer_mock(monkeypatch):
-    # superseding an auto_passed contract (whose mock was seeded) must refresh the producer mock to the NEW shape
-    _s, _u, _p, applied = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "auto_passed")], {"b1"})
-    assert len(applied) == 1 and applied[0][1] == "b1"                    # the producer's api_contract was refreshed
-    assert "token" in applied[0][2]                                      # to the new draft's shape, not the stale old one
+def test_jit_skips_when_not_needed(monkeypatch):
+    # necessity-aware: the AI says no real API boundary → no contract is created (no noise), prior is retired
+    saved, updated, pings, applied = _genlane(monkeypatch, _opts(needed=False),
+                                              existing=[_iface_old("agOLD", "b1", "f1", "active")])
+    assert saved == [] and pings == [] and applied == []                 # nothing created, nobody pinged
+    assert len(updated) == 1 and updated[0][1]["state"] == "superseded"  # the stale contract is superseded
 
 
-def test_redraft_noop_when_no_contract_touches_the_slice(monkeypatch):
-    saved, updated, pings, applied = _redraft(monkeypatch, [_iface_old("agX", "other", "f1", "ratified")], {"b1"})
-    assert saved == [] and updated == [] and pings == [] and applied == []  # producer isn't in this gate's slice
+def test_jit_compounds_on_precedent(monkeypatch):
+    # a past plan already ratified this exact shape → auto-pass + seed the producer mock now, no routing
+    precedent = _iface_old("agPAST", "x", "y", "ratified", path="/api/v2/auth", fields=("token",))
+    saved, updated, pings, applied = _genlane(monkeypatch, _opts(path="/api/v2/auth", fields=("token",)),
+                                              pool=[precedent])
+    assert len(saved) == 1 and saved[0]["state"] == "auto_passed" and saved[0]["precedent_id"] == "agPAST"
+    assert len(applied) == 1 and applied[0][1] == "b1" and "token" in applied[0][2]  # the FE mock was seeded
+    assert pings == []                                                   # compounded → no one signs
 
 
-def test_redraft_skips_already_superseded(monkeypatch):
-    saved, updated, _p, applied = _redraft(monkeypatch, [_iface_old("agOLD", "b1", "f1", "superseded")], {"b1"})
-    assert saved == [] and updated == [] and applied == []               # only live contracts re-draft
+def test_jit_leaves_superseded_contracts_alone(monkeypatch):
+    # an already-superseded prior is not re-touched; the edge still gets a fresh contract from the new choice
+    saved, updated, _p, _ap = _genlane(monkeypatch, _opts(),
+                                       existing=[_iface_old("agOLD", "b1", "f1", "superseded")])
+    assert len(saved) == 1                                               # the edge still gets a contract
+    assert updated == []                                                 # the already-superseded one is left alone
+
+
+def test_demo_solutions_have_distinct_per_card_file_changes():
+    # each gate solution carries its OWN file_changes (so "files match the choice" holds in the demo)
+    from app import canned
+    for disc in ("backend", "devops", "frontend", "qa"):
+        cards = canned.solutions_for(disc).solutions
+        fsets = [tuple((f.path, f.change) for f in c.file_changes) for c in cards]
+        assert all(fsets), f"{disc}: a card has no file_changes"          # every card has files
+        assert len(set(fsets)) == len(fsets), f"{disc}: cards share a file set"  # distinct per choice
+        for c in cards:
+            for f in c.file_changes:
+                assert f.change in ("add", "modify", "remove")            # closed enum (Gemini-safe)
+
+
+def test_demo_contract_options_canned_and_necessity_aware():
+    from app import canned
+    co = canned.contract_options_for("backend")
+    assert co.needed and {p.id for p in co.proposals} == {"p-reuse", "p-fresh"}
+    assert co.proposals[0].interface.path == "/api/auth/login" and co.proposals[0].file_changes
+    assert canned.contract_options_for("frontend").needed is False        # no cross-discipline API → no contract
 
 
 # --- JIT contract routing: producer signs at their gate → provisional mock + ping the consumer (no creation broadcast) ---
@@ -330,7 +384,7 @@ def _ratify_agreement(raw, member, monkeypatch, decision="ratified"):
 
 def test_jit_producer_sign_seeds_provisional_mock_and_pings_consumer(monkeypatch):
     res, applied, pings = _ratify_agreement(_iface_agreement(), _by("sprint0-se"), monkeypatch)  # backend = producer
-    assert res["state"] == "proposed"                                    # only 1 of 2 signed
+    assert res["state"] == "active"                                      # sign-async: producer signed → sent to consumer
     assert len(applied) == 1 and applied[0][1] == "b1"                   # provisional mock seeded on producer-sign
     assert pings == ["sprint0-fe"]                                       # consumer pinged JIT (not at creation)
 

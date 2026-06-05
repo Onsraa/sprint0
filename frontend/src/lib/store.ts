@@ -20,6 +20,14 @@ interface UIState {
   /** Bell dropdown (P6). */
   bellOpen: boolean;
   setBellOpen: (open: boolean) => void;
+  /** Transient deep-link payload a notification redirect hands the destination view (e.g. GateContract
+   *  reads `{ disc, agr }` to open the right lane). Set by goTo(view, payload); read once on mount. */
+  navPayload: Record<string, any> | null;
+  setNavPayload: (p: Record<string, any> | null) => void;
+  /** Locally-dismissed notification ids. The demo backend's DELETE no-ops, so the hide must persist
+   *  client-side (every refetch would otherwise resurrect the row); useApp filters notifs by this. */
+  dismissedNotifs: string[];
+  hideNotif: (id: string) => void;
   /** Left-nav collapsed rail. In the store (not local state) so it survives shell remounts
    *  (wizard / persona switch) and — via persist — a reload. */
   navCollapsed: boolean;
@@ -89,6 +97,8 @@ const SESSION_DEFAULTS = {
   activeDev: null,
   panelTaskId: null,
   bellOpen: false,
+  navPayload: null,
+  dismissedNotifs: [],
 };
 
 export const useUI = create<UIState>()(persist((set) => ({
@@ -101,6 +111,10 @@ export const useUI = create<UIState>()(persist((set) => ({
   closePanel: () => set({ panelTaskId: null }),
   bellOpen: false,
   setBellOpen: (bellOpen) => set({ bellOpen }),
+  navPayload: null,
+  setNavPayload: (navPayload) => set({ navPayload }),
+  dismissedNotifs: [],
+  hideNotif: (id) => set((s) => (s.dismissedNotifs.includes(id) ? s : { dismissedNotifs: [...s.dismissedNotifs, id] })),
   navCollapsed: false,
   toggleNav: () => set((s) => ({ navCollapsed: !s.navCollapsed })),
 

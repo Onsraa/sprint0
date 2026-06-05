@@ -6,7 +6,7 @@ import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/
 import type { FC } from "react";
 import { AppShellNew } from "./AppShellNew";
 
-import { InboxPage } from "../views/InboxPage";
+import { GateContract } from "../views/GateContract";
 import { WorkHub } from "../views/work/WorkHub";
 import { Dashboard } from "../views/Dashboard";
 import { TeamView } from "../views/Team";
@@ -17,7 +17,7 @@ import { Profiles } from "../views/Profiles";
 import { Settings } from "../views/Settings";
 import { QAGate } from "../views/QAGate";
 import { Passport } from "../views/Passport";
-// Queue (merged Today⊕Inbox) retired — the classic Inbox (InboxPage) is the home.
+// Inbox view retired — notifications live in the bell dropdown; Relays is the home.
 import { Relays } from "../views/Relays";
 
 const rootRoute = createRootRoute({
@@ -27,7 +27,7 @@ const rootRoute = createRootRoute({
 /** path (= `/${view}`) → the existing panel component. */
 const PANELS: { path: string; component: FC }[] = [
   { path: "/relays", component: Relays },
-  { path: "/inbox", component: InboxPage },
+  { path: "/gatecontract", component: GateContract },
   { path: "/work", component: WorkHub },
   { path: "/dashboard", component: Dashboard },
   { path: "/relay", component: RelayBoard },
@@ -45,7 +45,7 @@ const indexRoute = createRoute({
   path: "/",
   // a sensible default; the AppContext role-gate effect redirects to the persona home if invalid.
   // (cast: the router type isn't registered yet inside a route definition.)
-  beforeLoad: () => { throw redirect({ to: "/inbox" as "/" }); },
+  beforeLoad: () => { throw redirect({ to: "/relays" as "/" }); },
 });
 
 const panelRoutes = PANELS.map(({ path, component }) =>

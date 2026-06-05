@@ -87,6 +87,10 @@ import type {
   WorkResponse,
   WorkTask,
 } from "./schemas";
+
+/** A passport-ranked teammate to hand work off to (task or gate). */
+export type HandoffCandidate = { username: string; name: string; discipline: string | null; score: number; in_lane: boolean; why: string };
+
 export type {
   AccessGrant,
   AmbiguityCard,
@@ -388,7 +392,7 @@ export const api = {
   base: BASE,
 
   /* Liveness — REAL backend↔Mongo(MCP) reachability behind the sidebar status dot (not hardcoded) */
-  health(): Promise<{ status: string; service: string; mongo: boolean; ok: boolean }> {
+  health(): Promise<{ status: string; service: string; mongo: boolean; ok: boolean; demo_mode: boolean }> {
     return jget("/health");
   },
 
@@ -455,8 +459,16 @@ export const api = {
   recomputeSchedule(projectId: number): Promise<{ project_id: number; scheduled: number }> {
     return jpost(`/api/schedule/recompute?project_id=${projectId}`);
   },
+  // DEMO-only: reset the in-session relay/task mutations back to the clean canned board
+  demoReset(): Promise<{ ok: boolean }> {
+    return jpost("/api/demo/reset");
+  },
   reassignTask(taskId: string, assignee: string): Promise<WorkTask> {
     return jpost(`/api/tasks/${taskId}/reassign?assignee=${encodeURIComponent(assignee)}`);
+  },
+  // passport-ranked teammates to hand a task off to (best fit first)
+  taskCandidates(taskId: string): Promise<{ task_id: string; discipline: string; candidates: HandoffCandidate[] }> {
+    return jget(`/api/tasks/${taskId}/candidates`);
   },
   // Tier D — ad-hoc quick-add (engine-routed) + opt-in suggest + Tier C feature impact preview
   createTask(projectId: number, body: { title: string; discipline: string; estimate_days?: number; priority?: string; assignee?: string; depends_on?: string[] }): Promise<WorkTask> {
@@ -619,6 +631,13 @@ export const api = {
   gateSolutions(planId: string, discipline: string): Promise<SolutionSet> {
     return jget(`/api/plans/${planId}/gates/${discipline}/solutions`, S.SolutionSet);
   },
+  // human-in-control gate handoff — passport-ranked candidates + delegate the gate (+ its slice)
+  gateCandidates(planId: string, discipline: string): Promise<{ candidates: HandoffCandidate[] }> {
+    return jget(`/api/plans/${planId}/gates/${discipline}/candidates`);
+  },
+  handoffGate(planId: string, discipline: string, assignee: string): Promise<S.RelayState> {
+    return jpost(`/api/plans/${planId}/gates/${discipline}/handoff?assignee=${encodeURIComponent(assignee)}`);
+  },
 
   /* Agreement engine: the coordination spine — interface contracts (CDD), routed + ratified */
   myAgreements(): Promise<{ agreements: S.Agreement[] }> {
@@ -629,6 +648,14 @@ export const api = {
   },
   ratifyAgreement(id: string, decision: "ratified" | "rejected", note = ""): Promise<S.Agreement> {
     return jpost(`/api/agreements/${id}/ratify`, { decision, note });
+  },
+  // producer signs by picking a shape (reuse/fresh/write-own) → state active, sent to the consumer
+  signAgreement(id: string, chosen_proposal_id: string): Promise<S.Agreement> {
+    return jpost(`/api/agreements/${id}/ratify`, { decision: "ratified", chosen_proposal_id });
+  },
+  // consumer (or producer) counters with a different shape + a one-line why → bounces back to the other side
+  counterAgreement(id: string, body: { why: string; proposal_id?: string; interface?: S.InterfaceDraft }): Promise<S.Agreement> {
+    return jpost(`/api/agreements/${id}/counter`, body);
   },
   /* The reuse agreement made executable: the cited source files for a chosen memory solution */
   reusePack(projects: string[]): Promise<{ count: number; files: { project: string; file_path: string; web_url: string; excerpt: string }[] }> {

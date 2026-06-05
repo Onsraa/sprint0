@@ -5,8 +5,8 @@ import { useEffect, useRef } from "react";
 
 // second-key → view id (matches the NAV ids + the displayed kbd hints in AppShellNew)
 const NAV_KEYS: Record<string, string> = {
-  i: "inbox",     // Inbox
   l: "relays",
+  c: "gatecontract", // Gate × Contract (palette-discoverable; no standing nav item)
   w: "mywork",
   p: "projects",
   q: "qagate",    // Tester

@@ -227,6 +227,7 @@ class Gate(BaseModel):
     status: GateStatus = "pending"
     depends_on: list[Lane] = Field(default_factory=list)  # gates that must finish first
     note: str = ""
+    delegate: Optional[str] = None  # human-in-control: a lead handed this gate (+ its slice) to this user to ratify
     # ── spine refactor (P0, additive): the router's per-gate decision; all null on legacy gates ──
     tier: Optional[RoutingTier] = None            # auto_pass | one_expert | two_expert (the router's call)
     confidence: Optional[int] = None              # AI confidence (0-100) feeding P(error)
@@ -323,6 +324,19 @@ class SchemaField(BaseModel):
     note: str = ""
 
 
+class FileChange(BaseModel):
+    """One file a solution or contract touches, with the KIND of change. `change` is a closed enum (Gemini-safe).
+    The SERVER reconciles it against the known file set (code graph / reuse pack): a path that does not exist can
+    only be `add`, and `remove` is honored only for a known path with explicit intent — never a blind delete."""
+    path: str = ""
+    change: Literal["add", "modify", "remove"] = "modify"
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, v: str) -> str:
+        return (v or "")[:160]
+
+
 class InterfaceDraft(BaseModel):
     """A cross-discipline interface contract (CDD) — the typed payload of an `interface` Agreement. The AI
     drafts it from both slices' needs, grounded on past interfaces; both leads ratify it BEFORE either builds."""
@@ -332,6 +346,48 @@ class InterfaceDraft(BaseModel):
     response_fields: list[SchemaField] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)           # e.g. ["404 not_found", "409 conflict"]
     note: str = ""
+
+
+class InterfaceProposal(BaseModel):
+    """One pickable API-shape option for a contract — the SolutionCard analogue for an interface. The producer
+    picks one (or writes their own); each carries a short why + pros/cons so the call is informed."""
+    id: str = ""
+    source: Literal["memory", "ai", "user"] = "ai"
+    interface: InterfaceDraft = Field(default_factory=InterfaceDraft)
+    why: str = ""
+    pros: list[str] = Field(default_factory=list)
+    cons: list[str] = Field(default_factory=list)
+    grounded_on: list[str] = Field(default_factory=list)   # past project(s) reused (memory source)
+    confidence: int = 50
+    file_changes: list[FileChange] = Field(default_factory=list)  # producer-side files this shape implies (add/modify/remove)
+
+    @field_validator("why")
+    @classmethod
+    def _why(cls, v: str) -> str:
+        return (v or "")[:140]
+
+    @field_validator("pros", "cons")
+    @classmethod
+    def _items(cls, v: list[str]) -> list[str]:
+        return [_trunc_words(x, 8) for x in (v or [])[:3]]
+
+    @field_validator("confidence")
+    @classmethod
+    def _conf(cls, v: int) -> int:
+        return max(0, min(100, int(v)))
+
+
+class ContractProposalSet(BaseModel):
+    """The AI's answer for ONE cross-discipline edge: either it is NOT a real API boundary (`needed=false` —
+    skip the contract, no noise), or a few shape options the producer chooses from. Gemini-safe (no open dict)."""
+    needed: bool = True
+    skip_reason: str = ""
+    proposals: list[InterfaceProposal] = Field(default_factory=list)
+
+    @field_validator("skip_reason")
+    @classmethod
+    def _skip(cls, v: str) -> str:
+        return (v or "")[:140]
 
 
 class SubteamDraft(BaseModel):
@@ -350,7 +406,9 @@ class Agreement(BaseModel):
     type: Literal["interface", "subteam", "reuse", "reschedule", "handoff", "assign", "priority"]
     plan_id: str
     subject: str = ""                                         # human label of what it binds
-    interface: Optional[InterfaceDraft] = None                # set when type == "interface"
+    interface: Optional[InterfaceDraft] = None                # set when type == "interface" — the CURRENT agreed shape
+    proposals: list[InterfaceProposal] = Field(default_factory=list)  # the reuse/fresh/write-own options the producer picks from
+    chosen_proposal_id: Optional[str] = None                  # which proposal the producer signed (→ `interface`)
     subteam: Optional[SubteamDraft] = None                    # set when type == "subteam"
     grounded_on: list[str] = Field(default_factory=list)
     ratifiers: list[str] = Field(default_factory=list)        # the MINIMAL consent set (usernames)
@@ -610,6 +668,7 @@ class SolutionCard(BaseModel):
     grounded_on: list[str] = Field(default_factory=list)   # past-project name(s) reused (memory source)
     delta_note: str = ""                                   # "variant of X + <delta>" when fresh ≈ memory
     impacted_files: list[str] = Field(default_factory=list)  # server-computed (context_scope ∪ graph deps)
+    file_changes: list[FileChange] = Field(default_factory=list)  # per-file change kind (add/modify/remove); demo-authored, live = server-classified
     # ── #33 Contract richness: provenance signals (conflict LLM-flagged in context; grade/signal server-derived) ──
     conflict: bool = False                                  # contradicts a past TEAM decision fed into the prompt
     conflict_reason: str = ""                               # which decision it contradicts (≤140); shown as the warning
@@ -646,6 +705,7 @@ class SolutionSet(BaseModel):
     """All solutions for one gate — one LLM call generates them. `discipline` is server-set."""
     discipline: str = ""
     solutions: list[SolutionCard] = Field(default_factory=list)
+    chosen: Optional[SolutionCard] = None  # the ratified pick (review of a done gate); None when auto-passed
 
 
 class RegenIssue(BaseModel):

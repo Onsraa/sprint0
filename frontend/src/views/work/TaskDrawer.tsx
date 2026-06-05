@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMe } from "../../features/auth/useAuth";
-import { useRoster } from "../../features/roster/useRoster";
 import { patchTaskInCache } from "../../features/work/useWork";
-import { api, type WorkTask, type TaskStatus } from "../../lib/api";
+import { api, type WorkTask, type TaskStatus, type HandoffCandidate } from "../../lib/api";
 import { STATUS_COLUMNS, provenanceTag } from "./workUtils";
 import { DISCIPLINE_COLOR, DISCIPLINE_LABEL, RISK_COLOR } from "../../lib/relayUtils";
 import { KindSurface } from "../KindSurface";
 
 export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClose: () => void; reload: () => void }) {
   const { member } = useMe();
-  const roster = useRoster();
   const qc = useQueryClient();
   const me = member?.username;
   const isManager = member?.role === "manager";
@@ -20,6 +18,11 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<HandoffCandidate[]>([]); // passport-ranked handoff picks
+
+  useEffect(() => {
+    api.taskCandidates(taskId).then((r) => setCandidates(r.candidates)).catch(() => setCandidates([]));
+  }, [taskId]);
 
   const refetch = useCallback(() => {
     setLoading(true);
@@ -350,25 +353,28 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                       {busy ? "…" : "Release"}
                     </button>
                   )}
-                  {(isManager || member?.discipline === detail.discipline) && (
+                  {/* hand off — owner / lead / manager; teammates ranked by passport fit (★ = best). */}
+                  {(isManager || member?.discipline === detail.discipline || detail.assignee === me) && (
                     <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                       <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 800, textTransform: "uppercase" }}>
-                        reassign
+                        hand off
                       </span>
                       <select
-                        value={detail.assignee ?? ""}
+                        value="__"
                         disabled={busy}
                         onChange={(e) => {
                           const v = e.target.value;
-                          if (v === (detail.assignee ?? "")) return;
+                          if (v === "__") return;
+                          const target = v === "__unassign__" ? "" : v;
                           if (
                             (detail.status === "in_progress" || detail.status === "in_review") &&
                             !window.confirm(`${detail.assignee ?? "Someone"} is mid-work on this — reassign anyway?`)
                           ) {
-                            return; // controlled select reverts on the next render
+                            e.target.value = "__"; return;
                           }
-                          runAction(() => api.reassignTask(taskId, v), true);
+                          runAction(() => api.reassignTask(taskId, target), true);
                         }}
+                        title="Ranked by passport fit — trust in this lane, availability, lane-match, seniority"
                         style={{
                           padding: "5px 9px",
                           border: "1.5px solid var(--border-strong)",
@@ -379,10 +385,11 @@ export function TaskDrawer({ taskId, onClose, reload }: { taskId: string; onClos
                           cursor: busy ? "not-allowed" : "pointer",
                         }}
                       >
-                        <option value="">— Unassign —</option>
-                        {roster.filter((m) => m.role === "developer").map((m) => (
-                          <option key={m.username} value={m.username}>{m.name}</option>
+                        <option value="__" disabled>Recommend &amp; hand off…</option>
+                        {candidates.map((c, i) => (
+                          <option key={c.username} value={c.username}>{i === 0 ? "★ " : ""}{c.name} · {c.score}% · {c.in_lane ? "in-lane" : "stretch"}</option>
                         ))}
+                        <option value="__unassign__">— Unassign —</option>
                       </select>
                     </label>
                   )}

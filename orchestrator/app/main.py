@@ -28,13 +28,13 @@ from pydantic import BaseModel
 from app import agreements, auth, canned, demo, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
-    AccessGrant, Agreement, InterfaceDraft, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
+    AccessGrant, Agreement, FileChange, InterfaceDraft, InterfaceProposal, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
-from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card, generate_interface
+from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card
 from app.execute import execute_plan, extend_project
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
@@ -51,10 +51,11 @@ from app.rag import (
     save_reschedule_proposal, open_reschedule_proposals,
     get_reschedule_proposal, update_reschedule_proposal,
     save_agreement, agreements_for_plan, agreements_for_ratifier, get_agreement, update_agreement, all_agreements, reuse_pack,
+    reset_demo_agreements,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
-    propose_interfaces, propose_solutions, qa_review, reconcile_links, regenerate_slice, run_brief,
+    propose_contract_options, propose_solutions, qa_review, reconcile_links, regenerate_slice, run_brief,
 )
 
 app = FastAPI(title="sprint0", version="0.4.0")
@@ -187,7 +188,7 @@ def _mongo_ok() -> bool:
 @app.get("/health")
 def health() -> dict:
     ok = _mongo_ok()
-    return {"status": "ok" if ok else "degraded", "service": "sprint0", "mongo": ok, "ok": ok}
+    return {"status": "ok" if ok else "degraded", "service": "sprint0", "mongo": ok, "ok": ok, "demo_mode": demo.DEMO_MODE}
 
 
 async def _seed_demo() -> None:
@@ -202,11 +203,61 @@ async def _seed_demo() -> None:
     PROJECTS[pid] = plan
     RELAYS[plan_id] = relay.build_relay(plan)
     relay.auto_pass(RELAYS[plan_id], plan, _dev_trust(), 65, edges=None)  # posture clears low-risk gates → a mid-flight board, not all-grey
+    # Seed the backend↔frontend auth Contract so the Gate × Contract page shows its "× Contract" half
+    # (E1-2 frontend consumes E1-1's auth API). Producer (backend) has signed; the consumer's sign is pending.
+    reset_demo_agreements()
+    _auth_jwt = InterfaceDraft(
+        method="POST", path="/api/auth/login",
+        request_fields=[{"name": "email"}, {"name": "password"}],  # type: ignore[list-item]
+        response_fields=[{"name": "access_token"}, {"name": "refresh_token"}, {"name": "expires_in", "type": "integer"}],  # type: ignore[list-item]
+        errors=["401 invalid_credentials", "429 rate_limited"],
+        note="Token in the body — the frontend stores + refreshes it.",
+    )
+    _auth_session = InterfaceDraft(
+        method="POST", path="/api/auth/session",
+        request_fields=[{"name": "email"}, {"name": "password"}],  # type: ignore[list-item]
+        response_fields=[{"name": "user_id"}, {"name": "expires_in", "type": "integer"}],  # type: ignore[list-item]
+        errors=["401 invalid_credentials"],
+        note="Cookie session — no token handling in the frontend.",
+    )
+    await save_agreement(Agreement(
+        id="agr-demo-auth", type="interface", plan_id=plan_id, subject="Auth API — login",
+        # PROPOSED + unsigned → the backend producer lands on the picker (choose a shape, then sign). Ratifying the
+        # backend gate regenerates this from the choice (_generate_contracts_for_lane runs in demo too).
+        interface=_auth_jwt, chosen_proposal_id=None, state="proposed",
+        proposals=[
+            InterfaceProposal(id="p-reuse", source="memory", interface=_auth_jwt,
+                why="Reuse QuantaPay's proven login response", pros=["Battle-tested", "Fields the FE already knows"],
+                cons=["Token handling on the FE"], grounded_on=["QuantaPay (2024)"], confidence=84,
+                file_changes=[FileChange(path="services/auth/jwt.py", change="modify"), FileChange(path="api/routes/auth.py", change="add")]),
+            InterfaceProposal(id="p-fresh", source="ai", interface=_auth_session,
+                why="Cookie session instead of a token in the body", pros=["No token handling on the FE"],
+                cons=["Needs CSRF protection"], confidence=62,
+                file_changes=[FileChange(path="services/auth/session.py", change="add"), FileChange(path="api/routes/auth.py", change="add")]),
+        ],
+        ratifiers=["sprint0-se", "sprint0-fe"], ratifications=[],
+        producer_issue_id="E1-1", consumer_issue_id="E1-2",
+        producer_discipline="backend", consumer_discipline="frontend", created_at=now,
+    ).model_dump())
     objs = tasklib.materialize_tasks(plan, pid, now)
     for t, st in zip(objs, ["done", "done", "in_review", "in_progress", "in_progress"]):
         t.status = st  # a lively board; the rest stay planned
     scheduler.schedule_tasks(objs, team.all_members(), now)
     await save_tasks([o.model_dump() for o in objs])
+
+
+@app.post("/api/demo/reset")
+async def demo_reset(_: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """DEMO-only: wipe this session's mutations (handoffs, ratifies, reassignments) back to the clean
+    canned mid-flight board. Re-runs the same _seed_demo() used at startup + drops cached gate picks."""
+    if not demo.is_demo():
+        raise HTTPException(403, "reset is demo-mode only")
+    plan_id = canned.DEMO_PLAN_ID
+    for d in ("uiux", "backend", "devops", "frontend", "qa"):
+        CHOSEN.pop((plan_id, d), None)
+        SOLUTIONS.pop((plan_id, d), None)
+    await _seed_demo()  # rebuilds PLANS/PROJECTS/RELAYS (fresh gates, no delegate) + re-materializes tasks
+    return {"ok": True}
 
 
 @app.on_event("startup")
@@ -324,9 +375,12 @@ def _my_gates(member: DeveloperProfile, members: list[DeveloperProfile]) -> list
                 continue
             if g.status not in ("pending", "changes_requested"):
                 continue
-            mine = (member.discipline == g.discipline) or (
-                member.role == "manager" and staffing.is_orphan(g.discipline, members)
-            )
+            # a delegated gate belongs to the delegate (the lead handed it off); else the discipline lead
+            # (or the manager for an orphan). The manager always sees every gate.
+            if g.delegate:
+                mine = (g.delegate == member.username) or member.role == "manager"
+            else:
+                mine = (member.discipline == g.discipline) or (member.role == "manager" and staffing.is_orphan(g.discipline, members))
             if not mine:
                 continue
             issue_count = sum(
@@ -539,7 +593,7 @@ async def list_relays(member: DeveloperProfile = Depends(auth.current_member)) -
             continue
         out.append({
             "plan_id": plan_id, "project": plan.project_name, "baton": list(state.baton),
-            "gates": [{"discipline": g.discipline, "status": g.status, "note": g.note} for g in state.gates],
+            "gates": [{"discipline": g.discipline, "status": g.status, "note": g.note, "delegate": g.delegate} for g in state.gates],
             "is_delta": plan_id in DELTA_TARGET, "target_project_id": DELTA_TARGET.get(plan_id),
             "all_ratified": relay.all_ratified(state),
         })
@@ -753,7 +807,7 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
     PLANS[plan_id] = plan
     RELAYS[plan_id] = relay.build_relay(plan)  # the one-shot output is now a DRAFT entering the relay
     await _persist_draft_tasks(plan, plan_id)
-    await _create_interface_agreements(plan_id, plan)  # CDD: draft + route the cross-discipline contracts
+    await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
     return {"plan_id": plan_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
 
@@ -770,78 +824,83 @@ def _apply_api_contract(plan_id: str, issue_id: str, contract: str) -> None:
                 return
 
 
-async def _create_interface_agreements(plan_id: str, plan: PlanJSON) -> None:
-    """Draft an interface contract at every cross-discipline dependency edge + route each to its two lane
-    leads' Inboxes (minimal-ratifier). Best-effort — a miss is still caught at the integration gate."""
+async def _seed_subteam_agreements(plan_id: str, plan: PlanJSON) -> None:
+    """At plan time, route any sub-team proposals (a 2nd dev warranted for a heavy slice). Interface
+    contracts are NOT drafted here — they are generated JIT from each producer's ratified gate choice
+    (`_generate_contracts_for_lane`), so a contract always matches the chosen implementation, never a guess."""
     try:
         members = team.all_members()
-        drafts = list(await propose_interfaces(plan)) + agreements.propose_subteams(plan, members)
+        drafts = agreements.propose_subteams(plan, members)
         if not drafts:
             return
         now = datetime.now(timezone.utc).isoformat()
-        past = await all_agreements()  # the precedent pool (the compounding memory)
         for a in drafts:
             a.id = f"agr_{uuid.uuid4().hex[:8]}"
             a.plan_id = plan_id
             a.ratifiers = agreements.ratifiers_for(a, members)
             a.created_at = a.updated_at = now
-            precedent = agreements.find_precedent(a.model_dump(), past)
-            if precedent:
-                # COMPOUND: the team already ratified this exact shape → auto-pass + seed the mock now, no routing
-                a.state, a.precedent_id = "auto_passed", precedent
-                if a.interface and a.producer_issue_id:
-                    _apply_api_contract(plan_id, a.producer_issue_id, json.dumps(agreements.mock_from_schema(a.interface.response_fields)))
-                await save_agreement(a.model_dump())
-            else:
-                a.state = "proposed"
-                await save_agreement(a.model_dump())  # JIT: no broadcast at creation — the producer acts on this
-                # contract folded into their gate; the consumer is pinged only once the producer signs (ratify_agreement).
-            past.append(a.model_dump())  # a 2nd identical draft in this same plan also compounds
+            a.state = "proposed"
+            await save_agreement(a.model_dump())
     except Exception:
         pass
 
 
-async def _redraft_affected_interfaces(plan_id: str, plan: PlanJSON, discipline: str, slice_issues: list) -> None:
-    """A gate's write-your-own choice just rewrote its issues — so any interface contract drafted from one
-    of those producer issues may no longer fit the new API surface. Re-draft each affected contract, version
-    it (old → superseded), and re-route the new draft to the two leads to re-ratify. Keeps CDD honest: the
-    contract follows the chosen implementation, automatically, no meeting. Best-effort — the gate stands."""
+async def _generate_contracts_for_lane(plan_id: str, plan: PlanJSON, discipline: str, chosen, by_user: str) -> None:
+    """JIT: the producer just ratified this gate — (re)generate the interface contracts its slice PRODUCES,
+    grounded on the chosen solution. The AI may answer `needed=false` (no real API boundary) → no contract,
+    no noise. Any prior live contract for the edge is superseded (regenerate on a changed choice). The
+    producer then picks a shape + signs (sign-async); the consumer agrees or counters. Best-effort — the
+    integration gate is the net. In DEMO this runs too (propose_contract_options returns canned options), so
+    ratifying a gate visibly drives its contract."""
     try:
-        slice_ids = {i.id for i in slice_issues}
-        affected = [a for a in await agreements_for_plan(plan_id)
-                    if a.get("type") == "interface" and a.get("producer_issue_id") in slice_ids
-                    and a.get("state") in ("proposed", "ratified", "auto_passed")]
-        if not affected:
+        by_id = {i.id: i for e in plan.epics for i in e.issues}
+        edges: dict[tuple[str, str], object] = {}             # (producer_issue, consumer_lane) → consumer issue
+        for cons in by_id.values():
+            for dep in cons.depends_on:
+                prod = by_id.get(dep)
+                if not prod or prod.discipline != discipline or cons.discipline == discipline:
+                    continue                                  # only THIS lane's outgoing cross-discipline edges
+                edges.setdefault((prod.id, cons.discipline), cons)
+        if not edges:
             return
         members = team.all_members()
-        by_id = {i.id: i for e in plan.epics for i in e.issues}
+        existing = await agreements_for_plan(plan_id)         # this plan's prior contracts (to supersede on a changed choice)
+        pool = await all_agreements()                         # the cross-plan precedent pool (compound from past ratified shapes)
         now = datetime.now(timezone.utc).isoformat()
-        for old in affected:
-            prod, cons = by_id.get(old.get("producer_issue_id")), by_id.get(old.get("consumer_issue_id"))
-            if not prod or not cons:
-                continue
+        for (prod_id, cons_disc), cons in edges.items():
+            prod = by_id[prod_id]
+            prior = [a for a in existing if a.get("type") == "interface"
+                     and a.get("producer_issue_id") == prod_id and a.get("consumer_discipline") == cons_disc
+                     and a.get("state") in ("proposed", "active", "ratified", "auto_passed")]
             try:
-                draft = await generate_interface(
-                    f"FEATURE: {plan.project_name}\n"
-                    f"PRODUCER ({prod.discipline}): {prod.title} — {(prod.description or '')[:200]}\n"
-                    f"CONSUMER ({cons.discipline}): {cons.title} — {(cons.description or '')[:200]}\n"
-                    f"Draft the interface contract the consumer needs from the producer.")
+                opts = await propose_contract_options(plan, prod, cons, chosen)
             except Exception:
-                continue  # best-effort; the old contract + the integration gate are the net
-            new = Agreement(
+                continue                                      # best-effort; the integration gate still catches drift
+            if not opts.needed or not opts.proposals:
+                for old in prior:                             # the choice removed the boundary → retire the stale contract
+                    await update_agreement(old["id"], {"state": "superseded", "updated_at": now})
+                continue
+            top = opts.proposals[0].interface
+            a = Agreement(
                 id=f"agr_{uuid.uuid4().hex[:8]}", type="interface", plan_id=plan_id,
-                subject=f"{prod.discipline}→{cons.discipline} · {draft.path or prod.title}",
-                interface=draft, producer_issue_id=prod.id, consumer_issue_id=cons.id,
-                producer_discipline=prod.discipline, consumer_discipline=cons.discipline,
+                subject=f"{discipline}→{cons_disc} · {top.path or prod.title}",
+                interface=top, proposals=opts.proposals,
+                producer_issue_id=prod_id, consumer_issue_id=cons.id,
+                producer_discipline=discipline, consumer_discipline=cons_disc,
                 state="proposed", created_at=now, updated_at=now)
-            new.ratifiers = agreements.ratifiers_for(new, members)
-            await save_agreement(new.model_dump())
-            await update_agreement(old["id"], {"state": "superseded", "superseded_by": new.id, "updated_at": now})
-            _apply_api_contract(plan_id, prod.id, json.dumps(agreements.mock_from_schema(draft.response_fields)))  # refresh the FE mock to the new shape (the old one is stale)
-            for u in new.ratifiers:
-                await notify(u, "agreement_proposed", f"Interface contract changed · {new.subject}",
-                             body=f"{discipline}'s gate choice reshaped this API — re-ratify the new version.",
-                             ref={"agreement_id": new.id, "plan_id": plan_id}, actionable=True)
+            a.ratifiers = agreements.ratifiers_for(a, members)
+            precedent = agreements.find_precedent(a.model_dump(), pool)
+            if precedent:                                     # COMPOUND: this exact shape already ratified → auto-pass + seed the mock
+                a.state, a.precedent_id = "auto_passed", precedent
+                _apply_api_contract(plan_id, prod_id, json.dumps(agreements.mock_from_schema(top.response_fields)))
+            for old in prior:
+                await update_agreement(old["id"], {"state": "superseded", "superseded_by": a.id, "updated_at": now})
+            await save_agreement(a.model_dump())
+            existing.append(a.model_dump())
+            if a.state == "proposed":                         # route to the producer to pick a shape + sign (sign-async)
+                await notify(by_user, "agreement_proposed", f"Sign your contract · {a.subject}",
+                             body=f"Pick the API shape {cons_disc} builds against, then sign.",
+                             ref={"agreement_id": a.id, "plan_id": plan_id}, actionable=True)
     except Exception:
         pass
 
@@ -860,11 +919,21 @@ async def my_agreements(member: DeveloperProfile = Depends(auth.current_member))
 class RatifyAgreementBody(BaseModel):
     decision: Literal["ratified", "rejected"] = "ratified"
     note: str = ""
+    chosen_proposal_id: Optional[str] = None   # producer: which reuse/fresh/write-own shape they sign
+
+
+class CounterAgreementBody(BaseModel):
+    why: str = ""                              # one-line reason for the alternative shape
+    proposal_id: Optional[str] = None          # counter with one of the offered proposals…
+    interface: Optional[InterfaceDraft] = None # …or a written-from-scratch shape
 
 
 @app.post("/api/agreements/{agreement_id}/ratify")
 async def ratify_agreement(agreement_id: str, body: RatifyAgreementBody,
                            member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """SIGN-ASYNC. The PRODUCER picks a shape (chosen_proposal_id) + signs → state `active`, the mock flows,
+    the consumer is pinged — the producer is NOT blocked. The CONSUMER then agrees (→ `ratified`/compounded)
+    or counters (see /counter). A reject is the rare terminal no."""
     raw = await get_agreement(agreement_id)
     if not raw:
         raise HTTPException(404, "agreement not found")
@@ -872,23 +941,54 @@ async def ratify_agreement(agreement_id: str, body: RatifyAgreementBody,
     if member.username not in a.ratifiers and member.role != "manager":
         raise HTTPException(403, "not a ratifier of this agreement")
     now = datetime.now(timezone.utc).isoformat()
-    agreements.apply_ratification(a, member.username, body.decision, body.note, now)
-    # Auto-mock, JIT-split: the producer signs FIRST (at their gate) → seed a PROVISIONAL mock so the
-    # consumer reviews a real shape at its (later) gate, and ping the consumer then — not at creation.
-    # Both signed → the SAME mock is finalized (what the FE builds against + QA verifies).
+    is_producer = member.discipline is not None and member.discipline == a.producer_discipline
+    # the producer picks WHICH shape they're signing (reuse / fresh / write-your-own) → becomes the agreed interface
+    if is_producer and body.decision == "ratified" and body.chosen_proposal_id:
+        chosen = next((p for p in a.proposals if p.id == body.chosen_proposal_id), None)
+        if chosen:
+            a.interface, a.chosen_proposal_id = chosen.interface, chosen.id
+    agreements.apply_ratification(a, member.username, body.decision, body.note, now, is_producer=is_producer)
     if a.type == "interface" and a.interface and a.producer_issue_id:
         mock = json.dumps(agreements.mock_from_schema(a.interface.response_fields))
-        if a.state == "ratified":
-            _apply_api_contract(a.plan_id, a.producer_issue_id, mock)  # finalize
-        elif body.decision == "ratified" and member.discipline == a.producer_discipline:
-            _apply_api_contract(a.plan_id, a.producer_issue_id, mock)  # provisional, on the producer's sign
+        if a.state in ("active", "ratified"):
+            _apply_api_contract(a.plan_id, a.producer_issue_id, mock)  # flows on the producer's sign (active) + finalizes on ratified
+        if a.state == "active":  # producer just signed → ping the consumer JIT to agree or counter
             signed = {r["by"] for r in a.ratifications if r.get("decision") == "ratified"}
             for u in a.ratifiers:
-                if u not in signed:  # ping the consumer JIT — the producer validated; review the API your side consumes
-                    await notify(u, "agreement_proposed", f"Interface contract ready · {a.subject}",
-                                 body="The producer signed — review + ratify the API your side consumes.",
+                if u not in signed:
+                    await notify(u, "agreement_proposed", f"Contract to sign · {a.subject}",
+                                 body="The producer signed. Agree, or counter with your own shape.",
                                  ref={"agreement_id": a.id, "plan_id": a.plan_id}, actionable=True)
     await update_agreement(agreement_id, a.model_dump())
+    return a.model_dump()
+
+
+@app.post("/api/agreements/{agreement_id}/counter")
+async def counter_agreement(agreement_id: str, body: CounterAgreementBody,
+                            member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Disagree by PROPOSING a different shape (+ a one-line why), not just rejecting. Bounces the contract
+    back to the other side, which agrees or counters again — the cycle. The shape = a picked proposal or a
+    written InterfaceDraft."""
+    raw = await get_agreement(agreement_id)
+    if not raw:
+        raise HTTPException(404, "agreement not found")
+    a = Agreement(**raw)
+    if member.username not in a.ratifiers and member.role != "manager":
+        raise HTTPException(403, "not a ratifier of this agreement")
+    now = datetime.now(timezone.utc).isoformat()
+    iface = None
+    if body.proposal_id:
+        iface = next((p.interface for p in a.proposals if p.id == body.proposal_id), None)
+    iface = body.interface or iface or a.interface
+    if iface is None:
+        raise HTTPException(400, "a counter needs a shape (a proposal id or an interface)")
+    agreements.apply_counter(a, member.username, iface, body.why, now)
+    await update_agreement(agreement_id, a.model_dump())
+    for u in a.ratifiers:  # route back to the OTHER side
+        if u != member.username:
+            await notify(u, "agreement_proposed", f"Counter-proposal · {a.subject}",
+                         body=f"@{member.username} proposed a different shape — {body.why or 'review it'}.",
+                         ref={"agreement_id": a.id, "plan_id": a.plan_id}, actionable=True)
     return a.model_dump()
 
 
@@ -973,10 +1073,13 @@ async def ratify_gate(
     state, plan = RELAYS.get(plan_id), PLANS.get(plan_id)
     if state is None or plan is None:
         raise HTTPException(404, "plan not found")
-    if discipline not in {g.discipline for g in state.gates}:
+    _gate = next((g for g in state.gates if g.discipline == discipline), None)
+    if _gate is None:
         raise HTTPException(404, f"no {discipline} gate")
-    if member.role != "manager" and member.discipline != discipline:
-        raise HTTPException(403, f"only the {discipline} lead or the manager can ratify this gate")
+    # a delegated gate is the delegate's call (not the original lead's); else the lead's. Manager always may.
+    _owner_ok = member.role == "manager" or (_gate.delegate == member.username if _gate.delegate else member.discipline == discipline)
+    if not _owner_ok:
+        raise HTTPException(403, f"only this gate's owner ({_gate.delegate or discipline + ' lead'}) or the manager can ratify it")
     if next(g.status for g in state.gates if g.discipline == discipline) == "blocked":
         raise HTTPException(409, "gate is blocked by an open integration failure — mark it api-ok first")
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
@@ -1001,7 +1104,6 @@ async def ratify_gate(
                 except Exception:
                     pass  # best-effort; the choice is still recorded
                 SOLUTIONS.pop((plan_id, discipline), None)  # cached set is stale after a rewrite
-                await _redraft_affected_interfaces(plan_id, plan, discipline, sl)  # a reshaped slice → re-draft its interface contracts
             # Cross-gate impact: ONLY when the choice ADDED files (a user rewrite) that touch another gate.
             # A memory/ai pick changes no files → never bounces another discipline's already-ratified gate.
             added = sorted(soln.gate_slice_files(plan, discipline) - pre_files)
@@ -1018,6 +1120,8 @@ async def ratify_gate(
                                      f"Re-ratify {d}: {discipline}'s choice now touches your slice",
                                      ref={"plan_id": plan_id, "discipline": d}, actionable=True)
                 relay._recompute_baton(state)  # bounced gates re-enter the baton
+            # JIT: (re)generate the interface contracts THIS slice produces, from the just-chosen solution.
+            await _generate_contracts_for_lane(plan_id, plan, discipline, chosen, member.username)
         now = datetime.now(timezone.utc).isoformat()
         deviated = req.deviated or (chosen is not None and chosen.source == "user")
         if chosen is not None and chosen.title:
@@ -1187,6 +1291,57 @@ async def _can_read_contract(member: DeveloperProfile, discipline: str) -> bool:
     return False
 
 
+@app.get("/api/plans/{plan_id}/gates/{discipline}/candidates")
+async def gate_candidates(plan_id: str, discipline: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Passport-ranked teammates to hand this gate (+ its slice) to — powers the handoff picker."""
+    await team.ensure_loaded()
+    members = await _attach_availability(team.all_members())
+    return {"plan_id": plan_id, "discipline": discipline, "candidates": _rank_candidates(discipline, members, exclude=member.username)}
+
+
+@app.post("/api/plans/{plan_id}/gates/{discipline}/handoff", response_model=RelayState)
+async def handoff_gate(plan_id: str, discipline: str, assignee: str = "", member: DeveloperProfile = Depends(auth.current_member)) -> RelayState:
+    """Human-in-control: a discipline lead / the current delegate / the manager hands a gate AND its slice
+    to another member. Sets the gate's `delegate` (they may now ratify + it shows OPEN in their Relays) and
+    reassigns the slice's issues to them — plan issues always; dispatched Tasks too (with a schedule re-pack).
+    `assignee=""` clears the delegation."""
+    state, plan = RELAYS.get(plan_id), PLANS.get(plan_id)
+    if state is None or plan is None:
+        raise HTTPException(404, "plan not found")
+    gate = next((g for g in state.gates if g.discipline == discipline), None)
+    if gate is None:
+        raise HTTPException(404, f"no {discipline} gate")
+    owner_ok = member.role == "manager" or (gate.delegate == member.username if gate.delegate else member.discipline == discipline)
+    if not owner_ok:
+        raise HTTPException(403, f"only this gate's owner ({gate.delegate or discipline + ' lead'}) or the manager can hand it off")
+    new = assignee or None
+    gate.delegate = new
+    # reassign the slice — plan issues always; if any are dispatched Tasks, reassign + reschedule those projects.
+    now = datetime.now(timezone.utc).isoformat()
+    touched: set[int] = set()
+    for e in plan.epics:
+        for i in e.issues:
+            if i.discipline != discipline:
+                continue
+            i.assignee = new
+            doc = await get_task(i.id)
+            if doc:
+                t = Task(**doc)
+                t.assignee = new
+                t.assigned_by = member.username if new else "ai"
+                await update_task(t.id, t.model_dump())
+                touched.add(t.project_id)
+    for pid in touched:
+        await _reschedule_project(pid)
+    if new and new != member.username:
+        await notify(new, "ratify_needed", f"Gate handed to you · {plan.project_name} · {discipline}",
+                     body=f"@{member.username} handed you the {discipline} gate and its slice — yours to ratify.",
+                     ref={"plan_id": plan_id, "discipline": discipline}, actionable=True)
+        await notify_watchers(new, "assigned", f"@{new} took the {discipline} gate on {plan.project_name}",
+                              ref={"plan_id": plan_id, "discipline": discipline})
+    return state
+
+
 @app.get("/api/plans/{plan_id}/gates/{discipline}/solutions", response_model=SolutionSet)
 async def gate_solutions(
     plan_id: str, discipline: str, member: DeveloperProfile = Depends(auth.current_member),
@@ -1196,10 +1351,15 @@ async def gate_solutions(
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
-    if not await _can_read_contract(member, discipline):
-        return SolutionSet(discipline=discipline, solutions=[])  # private — owner / manager / granted Watch only
+    # the gate's DELEGATE (a lead handed it off) can read its Contract too — else they could ratify but not
+    # see the proposed solutions. Falls back to the owner / manager / granted-Watch rule.
+    _st = RELAYS.get(plan_id)
+    _is_delegate = bool(_st and any(g.discipline == discipline and g.delegate == member.username for g in _st.gates))
+    if not _is_delegate and not await _can_read_contract(member, discipline):
+        return SolutionSet(discipline=discipline, solutions=[])  # private — owner / delegate / manager / granted Watch only
     key = (plan_id, discipline)
     if key in SOLUTIONS:
+        SOLUTIONS[key].chosen = CHOSEN.get(key)   # may have changed since cache (ratify writes CHOSEN)
         return SOLUTIONS[key]
     slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
     if not slice_issues:
@@ -1230,6 +1390,7 @@ async def gate_solutions(
         if c.source == "memory" and not c.grade:   # preserve a pre-set grade (canned demo); derive otherwise
             c.grade = grading.grade_for(c.grounded_on, decisions, discipline)
         c.signal = grading.signal_for(c)
+    sset.chosen = CHOSEN.get(key)   # the ratified pick → the done-gate review shows it (None when auto-passed)
     SOLUTIONS[key] = sset
     return sset
 
@@ -1453,7 +1614,7 @@ async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile 
     DELTA_TARGET[plan_id] = project_id
     DELTA_PRIORITY[plan_id] = req.priority
     await _persist_draft_tasks(plan, plan_id)
-    await _create_interface_agreements(plan_id, plan)  # CDD: a delta's cross-discipline edges get contracts too (compounding from prior plans)
+    await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
     return {"plan_id": plan_id, "project_id": project_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
 
@@ -1632,10 +1793,13 @@ async def release_task(task_id: str, member: DeveloperProfile = Depends(auth.cur
 async def reassign_task(task_id: str, assignee: str = "", member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Manager / discipline lead reassigns a task to another member (assignee="" → unassign)."""
     t = await _load_task_or_404(task_id)
-    if "assignee" not in tasklib.can_edit(
+    # human-in-control: the manager / discipline lead can reassign, AND the current owner can hand off
+    # their own task to anyone (the AI's pick is never the final word).
+    is_owner = bool(t.assignee) and t.assignee == member.username
+    if not is_owner and "assignee" not in tasklib.can_edit(
         t, editor_role=member.role, editor_user=member.username, editor_discipline=member.discipline
     ):
-        raise HTTPException(403, "only the manager or the discipline lead can reassign this task")
+        raise HTTPException(403, "only the owner, the discipline lead, or the manager can reassign this task")
     new = assignee or None
     try:
         updated = tasklib.apply_edit(t, {"assignee": new}, editor_role=member.role, editor_user=member.username,
@@ -1652,6 +1816,44 @@ async def reassign_task(task_id: str, assignee: str = "", member: DeveloperProfi
         await notify_watchers(new, "assigned", f"@{new} was assigned “{updated.title}”",
                               ref={"task_id": task_id, "project_id": updated.project_id})
     return await get_task(task_id) or updated.model_dump()  # return the freshly re-scheduled task
+
+
+_TRUST_W = {"low": 0.0, "medium": 0.5, "high": 1.0}
+_SEN_W = {"junior": 0.34, "mid": 0.67, "senior": 1.0}
+
+
+def _rank_candidates(discipline: str, members: list[DeveloperProfile], *, exclude: str | None = None) -> list[dict]:
+    """Passport-fit ranking for handing off work in `discipline` — roster-only (no vector search), so it
+    works in demo. Blends per-lane trust, availability (sooner-free), lane-match, and seniority. The
+    manager is never recommended as a worker. Best first."""
+    out = []
+    for m in members:
+        if m.role == "manager" or m.username == exclude:
+            continue
+        trust_tier = m.trust_in(discipline)
+        trust = _TRUST_W.get(trust_tier, 0.0)
+        fid = m.availability.free_in_days if m.availability else None
+        avail = max(0.0, 1 - min(int(fid), 15) / 15) if fid is not None else 1 - min(100, m.load) / 100
+        in_lane = m.discipline == discipline
+        sen = _SEN_W.get(m.seniority, 0.67)
+        s = 0.40 * trust + 0.30 * avail + 0.20 * (1.0 if in_lane else 0.0) + 0.10 * sen
+        why = " · ".join([
+            f"{discipline} lead" if in_lane else f"stretch from {m.discipline or 'no lane'}",
+            m.seniority, f"trust {trust_tier}",
+            "free now" if fid == 0 else f"free in {fid}d" if fid is not None else f"{m.load}% load",
+        ])
+        out.append({"username": m.username, "name": m.name, "discipline": m.discipline,
+                    "score": round(s * 100), "in_lane": in_lane, "why": why})
+    out.sort(key=lambda c: c["score"], reverse=True)
+    return out
+
+
+@app.get("/api/tasks/{task_id}/candidates")
+async def task_candidates(task_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Passport-ranked teammates to hand this task to (best fit first), powering the reassign picker."""
+    t = await _load_task_or_404(task_id)
+    members = await _attach_availability(team.all_members())
+    return {"task_id": task_id, "discipline": t.discipline, "candidates": _rank_candidates(t.discipline, members, exclude=t.assignee)}
 
 
 @app.post("/api/tasks/{task_id}/status")
@@ -2427,7 +2629,10 @@ async def set_member_discipline(username: str, body: DisciplineBody, _: Develope
 @app.get("/api/developers", response_model=list[DeveloperProfile])
 async def list_developers() -> list[DeveloperProfile]:
     await team.ensure_loaded()
-    return await _attach_availability(team.developers() or CANNED_DEVELOPERS)
+    # The roster the frontend shows is the WHOLE team incl. the manager (Team view). Internal staffing
+    # still uses team.developers() directly; pickers filter by role/discipline, so the manager never
+    # surfaces as an assignable candidate.
+    return await _attach_availability(team.all_members() or CANNED_DEVELOPERS)
 
 
 @app.post("/api/developers")

@@ -152,7 +152,7 @@ export function Today() {
       case "relay": if (t.planId) setPlanId(t.planId); if (t.discipline) setActiveGate(t.discipline); setView("relay"); break;
       case "qagate": if (t.planId) setPlanId(t.planId); setView("qagate"); break;
       case "scope": if (t.taskId) setActiveIssue(t.taskId); setView("mywork"); break;
-      case "reschedule": setView("inbox"); break;
+      case "reschedule": useUI.getState().setBellOpen(true); break;
       case "relays": setView("relays"); break;
     }
   };

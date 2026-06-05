@@ -13,7 +13,7 @@ export function Landing() {
   const login = useLogin();
   const navigate = useNavigate();
   const onEnter = (username: string = DEMO_USER) => {
-    login.mutate(username, { onSuccess: (res) => navigate({ to: (res.member.role === "manager" ? "/inbox" : "/today") as "/" }) });
+    login.mutate(username, { onSuccess: () => navigate({ to: "/relays" as "/" }) });
   };
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-base)", display: "flex", flexDirection: "column", position: "relative" }}>

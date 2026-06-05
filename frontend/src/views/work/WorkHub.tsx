@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Poin
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Icon, type IconName } from "../../lib/icon";
-import { ZeroMark } from "../../lib/icon";
 import { ViewChrome } from "../../components/ViewChrome";
 import {
   Avatar, Badge, Button, DiscDot, DISC, IconButton, SectionHeader, StatusIcon, Tab, TrustDot,
@@ -602,13 +601,15 @@ function TaskPanel({ task: t, onClose, onScope, tasks, byUser }: {
           </>
         )}
 
-        <div className="kicker" style={{ marginBottom: 8 }}>Provenance</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)",
-          background: "var(--bg-secondary)", marginBottom: 16 }}>
-          {byOf(t) === "ai"
-            ? <><ZeroMark size={16} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)", flex: 1 }}>Assigned by sprint0{t.gap_cover ? " — covering the orphan gap" : ""}</span>{t.score != null && <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>match {t.score}</span>}</>
-            : <><Avatar name={a?.name} size={18} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>Self-claimed by {a?.name?.split(" ")[0]}</span></>}
-        </div>
+        {byOf(t) !== "ai" && (
+          <>
+            <div className="kicker" style={{ marginBottom: 8 }}>Provenance</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)",
+              background: "var(--bg-secondary)", marginBottom: 16 }}>
+              <Avatar name={a?.name} size={18} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>Self-claimed by {a?.name?.split(" ")[0]}</span>
+            </div>
+          </>
+        )}
 
         {dep.length > 0 && (
           <>

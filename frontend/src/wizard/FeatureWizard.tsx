@@ -272,7 +272,7 @@ export function FeatureWizard() {
           {step === "gen" && <GenLoader urgent={urgent} />}
           {step === "plan" && <FeaturePlan tasks={tasks} />}
           {step === "impact" && impact && <ImpactPreview impact={impact} urgent={urgent} busy={busy} onProceed={dispatch} onAdjust={() => setStep("plan")} onCancel={close} />}
-          {step === "done" && <FeatureDone proj={proj} urgent={urgent} onRelay={() => { close(); setView("relays"); }} onInbox={() => { close(); setView("inbox"); }} />}
+          {step === "done" && <FeatureDone proj={proj} urgent={urgent} onRelay={() => { close(); setView("relays"); }} onInbox={() => { close(); useUI.getState().setBellOpen(true); }} />}
         </div>
         {(step === "intake" || step === "plan") && (
           <div style={{ borderTop: "0.5px solid var(--border-subtle)", padding: 12, display: "flex", alignItems: "center", gap: 10 }}>
