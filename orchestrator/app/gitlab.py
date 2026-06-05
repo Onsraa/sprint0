@@ -69,6 +69,30 @@ def get_project(project_id: int) -> dict:
         return r.json()
 
 
+def get_file_raw(project: str | int, file_path: str, ref: str = "main") -> str:
+    """Raw content of one file from ANY project the owner token can read — the cross-repo fetch that
+    turns a memory citation into real code (reuse layer-2). `project` is a numeric id or a `group/path`."""
+    pid = project if isinstance(project, int) else quote(str(project), safe="")
+    with _client() as c:
+        r = c.get(f"/projects/{pid}/repository/files/{quote(file_path, safe='')}/raw", params={"ref": ref})
+        r.raise_for_status()
+        return r.text
+
+
+def file_ref_from_blob_url(web_url: str) -> tuple[str, str, str] | None:
+    """Parse a GitLab blob URL → (project_path, ref, file_path). None if it isn't a blob URL.
+    e.g. https://gitlab.com/grp/repo/-/blob/main/src/a.js → ('grp/repo', 'main', 'src/a.js')."""
+    if "/-/blob/" not in web_url:
+        return None
+    web_url = web_url.split("?", 1)[0].split("#", 1)[0]  # drop ?ref_type=heads / #L10 so the file path stays clean
+    head, rest = web_url.split("/-/blob/", 1)
+    project_path = head.split("://", 1)[-1].split("/", 1)[-1]  # strip scheme+host → group/repo
+    ref, _, file_path = rest.partition("/")
+    if not project_path or not file_path:
+        return None
+    return project_path, ref, file_path
+
+
 def list_group_projects(group: str | None = None) -> list[dict]:
     """Every repo in the demo group — the real source of truth for the manager Dashboard.
     `seed=True` marks the topic-tagged agency reference repos (vs sprint0-dispatched projects)."""

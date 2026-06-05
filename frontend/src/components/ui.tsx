@@ -3,6 +3,7 @@
    in lib/icon.tsx. Every panel composes these so spacing/typography stay pixel-consistent. */
 import { useState, type CSSProperties, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Icon, type IconName } from "../lib/icon";
+import type { Availability as AvailabilityT } from "../lib/schemas";
 
 type Variant = "primary" | "secondary" | "ghost" | "accent";
 type Size = "sm" | "md" | "lg";
@@ -46,18 +47,43 @@ export function Button({
   );
 }
 
-export function IconButton({ name, size = 28, icon = 16, title, active = false, onClick, style = {} }: {
-  name: IconName; size?: number; icon?: number; title?: string; active?: boolean; onClick?: () => void; style?: CSSProperties;
+export function IconButton({ name, size = 28, icon = 16, title, active = false, onClick, style = {}, children }: {
+  name: IconName; size?: number; icon?: number; title?: string; active?: boolean; onClick?: () => void; style?: CSSProperties; children?: ReactNode;
 }) {
   const [h, setH] = useState(false);
   return (
     <button title={title} onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ width: size, height: size, display: "grid", placeItems: "center", borderRadius: "var(--r-md)",
+      style={{ position: "relative", width: size, height: size, display: "grid", placeItems: "center", borderRadius: "var(--r-md)",
         background: active || h ? "var(--bg-hover)" : "transparent",
         color: active ? "var(--text-primary)" : "var(--text-tertiary)",
         transition: "background var(--t-quick), color var(--t-quick)", ...style }}>
       <Icon name={name} size={icon} />
+      {children}
     </button>
+  );
+}
+
+/* Anchored dropdown shell — the relative wrapper + click-away backdrop + the pop-in menu, factored out of
+   the persona / project / bell menus (which all hand-rolled the same three divs). Controlled: the caller
+   owns `open` (local state for the switchers, useApp for the bell) and renders its own `trigger`. */
+export function Dropdown({ open, onClose, trigger, align = "left", top = 38, width = 256, z = 60, dropUp = false, menuStyle = {}, children }: {
+  open: boolean; onClose: () => void; trigger: ReactNode;
+  align?: "left" | "right"; top?: number; width?: number; z?: number; dropUp?: boolean; menuStyle?: CSSProperties; children?: ReactNode;
+}) {
+  return (
+    <div style={{ position: "relative" }}>
+      {trigger}
+      {open && (
+        <>
+          <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: z }} />
+          <div style={{ position: "absolute", ...(dropUp ? { bottom: top } : { top }), ...(align === "right" ? { right: 0 } : { left: 0 }), width, zIndex: z + 1,
+            background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-lg)",
+            boxShadow: "var(--shadow-3)", padding: 6, animation: "s0-pop-in var(--t-reg) var(--ease-out) both", ...menuStyle }}>
+            {children}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -137,7 +163,7 @@ export const DISC: Record<string, { label: string; color: string }> = {
   uiux: { label: "UI/UX", color: "var(--disc-uiux)" },
   backend: { label: "Backend", color: "var(--disc-backend)" },
   frontend: { label: "Frontend", color: "var(--disc-frontend)" },
-  qa: { label: "QA", color: "var(--disc-qa)" },
+  qa: { label: "Tester", color: "var(--disc-qa)" },
   devops: { label: "DevOps", color: "var(--disc-devops)" },
 };
 export function DiscDot({ d, size = 7 }: { d?: string | null; size?: number }) {
@@ -156,6 +182,24 @@ export function LoadMeter({ value = 0, width = 44 }: { value?: number; width?: n
         <span style={{ display: "block", height: "100%", width: `${Math.min(value, 100)}%`, background: over ? "var(--amber)" : "var(--text-tertiary)", borderRadius: 2 }} />
       </span>
       <span className="mono" style={{ fontSize: 11, color: over ? "var(--amber)" : "var(--text-quaternary)" }}>{value}%</span>
+    </span>
+  );
+}
+
+/* When a member can start NEW work — the honest capacity signal (replaces the load %). green=free now,
+   amber=soon (≤3d), grey=busy. `compact` drops the backlog tail for tight rows (e.g. the relay candidate list). */
+export function Availability({ a, compact = false }: { a?: AvailabilityT | null; compact?: boolean }) {
+  if (!a) return <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>—</span>;
+  const d = a.free_in_days;
+  const tone = d === 0 ? "var(--green)" : d <= 3 ? "var(--amber)" : "var(--text-tertiary)";
+  const label = d === 0 ? "Free now" : `Free in ${d}d`;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }} title={`Available ${a.available_on} · ${a.active_count} active · ~${Math.round(a.queued_days)}d queued`}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: tone, flexShrink: 0 }} />
+      <span style={{ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{label}</span>
+      {!compact && a.active_count > 0 && (
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", whiteSpace: "nowrap" }}>· {a.active_count} {a.active_count === 1 ? "task" : "tasks"} · ~{Math.round(a.queued_days)}d</span>
+      )}
     </span>
   );
 }
@@ -219,11 +263,26 @@ export const PRIORITY_META: Record<string, { label: string; color: string }> = {
   low: { label: "Low", color: "var(--text-quaternary)" },
 };
 
+// Pretty-print a machine skill/capability tag for humans: "backend:django,scheduling" → "Django · Scheduling",
+// "stripe-webhooks" → "Stripe Webhooks", "db:postgresql" → "PostgreSQL". Keeps every topic (no info lost).
+const TAG_CASE: Record<string, string> = {
+  postgresql: "PostgreSQL", postgis: "PostGIS", jwt: "JWT", oauth: "OAuth", ci: "CI", cd: "CD", api: "API",
+  ui: "UI", ux: "UX", uiux: "UI/UX", devops: "DevOps", db: "DB", css: "CSS", html: "HTML", sql: "SQL",
+  aws: "AWS", gcp: "GCP", k8s: "K8s", ml: "ML", nlp: "NLP", sdk: "SDK", graphql: "GraphQL",
+  websocket: "WebSocket", websockets: "WebSockets", webhooks: "Webhooks", webhook: "Webhook", saas: "SaaS", ios: "iOS",
+};
+const prettyToken = (t: string) => TAG_CASE[t.toLowerCase()] ?? (t ? t[0].toUpperCase() + t.slice(1) : t);
+export function prettyTag(tag: string): string {
+  const body = tag.includes(":") ? tag.split(":").slice(1).join(":") : tag;  // drop the area prefix (shown in context)
+  const topics = body.split(/[,/]/).map((s) => s.trim()).filter(Boolean);
+  return topics.map((p) => p.split(/[-_ ]+/).filter(Boolean).map(prettyToken).join(" ")).join(" · ") || tag;
+}
+
 export function CapTag({ tag }: { tag: string }) {
   return (
-    <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 17, padding: "0 6px",
+    <span style={{ display: "inline-flex", alignItems: "center", height: 17, padding: "0 7px",
       borderRadius: "var(--r-xs)", background: "var(--bg-secondary)", color: "var(--text-tertiary)",
-      fontSize: 10, fontWeight: 500, whiteSpace: "nowrap" }}>{tag}</span>
+      fontSize: 10.5, fontWeight: 500, whiteSpace: "nowrap" }}>{prettyTag(tag)}</span>
   );
 }
 

@@ -152,3 +152,38 @@ def test_blocked_days_feeds_scheduler():
     av = S.blocked_days([_ev("sick", user="se", start="2026-06-08", end="2026-06-08")])
     [t] = S.schedule_tasks([_task("a", "se", est=1)], [_member("se", "senior")], ANCHOR, availability=av)
     assert t.scheduled_start == "2026-06-09"
+
+
+# ── availability() — the honest "when can this person start" signal ──────────
+def _sched_task(tid, assignee, est=2.0, status="planned", end=None):
+    t = _task(tid, assignee, est=est)
+    t.status = status
+    t.scheduled_end = end
+    return t
+
+def test_availability_free_now_with_no_tasks():
+    av = S.availability([_member("a", "mid")], [], ANCHOR)
+    assert av["a"].free_in_days == 0
+    assert av["a"].active_count == 0 and av["a"].queued_days == 0.0
+
+def test_availability_from_last_scheduled_end_excludes_done():
+    tasks = [
+        _sched_task("t1", "a", est=3, status="in_progress", end="2026-06-10"),
+        _sched_task("t2", "a", est=2, status="planned", end="2026-06-12"),   # Fri — the latest active end
+        _sched_task("t3", "a", est=5, status="done", end="2026-06-19"),      # done → ignored entirely
+    ]
+    av = S.availability([_member("a", "mid")], tasks, ANCHOR)
+    assert av["a"].available_on == "2026-06-15"   # day after Fri 06-12 → Mon
+    assert av["a"].active_count == 2              # done excluded
+    assert av["a"].queued_days == 5.0             # 3 + 2 (done's 5 excluded)
+
+def test_availability_external_baseline_offsets_taskless_member():
+    # load=100 (busy elsewhere) → free only after BUSY_HORIZON workdays, honestly, even with zero kanban tasks
+    av = S.availability([_member("busy", "senior", load=100)], [], ANCHOR)
+    assert av["busy"].free_in_days == S.BUSY_HORIZON_WORKDAYS
+    assert av["busy"].active_count == 0
+
+def test_availability_takes_max_of_baseline_and_task_schedule():
+    tasks = [_sched_task("t1", "b", status="planned", end="2026-06-09")]   # tiny task load
+    av = S.availability([_member("b", "mid", load=100)], tasks, ANCHOR)
+    assert av["b"].free_in_days == S.BUSY_HORIZON_WORKDAYS                  # baseline (10) > task (~1)

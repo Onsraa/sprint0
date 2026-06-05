@@ -63,7 +63,11 @@ export function useRatifyGate(planId: string) {
       qc.setQueryData(qk.relay(planId), next); // server truth — recomputes baton + downstream locks
       toast.success(body.approve ? "Gate ratified — baton passed" : "Changes requested");
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.relay(planId) }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.relay(planId) });
+      qc.invalidateQueries({ queryKey: ["planAgreements", planId] }); // the gate choice may (re)generate its contract (JIT)
+      qc.invalidateQueries({ queryKey: ["myAgreements"] });
+    },
   });
 }
 

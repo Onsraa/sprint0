@@ -79,4 +79,15 @@ async def judge(event: ChangeEvent, impacted: list[Task],
     """Run the Strategist: build the delta-only prompt and ask Gemini for a typed strategy.
     Lazy import keeps the pure helpers above import-light (no ADK) for unit tests."""
     from app.agent import generate_strategy
-    return await generate_strategy(build_strategy_prompt(event, impacted, candidate_people(impacted, members)))
+    candidates = candidate_people(impacted, members)
+    strat = await generate_strategy(build_strategy_prompt(event, impacted, candidates))
+    return guard_reassign(strat, candidates)
+
+
+def guard_reassign(strat: RescheduleStrategy, candidates: list[DeveloperProfile]) -> RescheduleStrategy:
+    """Referential integrity: the prompt OFFERS candidates but can't BIND the model to them. Never route
+    work to a handle we didn't offer — fail closed to a human decision rather than a hallucinated assignee."""
+    if strat.action == "reassign" and strat.reassign_to not in {m.username for m in candidates}:
+        strat.action, strat.reassign_to = "escalate", None
+        strat.impact_summary = "AI named an assignee outside the candidate set — escalated for a human decision."
+    return strat

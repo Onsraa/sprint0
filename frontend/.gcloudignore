@@ -1,0 +1,16 @@
+# Static-image build context = dist/ + Dockerfile + nginx.conf only.
+# NOTE: .gcloudignore (when present) REPLACES .gitignore handling, so dist/ (normally gitignored)
+# is INCLUDED because it's not listed here. Keep node_modules + source OUT.
+node_modules
+src
+public
+index.html
+vite.config.ts
+tsconfig*.json
+package.json
+package-lock.json
+pnpm-lock.yaml
+.eslintrc*
+firebase.json
+firebase-debug.log
+.firebase

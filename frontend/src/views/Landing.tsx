@@ -1,19 +1,19 @@
-/* sprint0 — Landing (ported from the v4 design Landing.jsx). Minimal header + split hero: title +
- * the dynamic connexion card (GitLab / email → password). For the demo every path logs in as the
- * manager ("Try Demo"); the persona switcher in the nav rail re-chromes from there. */
-import { useState, type CSSProperties, type ReactNode } from "react";
+/* sprint0 — Landing. Minimal header + split hero: title + the passwordless demo-entry card. Honest demo
+ * auth: enter as the manager, or pick any of the 5 fixed demo personas directly — no OAuth/email/password.
+ * The persona switcher in the nav re-chromes from there. */
 import { useNavigate } from "@tanstack/react-router";
 import { useLogin } from "../features/auth/useAuth";
-import { Button } from "../components/ui";
+import { Avatar, Button } from "../components/ui";
 import { Icon, ZeroMark, Logo } from "../lib/icon";
+import { DEMO_PERSONAS } from "../app/AppShellNew";
 
-const DEMO_USER = "Onsraa"; // the manager persona — Try Demo drops you here
+const DEMO_USER = "Onsraa"; // default entry (the manager)
 
 export function Landing() {
   const login = useLogin();
   const navigate = useNavigate();
-  const onEnter = () => {
-    login.mutate(DEMO_USER, { onSuccess: () => navigate({ to: "/inbox" as "/" }) });
+  const onEnter = (username: string = DEMO_USER) => {
+    login.mutate(username, { onSuccess: () => navigate({ to: "/relays" as "/" }) });
   };
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-base)", display: "flex", flexDirection: "column", position: "relative" }}>
@@ -22,7 +22,7 @@ export function Landing() {
         <LandingHeader onEnter={onEnter} />
         <main style={{ flex: 1, display: "grid", gridTemplateColumns: "1.05fr 0.95fr", maxWidth: 1180, width: "100%", margin: "0 auto", padding: "0 40px", alignItems: "center", gap: 64 }}>
           <HeroCopy />
-          <ConnexionCard onEnter={onEnter} />
+          <DemoEntry onEnter={onEnter} />
         </main>
         <LandingFooter />
       </div>
@@ -47,12 +47,12 @@ function LandingHeader({ onEnter }: { onEnter: () => void }) {
     <header style={{ height: 60, display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 1180, width: "100%", margin: "0 auto", padding: "0 40px" }}>
       <Logo size={20} />
       <nav style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        {["Product", "Relay", "Docs", "Changelog"].map((l) => (
-          <a key={l} href="#" style={{ padding: "0 12px", height: 30, display: "inline-flex", alignItems: "center", fontSize: 13, fontWeight: 500, color: "var(--text-tertiary)" }}>{l}</a>
-        ))}
+        <a href="https://github.com/Onsraa/sprint0" target="_blank" rel="noopener noreferrer" aria-label="GitHub repository"
+          style={{ width: 30, height: 30, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--r-md)", color: "var(--text-tertiary)" }}>
+          <Icon name="github" size={17} />
+        </a>
         <span style={{ width: 1, height: 18, background: "var(--border)", margin: "0 8px" }} />
-        <button onClick={onEnter} style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)", padding: "0 10px", height: 30 }}>Log in</button>
-        <Button variant="primary" size="md" onClick={onEnter}>Try Demo</Button>
+        <Button variant="primary" size="md" onClick={() => onEnter()}>Enter the demo</Button>
       </nav>
     </header>
   );
@@ -83,106 +83,67 @@ function HeroCopy() {
   );
 }
 
-function ConnexionCard({ onEnter }: { onEnter: () => void }) {
-  const [mode, setMode] = useState<"choose" | "email" | "password">("choose");
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+/* Passwordless demo entry: enter as the manager, or pick any of the 5 fixed personas directly. */
+function DemoEntry({ onEnter }: { onEnter: (username?: string) => void }) {
+  const manager = DEMO_PERSONAS.find((p) => p.role === "manager") ?? DEMO_PERSONAS[0];
+  const teammates = DEMO_PERSONAS.filter((p) => p.role !== "manager");
   return (
-    <div style={{ background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-xl)", boxShadow: "var(--shadow-2)", padding: 28, animation: "s0-pop-in var(--t-slow) var(--ease-out) both" }}>
+    <div style={{ background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-xl)", boxShadow: "var(--shadow-2)", padding: 24, animation: "s0-pop-in var(--t-slow) var(--ease-out) both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <ZeroMark size={22} />
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
-            {mode === "choose" ? "Pick up the baton" : mode === "email" ? "Continue with email" : "Welcome back"}
-          </div>
-          <div style={{ fontSize: 12, color: "var(--text-quaternary)" }}>{mode === "password" ? email : "Sign in to your workspace"}</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>Enter the demo workspace</div>
+          <div style={{ fontSize: 12, color: "var(--text-quaternary)" }}>Passwordless · pick a persona, no credentials</div>
         </div>
       </div>
-      <div style={{ marginTop: 22 }}>
-        {mode === "choose" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, animation: "s0-fade-in var(--t-reg) both" }}>
-            <AuthBtn icon="gitlab" label="Continue with GitLab" onClick={onEnter} primary />
-            <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "6px 0" }}>
-              <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-              <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>OR</span>
-              <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-            </div>
-            <AuthBtn icon="mail" label="Continue with email" onClick={() => setMode("email")} />
-          </div>
-        )}
-        {mode === "email" && (
-          <div style={{ animation: "s0-panel-in var(--t-reg) var(--ease-out) both" }}>
-            <Field label="Work email">
-              <input autoFocus value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@studio.com"
-                onKeyDown={(e) => e.key === "Enter" && validEmail && setMode("password")} style={inputStyle} />
-            </Field>
-            <Button variant="primary" size="lg" style={{ width: "100%", marginTop: 14, opacity: validEmail ? 1 : 0.45 }} disabled={!validEmail} onClick={() => setMode("password")} iconRight="arrowRight">Continue</Button>
-            <BackRow onClick={() => setMode("choose")} />
-          </div>
-        )}
-        {mode === "password" && (
-          <div style={{ animation: "s0-panel-in var(--t-reg) var(--ease-out) both" }}>
-            <Field label="Password" right={<a href="#" style={{ fontSize: 12, color: "var(--text-tertiary)", fontWeight: 500 }}>Forgot?</a>}>
-              <input autoFocus type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="••••••••••"
-                onKeyDown={(e) => e.key === "Enter" && pw.length >= 1 && onEnter()} style={inputStyle} />
-            </Field>
-            <Button variant="primary" size="lg" style={{ width: "100%", marginTop: 14, opacity: pw.length ? 1 : 0.45 }} disabled={!pw.length} onClick={onEnter} iconRight="arrowRight">Sign in</Button>
-            <BackRow onClick={() => setMode("email")} />
-          </div>
-        )}
+
+      <button onClick={() => onEnter(manager.username)}
+        style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 56, padding: "0 14px", marginTop: 20, borderRadius: "var(--r-md)", background: "var(--ink-fill)", color: "#fff", textAlign: "left" }}>
+        <Avatar name={manager.name} size={30} tone="ink" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Enter the demo workspace</div>
+          <div className="mono" style={{ fontSize: 11, color: "rgba(255,255,255,0.66)", marginTop: 1 }}>as {manager.name} · manager</div>
+        </div>
+        <Icon name="arrowRight" size={16} style={{ color: "rgba(255,255,255,0.8)", flexShrink: 0 }} />
+      </button>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "18px 0 10px" }}>
+        <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>OR ENTER AS</span>
+        <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
       </div>
-      <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", lineHeight: 1.5, marginTop: 20, marginBottom: 0, textAlign: "center" }}>
-        By continuing you agree to the <a href="#" style={{ color: "var(--text-tertiary)", textDecoration: "underline" }}>Terms</a> & <a href="#" style={{ color: "var(--text-tertiary)", textDecoration: "underline" }}>Privacy</a>.
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {teammates.map((p) => (
+          <button key={p.username} onClick={() => onEnter(p.username)}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: "transparent", textAlign: "left", transition: "background var(--t-quick)" }}>
+            <Avatar name={p.name} size={26} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
+              <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
+            </div>
+            <Icon name="arrowRight" size={15} style={{ color: "var(--text-quaternary)", flexShrink: 0 }} />
+          </button>
+        ))}
+      </div>
+
+      <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", lineHeight: 1.5, marginTop: 16, marginBottom: 0, textAlign: "center" }}>
+        5 fixed demo accounts · switch personas anytime from the workspace header.
       </p>
     </div>
   );
 }
 
-function AuthBtn({ icon, label, onClick, primary }: { icon: "gitlab" | "mail"; label: string; onClick: () => void; primary?: boolean }) {
-  const [h, setH] = useState(false);
-  return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, height: 42, borderRadius: "var(--r-md)", fontSize: 13.5, fontWeight: 500,
-        background: primary ? (h ? "var(--ink-fill-hover)" : "var(--ink-fill)") : (h ? "var(--bg-hover)" : "var(--bg-elevated)"),
-        color: primary ? "#fff" : "var(--text-secondary)", border: primary ? "none" : "0.5px solid var(--border-strong)",
-        boxShadow: primary ? "none" : "var(--shadow-1)", transition: "background var(--t-quick)" }}>
-      {icon && <Icon name={icon} size={16} />}
-      {label}
-    </button>
-  );
-}
-function Field({ label, right, children }: { label: string; right?: ReactNode; children: ReactNode }) {
-  return (
-    <label style={{ display: "block" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 500, color: "var(--text-secondary)" }}>{label}</span>
-        {right}
-      </div>
-      {children}
-    </label>
-  );
-}
-function BackRow({ onClick }: { onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 14, fontSize: 12.5, fontWeight: 500, color: "var(--text-tertiary)" }}>
-      <Icon name="chevronLeft" size={13} /> Other options
-    </button>
-  );
-}
-const inputStyle: CSSProperties = {
-  width: "100%", height: 42, padding: "0 12px", fontSize: 14, color: "var(--text-primary)",
-  background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)",
-  outline: "none", boxShadow: "var(--shadow-inset)",
-};
-
 function LandingFooter() {
   return (
     <footer style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 1180, width: "100%", margin: "0 auto", padding: "0 40px", borderTop: "0.5px solid var(--border)" }}>
       <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>© 2026 sprint0 · the relay orchestrator</span>
-      <div style={{ display: "flex", gap: 18 }}>
-        {["Status", "Security", "Careers"].map((l) => <a key={l} href="#" style={{ fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>{l}</a>)}
-      </div>
+      <a href="https://github.com/Onsraa/sprint0" target="_blank" rel="noopener noreferrer"
+        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-quaternary)", fontWeight: 500 }}>
+        <Icon name="github" size={14} /> GitHub
+      </a>
     </footer>
   );
 }

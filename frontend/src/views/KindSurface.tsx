@@ -6,7 +6,7 @@
    Ported pixel-1:1 from the v4 design's KindSurface.jsx; only the data source changed
    (mock EXEC/TASKS/PASSPORTS → the real WorkTask carried in `work` + the useApp() adapter). */
 import { useState } from "react";
-import { Icon, type IconName, ZeroMark } from "../lib/icon";
+import { Icon, type IconName } from "../lib/icon";
 import { Avatar, Badge, Button, DiscDot, DISC, CapTag, StatusIcon, TrustDot } from "../components/ui";
 import { BellPanel } from "../features/notify/BellPanel";
 import { useApp } from "../app/useApp";
@@ -174,11 +174,11 @@ function Provenance({ prov, assignee }: { prov: Prov; assignee: Member | undefin
       </div>
     );
   }
+  // AI-assigned provenance is noise — show provenance only when a human claimed or placed the work.
+  if (prov.kind === "ai") return null;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 13px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)" }}>
-      {prov.kind === "ai"
-        ? <><ZeroMark size={16} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)", flex: 1 }}>Assigned by <b style={{ fontWeight: 600 }}>sprint0</b> — discipline is one signal, not a gate.</span>{prov.score != null && <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>match {prov.score}</span>}</>
-        : <><Avatar name={assignee?.name} size={18} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)", flex: 1 }}>{prov.kind === "claimed" ? `Self-claimed by ${assignee?.name?.split(" ")[0]}` : "Assigned by the manager"}</span></>}
+      <Avatar name={assignee?.name} size={18} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)", flex: 1 }}>{prov.kind === "claimed" ? `Self-claimed by ${assignee?.name?.split(" ")[0]}` : "Assigned by the manager"}</span>
     </div>
   );
 }

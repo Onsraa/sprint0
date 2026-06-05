@@ -34,6 +34,7 @@ export interface RankInput {
   myTasks: WorkTask[];         // useWork("me") — scheduled_start (order), depends_on
   needs: InboxNeed[];          // inbox.needs_action — reschedule consent rows
   projectNames?: Record<number, string>; // project_id → human name (task rows show the name, not the id)
+  seatedDisciplines?: Discipline[];       // disciplines with ≥1 seated dev — a gate whose lane isn't here = an orphan staffing gap
 }
 
 // the fixed relay DAG: {uiux ∥ backend ∥ devops} → frontend → qa
@@ -101,6 +102,7 @@ export function rankNext(input: RankInput): { startHere: NextItem | null; next: 
 
   // 2) manager only: dispatch-ready relays + orphan-gap gates (heuristic from the summary)
   if (input.role === "manager") {
+    const seated = new Set(input.seatedDisciplines ?? []);  // a discipline with no seated dev = a real staffing gap
     for (const r of input.relays) {
       if (r.all_ratified) {
         items.push({
@@ -116,7 +118,7 @@ export function rankNext(input: RankInput): { startHere: NextItem | null; next: 
         });
       }
       for (const g of r.gates) {
-        const ownerless = !r.baton.includes(g.discipline);
+        const ownerless = !seated.has(g.discipline);  // orphan = NO dev seated for this lane (not merely "not on the baton yet")
         if (!isDone(g.status) && ownerless && !queuedKeys.has(`${r.plan_id}:${g.discipline}`)) {
           const blocks = blocksForGate(g.discipline, r);
           items.push({

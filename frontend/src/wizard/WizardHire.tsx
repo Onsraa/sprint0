@@ -5,9 +5,11 @@ import { z } from "zod";
 import { toast } from "sonner";
 import { useUI } from "../lib/store";
 import { Icon, ZeroMark } from "../lib/icon";
-import { Button, IconButton, Badge } from "../components/ui";
+import { Button, IconButton, Badge, DISC } from "../components/ui";
 import { api } from "../lib/api";
 import type { Member } from "../lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { qk } from "../lib/query";
 
 /* sprint0 — Hire wizard, wired to the real gateway: drop/paste a CV → POST /api/developers
    (Gemini parses it, links the GitLab user, seeds a low-trust passport in Mongo) → the new
@@ -28,6 +30,7 @@ type HireForm = z.infer<typeof HireForm>;
 
 export function WizardHire() {
   const setWizardOpen = useUI((s) => s.setWizardOpen);
+  const qc = useQueryClient();
   const [result, setResult] = useState<Member | null>(null);
   const { register, handleSubmit, watch, setValue, formState } = useForm<HireForm>({
     resolver: zodResolver(HireForm),
@@ -43,6 +46,7 @@ export function WizardHire() {
   const onboard = handleSubmit(async (v) => {
     try {
       setResult(await api.addDeveloper(v.file ? { file: v.file } : { text: v.text }));
+      qc.invalidateQueries({ queryKey: qk.roster() });  // new dev shows immediately (was 30s stale)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Onboarding failed");
     }
@@ -113,8 +117,21 @@ export function WizardHire() {
   );
 }
 
-function ResultCard({ member }: { member: Member }) {
+function ResultCard({ member }: { member: Member & { suggested_discipline?: string | null } }) {
+  const qc = useQueryClient();
   const linked = member.gitlab_user_id != null;
+  const [seated, setSeated] = useState<string | null>(member.discipline ?? null);
+  const suggestion = member.suggested_discipline;
+  const seat = async (d: string) => {
+    try {
+      await api.setDiscipline(member.gitlab_username, d);
+      setSeated(d);
+      toast.success(`${member.name} seated in ${DISC[d as keyof typeof DISC]?.label ?? d}`);
+      qc.invalidateQueries({ queryKey: qk.roster() });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not seat");
+    }
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -123,13 +140,28 @@ function ResultCard({ member }: { member: Member }) {
       </div>
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 11, background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-1)" }}>
         <Row k="GitLab" v={linked ? `@${member.gitlab_username} · native assignee` : `@${member.gitlab_username} · label-only (no matching GitLab account)`} ok={linked} />
-        <Row k="Role" v={`${member.seniority ?? "junior"} ${member.discipline ?? "developer"}`} />
+        <Row k="Role" v={`${member.seniority ?? "junior"} ${seated ?? "developer"}`} />
         <Row k="Trust" v={`${member.trust_level} (cold-start) — grows per-discipline with every merge`} />
         <Row k="Skills" v={member.skills_text} />
       </div>
-      <div style={{ padding: 12, background: "var(--bg-secondary)", borderRadius: "var(--r-md)", fontSize: 12.5, color: "var(--text-tertiary)", lineHeight: 1.55 }}>
-        In MongoDB now and in the assignment pool — eligible for the next plan (low-risk first; out-of-discipline work is flagged as a stretch).
-      </div>
+      {suggestion && !seated && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "var(--bg-secondary)", border: "0.5px solid var(--border)", borderRadius: "var(--r-md)" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Seat them in a discipline</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 2, lineHeight: 1.5 }}>sprint0 reads <strong>{DISC[suggestion as keyof typeof DISC]?.label ?? suggestion}</strong> from the CV. Confirm to put them in-lane — until then the AI won't assign them work.</div>
+          </div>
+          <Button variant="primary" size="sm" onClick={() => seat(suggestion)}>Seat in {DISC[suggestion as keyof typeof DISC]?.label ?? suggestion}</Button>
+        </div>
+      )}
+      {seated ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 12, background: "var(--bg-secondary)", borderRadius: "var(--r-md)", fontSize: 12.5, color: "var(--text-secondary)" }}>
+          <Icon name="check" size={15} style={{ color: "var(--green)" }} />Seated in {DISC[seated as keyof typeof DISC]?.label ?? seated} — now an in-lane candidate for the next plan.
+        </div>
+      ) : (
+        <div style={{ padding: 12, background: "var(--bg-secondary)", borderRadius: "var(--r-md)", fontSize: 12.5, color: "var(--text-tertiary)", lineHeight: 1.55 }}>
+          In MongoDB now and in the assignment pool — eligible for the next plan (low-risk first; out-of-discipline work is flagged as a stretch).
+        </div>
+      )}
     </div>
   );
 }

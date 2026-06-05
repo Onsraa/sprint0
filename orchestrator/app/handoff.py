@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 
-from app import gitlab as gl
+from app import demo, gitlab as gl
 from app.contracts import PlanJSON
 
 _VSCODE_NOISE = {
@@ -40,9 +40,28 @@ def _focus_json(issue) -> str:
     return json.dumps({"issue": issue.id, "files": issue.context_scope.files, "note": issue.context_scope.note}, indent=2)
 
 
-def commit_context_branches(project_id: int, plan: PlanJSON, default_branch: str = "main") -> list[str]:
-    """One branch per CODE/INFRA issue, carrying `.sprint0/focus.json` (the sparse-checkout
-    list) + `.vscode/settings.json` (noise hiding + metadata). Non-code kinds get no branch."""
+def _reuse_manifest(seeds: list[dict]) -> str:
+    """The `REUSE_MANIFEST.md` that explains the seeded files + cites their origin (provenance)."""
+    lines = [
+        "# Reused from agency memory\n",
+        "sprint0 seeded this branch with battle-tested code from prior projects — a starting draft, "
+        "lightly adapted to this stack. Adapt as needed; the originals are linked below.\n",
+        "| seeded file | from | source |",
+        "| --- | --- | --- |",
+    ]
+    for s in seeds:
+        lines.append(f"| `{s['path']}` | {s.get('source_project', '—')} | [original]({s.get('source_url', '')}) |")
+    lines.append("\n> — sprint0 reuse agreement (it was built before → it's already in your branch)")
+    return "\n".join(lines)
+
+
+def commit_context_branches(
+    project_id: int, plan: PlanJSON, default_branch: str = "main", reuse_seeds: dict[str, list[dict]] | None = None
+) -> list[str]:
+    """One branch per CODE/INFRA issue, carrying `.sprint0/focus.json` (the sparse-checkout list) +
+    `.vscode/settings.json` (noise hiding + metadata). When `reuse_seeds[issue.id]` is set (reuse
+    layer-2), the branch is ALSO seeded with the adapted source files + a `REUSE_MANIFEST.md`."""
+    reuse_seeds = reuse_seeds or {}
     made: list[str] = []
     for epic in plan.epics:
         for issue in epic.issues:
@@ -51,14 +70,17 @@ def commit_context_branches(project_id: int, plan: PlanJSON, default_branch: str
             branch = f"sprint0/{issue.id.lower()}"
             try:
                 gl.create_branch(project_id, branch, ref=default_branch)
+                files = [
+                    {"path": ".sprint0/focus.json", "content": _focus_json(issue)},
+                    {"path": ".vscode/settings.json", "content": _vscode_settings(issue.context_scope.files, issue.id, issue.context_scope.note)},
+                ]
+                seeds = reuse_seeds.get(issue.id)
+                if seeds:  # reuse layer-2: the reused code is committed INTO the branch (not just linked)
+                    files += [{"path": s["path"], "content": s["content"]} for s in seeds]
+                    files.append({"path": "REUSE_MANIFEST.md", "content": _reuse_manifest(seeds)})
                 gl.commit_files(
-                    project_id,
-                    [
-                        {"path": ".sprint0/focus.json", "content": _focus_json(issue)},
-                        {"path": ".vscode/settings.json", "content": _vscode_settings(issue.context_scope.files, issue.id, issue.context_scope.note)},
-                    ],
-                    branch=branch,
-                    message=f"chore(sprint0): focus context for {issue.id}",
+                    project_id, files, branch=branch,
+                    message=f"chore(sprint0): focus context for {issue.id}" + (f" + {len(seeds)} reused file(s)" if seeds else ""),
                 )
                 made.append(branch)
             except Exception:
@@ -87,5 +109,6 @@ def reroute(project_id: int, issue_iid: int, comment: str, to_runner: str | None
         f"sprint0 → re-routing to @{to_runner or 'responsible runner'} (the responsible layer), "
         f"reopened with the failing context."
     )
-    gl.reopen_issue(project_id, issue_iid, comment=note)
+    if not demo.is_demo():  # the public demo never mutates real GitLab (DEMO_MODE is the real boundary)
+        gl.reopen_issue(project_id, issue_iid, comment=note)
     return {"issue_iid": issue_iid, "rerouted_to": to_runner}

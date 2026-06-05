@@ -55,8 +55,8 @@ select:focus-visible {
 /* ⌘K command palette — cmdk on a Radix Dialog, floating over a faint wash */
 .cmd__overlay { position: fixed; inset: 0; background: rgba(26,23,20,0.10); z-index: 300; animation: pop-in var(--t-quick) both; }
 .cmd__content { position: fixed; left: 50%; top: 14vh; transform: translateX(-50%); width: 580px; max-width: 92vw; background: var(--bg-elevated); border: 0.5px solid var(--border-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-3); overflow: hidden; z-index: 301; animation: pop-in var(--t-reg) var(--ease-out) both; }
-.cmd__search { display: flex; align-items: center; gap: 10px; padding: 0 14px; height: 48px; border-bottom: 0.5px solid var(--border-subtle); color: var(--text-tertiary); }
-.cmd__search input { flex: 1; border: none; outline: none; background: transparent; font-size: 14.5px; color: var(--text-primary); font-family: var(--font-ui); }
+.cmd__search { display: flex; align-items: center; gap: 12px; padding: 0 18px; height: 54px; border-bottom: 0.5px solid var(--border-subtle); color: var(--text-tertiary); }
+.cmd__search input { flex: 1; border: none; outline: none; background: transparent; font-size: 13.5px; color: var(--text-primary); font-family: var(--font-ui); padding: 2px 0; }
 .cmd__list { max-height: 360px; overflow: auto; padding: 6px; }
 .cmd__empty { padding: 28px 14px; text-align: center; color: var(--text-quaternary); font-size: 13px; }
 .cmd__list [cmdk-group-heading] { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); padding: 8px 10px 4px; letter-spacing: 0.04em; text-transform: uppercase; }

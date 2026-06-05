@@ -13,6 +13,26 @@ _RANK = {"low": 0, "medium": 1, "high": 2}
 _ADJACENT = {"uiux": {"frontend"}, "frontend": {"uiux"}, "devops": {"backend"}, "backend": {"devops", "db"}, "qa": set()}
 # Relay DAG: these run in PARALLEL, so one dev covering two of them serializes the sprint.
 _PARALLEL = {"uiux", "backend", "devops"}
+_FREE_HORIZON = 20   # workdays — a stretch candidate free within this window is worth proposing now
+
+
+def _free_in(m: DeveloperProfile) -> int | None:
+    """Workdays until the member can start new work (from the live schedule). None when the roster
+    wasn't availability-enriched — callers then fall back to the static `load`."""
+    return m.availability.free_in_days if m.availability else None
+
+
+def _available(m: DeveloperProfile) -> bool:
+    """Worth proposing for a gap: free within the horizon (real availability), else not fully loaded."""
+    fid = _free_in(m)
+    return fid <= _FREE_HORIZON if fid is not None else m.load < 100
+
+
+def _avail_label(m: DeveloperProfile) -> str:
+    fid = _free_in(m)
+    if fid is None:
+        return "available"
+    return "available now" if fid == 0 else f"free in {fid}d"
 
 
 def _needed(plan: PlanJSON) -> set[str]:
@@ -26,13 +46,15 @@ def _qualified(member: DeveloperProfile, discipline: str) -> bool:
 def recommend(discipline: str, devs: list[DeveloperProfile]) -> dict:
     """Ranked options to fill a gap: scored stretch candidates + an onboard suggestion."""
     scored = []
-    for m in (d for d in devs if d.load < 100):
+    for m in (d for d in devs if _available(d)):
         skill = _RANK.get(m.trust_in(discipline), 0)
         adjacent = m.discipline in _ADJACENT.get(discipline, set())
         serializes = m.discipline in _PARALLEL and discipline in _PARALLEL and m.discipline != discipline
-        score = skill * 2 + (1 if adjacent else 0) - (2 if serializes else 0)
-        pros, cons = ([] if skill else []), []
-        pros.append("available now")
+        fid = _free_in(m)
+        avail_pen = 0.0 if fid is None else min(fid, _FREE_HORIZON) / _FREE_HORIZON  # sooner free → higher
+        score = skill * 2 + (1 if adjacent else 0) - (2 if serializes else 0) - avail_pen
+        pros, cons = [], []
+        pros.append(_avail_label(m))
         if adjacent:
             pros.append(f"adjacent skill ({m.discipline} → {discipline})")
         if skill == 0:
@@ -58,7 +80,7 @@ def coverage(plan: PlanJSON, members: list[DeveloperProfile]) -> list[dict]:
     devs = [m for m in members if m.role == "developer"]
     out = []
     for disc in sorted(_needed(plan)):
-        lead = next((m for m in devs if _qualified(m, disc) and m.load < 100), None)
+        lead = next((m for m in devs if _qualified(m, disc) and _available(m)), None)
         out.append({
             "discipline": disc,
             "covered": lead is not None,

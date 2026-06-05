@@ -6,18 +6,29 @@ import { Icon } from "../lib/icon";
 import { BellPanel } from "../features/notify/BellPanel";
 import { useWorkspace } from "../features/workspace/useWorkspace";
 
-export function ViewChrome({ breadcrumb, title, children }: { breadcrumb?: string[]; title?: string; children?: ReactNode }) {
+/** A crumb is plain text, or `{ label, onClick }` to make it a clickable back-link (e.g. "Relays"). */
+export type Crumb = string | { label: string; onClick: () => void };
+
+export function ViewChrome({ breadcrumb, title, children }: { breadcrumb?: Crumb[]; title?: string; children?: ReactNode }) {
   const workspace = useWorkspace();
   return (
     <div style={{ height: "var(--topbar-h)", flexShrink: 0, display: "flex", alignItems: "center", gap: 8,
       padding: "0 12px 0 16px", borderBottom: "0.5px solid var(--border-subtle)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
-        {breadcrumb?.map((b, i) => (
-          <Fragment key={i}>
-            {i > 0 && <Icon name="chevronRight" size={13} style={{ color: "var(--text-quaternary)" }} />}
-            <span style={{ fontSize: 13, fontWeight: 500, color: i === breadcrumb.length - 1 ? "var(--text-primary)" : "var(--text-tertiary)" }}>{i === 0 && b === "Studio" ? workspace : b}</span>
-          </Fragment>
-        ))}
+        {breadcrumb?.map((b, i) => {
+          const label = typeof b === "string" ? b : b.label;
+          const onClick = typeof b === "string" ? undefined : b.onClick;
+          const last = i === breadcrumb.length - 1;
+          return (
+            <Fragment key={i}>
+              {i > 0 && <Icon name="chevronRight" size={13} style={{ color: "var(--text-quaternary)" }} />}
+              <span onClick={onClick} style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap",
+                color: last ? "var(--text-primary)" : "var(--text-tertiary)", cursor: onClick ? "pointer" : "default" }}>
+                {i === 0 && label === "Studio" ? workspace : label}
+              </span>
+            </Fragment>
+          );
+        })}
         {title && <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{title}</span>}
       </div>
       <div style={{ flex: 1 }} />

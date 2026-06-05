@@ -5,6 +5,7 @@
  * State stays in Query/Zustand; this just shapes it. Also bridges mockup view-ids ↔ our route paths. */
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fmtDate } from "../lib/format";
 import { toast } from "sonner";
 import { useMe, useLogin } from "../features/auth/useAuth";
 import { useView, memberToRole } from "../features/nav/nav";
@@ -22,13 +23,13 @@ import type { Member, WorkTask, ProjectSummary, Attribution, Gate, RelayState } 
 
 type MockRole = "manager" | "developer" | "qa";
 const ROLE_CHROME: Record<MockRole, { land: string; canDispatch: boolean; canOnboard: boolean; canGovern: boolean; canRefactor: boolean; seesAllGates: boolean }> = {
-  manager: { land: "today", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
-  developer: { land: "today", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
-  qa: { land: "today", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
+  manager: { land: "relays", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
+  developer: { land: "relays", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
+  qa: { land: "relays", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
 };
 const VIEW_TO_ROUTE: Record<string, string> = {
-  today: "today", relays: "relays",
-  inbox: "inbox", mywork: "work", projects: "dashboard", relay: "relay", ratify: "queue",
+  relays: "relays", gatecontract: "gatecontract",
+  mywork: "work", projects: "dashboard", relay: "relay", ratify: "queue",
   qagate: "qa", team: "team", profiles: "profiles", codegraph: "codegraph", merges: "attributions",
   portfolio: "portfolio", passport: "passport", settings: "settings",
 };
@@ -63,7 +64,7 @@ function toMockProject(p: ProjectSummary): any {
   return {
     ...p, id: p.project_id, code: initials(p.name), status: p.kind === "reference" ? "shipped" : (p.status || "in_progress"),
     stack: Object.values(p.tech_stack ?? {}).filter((v) => v && v !== "-"), issues, devs, grounded: p.grounded_on ?? [],
-    accent: DISC_ACCENTS[hash(p.name) % DISC_ACCENTS.length], created: p.created_at ?? "", activity: p.last_activity_at ?? "",
+    accent: DISC_ACCENTS[hash(p.name) % DISC_ACCENTS.length], created: fmtDate(p.created_at), activity: fmtDate(p.last_activity_at),
   };
 }
 const toMockAttribution = (a: Attribution): any => ({
@@ -96,6 +97,11 @@ export function useApp() {
   const setWizardOpen = useUI((s) => s.setWizardOpen);
   const setWizardKind = useUI((s) => s.setWizardKind);
   const setView = (id: string) => { if (id === "wizard") { setWizardKind("brief"); setWizardOpen(true); return; } setRoute((VIEW_TO_ROUTE[id] ?? id) as never); };
+  // goTo = setView + a transient deep-link payload the destination reads on mount (a notification redirect
+  // hands GateContract `{ disc, agr }`). navPayload lives in the UI store so it survives the route change.
+  const navPayload = useUI((s) => s.navPayload);
+  const setNavPayload = useUI((s) => s.setNavPayload);
+  const goTo = (id: string, payload: Record<string, any> | null = null) => { setNavPayload(payload); setView(id); };
   const login = useLogin();
   const switchPersona = (username: string) => login.mutate(username, {
     onSuccess: (res) => {
@@ -112,8 +118,12 @@ export function useApp() {
 
   // notifications + bell
   const { data: inbox } = useInbox();
-  const notifs = useMemo(() => (inbox?.notifications ?? []).map((n) => ({ ...n, kind: n.type, unread: !n.read, time: n.created_at })), [inbox]);
-  const unread = inbox?.unread ?? 0;
+  const dismissedNotifs = useUI((s) => s.dismissedNotifs);
+  const hideNotif = useUI((s) => s.hideNotif);
+  const notifs = useMemo(() => (inbox?.notifications ?? []).filter((n) => !dismissedNotifs.includes(n.id)).map((n) => ({ ...n, kind: n.type, unread: !n.read, time: n.created_at })), [inbox, dismissedNotifs]);
+  const unread = useMemo(() => notifs.filter((n) => n.unread).length, [notifs]);
+  // delete a notification: hide it client-side (the demo DELETE no-ops) + best-effort server delete.
+  const dismissNotif = (id: string) => { hideNotif(id); api.inboxDelete(id).catch(() => {}); };
   const bellOpen = useUI((s) => s.bellOpen);
   const setBellOpen = useUI((s) => s.setBellOpen);
   const markRead = useMarkAllRead();
@@ -167,7 +177,8 @@ export function useApp() {
   const next = useMemo(() => rankNext({
     role, myDiscipline: member?.discipline ?? null, myUsername: member?.username ?? "",
     queue, relays: relaySummaries, myTasks, needs: inbox?.needs_action ?? [], projectNames,
-  }), [role, member, queue, relaySummaries, myTasks, inbox, projectNames]);
+    seatedDisciplines: members.filter((m: any) => m.discipline).map((m: any) => m.discipline),
+  }), [role, member, queue, relaySummaries, myTasks, inbox, projectNames, members]);
   const drafts = useUI((s) => s.drafts);
   const addDraft = useUI((s) => s.addDraft);
 
@@ -185,17 +196,44 @@ export function useApp() {
   const confirm = useConfirmProfile();
   const confirmProfile = (id: string) => confirm.mutate(id);
 
-  // subscriptions
-  const { data: subs = { watching: [], watchers: [] } } = useQuery({ queryKey: ["subscriptions"], queryFn: () => api.listSubscriptions() });
-  const invSubs = () => qc.invalidateQueries({ queryKey: ["subscriptions"] });
-  const isWatching = (u: string) => (subs.watching ?? []).some((w: { subject_id?: string; username?: string }) => (w.subject_id ?? w.username) === u);
-  const watch = (u: string) => { api.subscribe(u).then(invSubs); };
-  const unwatch = (u: string) => { api.unsubscribe(u).then(invSubs); };
+  // Watch = consent-based access grants (request → subject accepts → granted). The Contract-visibility key:
+  // a granted Watch un-gates a watched person's Contracts (tickets stay open). Drives the Relays person-picker.
+  const { data: access = { i_can_see: [], can_see_me: [], pending_in: [], pending_out: [] } } = useQuery({ queryKey: ["access"], queryFn: () => api.listAccess() });
+  const invAccess = () => qc.invalidateQueries({ queryKey: ["access"] });
+  const subs = useMemo(() => ({
+    watching: (access.i_can_see ?? []).map((g) => g.subject_id),     // people I watch (granted)
+    watchers: (access.can_see_me ?? []).map((g) => g.requester_id),  // people watching me (granted)
+  }), [access]);
+  const watchedPeople = subs.watching;
+  const watchStatus = (u: string): "none" | "pending" | "active" =>
+    (access.i_can_see ?? []).some((g) => g.subject_id === u) ? "active"
+      : (access.pending_out ?? []).some((g) => g.subject_id === u) ? "pending" : "none";
+  const isWatching = (u: string) => watchStatus(u) === "active";
+  const requestWatch = (u: string) => { api.requestAccess(u).then(invAccess); };
+  const unwatch = (u: string) => {  // cancel my pending request OR stop an active watch
+    const g = [...(access.i_can_see ?? []), ...(access.pending_out ?? [])].find((x) => x.subject_id === u);
+    if (g) api.revokeAccess(g.id).then(invAccess);
+  };
+  const removeWatcher = (u: string) => {  // revoke someone who watches me
+    const g = (access.can_see_me ?? []).find((x) => x.requester_id === u);
+    if (g) api.revokeAccess(g.id).then(invAccess);
+  };
+  const personFilter = useUI((s) => s.personFilter);
+  const setPersonFilter = useUI((s) => s.setPersonFilter);
+  // incoming Watch requests awaiting MY accept (the consent step) → drive the Inbox accept/reject.
+  const accessRequests = useMemo(() => (inbox?.needs_action ?? []).filter((n) => n.kind === "access_request"), [inbox]);
+  const acceptAccess = (grantId: string) => { api.acceptAccess(grantId).then(() => { qc.invalidateQueries({ queryKey: qk.inbox() }); invAccess(); }); };
+  const rejectAccess = (grantId: string) => { api.rejectAccess(grantId).then(() => { qc.invalidateQueries({ queryKey: qk.inbox() }); invAccess(); }); };
 
   // reschedule proposal (first pending, from the inbox)
   const proposalNeed = (inbox?.needs_action ?? []).find((n) => n.kind === "reschedule");
   const proposal: any = (proposalNeed?.item as any) ?? null;
   const resolveProposal = (decision: "applied" | "rejected") => { const id = proposal?.id; if (!id) return; (decision === "applied" ? api.applyReschedule(id) : api.rejectReschedule(id)).then(() => qc.invalidateQueries({ queryKey: qk.inbox() })); };
+
+  // agreements (interface Contracts) for the active plan — GateContract pairs each gate with the Contracts
+  // its slice produces / consumes (filtered there by producer/consumer discipline).
+  const { data: agData } = useQuery({ queryKey: ["planAgreements", planId], queryFn: () => api.planAgreements(planId!), enabled: !!planId });
+  const agreements = useMemo(() => agData?.agreements ?? [], [agData]);
 
   // merge attributions
   const { data: attrsRaw } = useQuery({ queryKey: ["attributions"], queryFn: () => api.attributions(), enabled: role === "manager" });
@@ -213,13 +251,15 @@ export function useApp() {
   };
 
   return {
-    me, role, chrome, view, setView, switchPersona, members, next,
-    notifs, unread, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
+    me, role, chrome, view, setView, goTo, navPayload, switchPersona, members, next,
+    notifs, unread, dismissNotif, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
+    agreements,
     gates, dial, applyDial, autonomy, setAutonomy, actGate, ratifyWith, cards, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,
     profiles, confirmProfile,
-    subs, isWatching, watch, unwatch,
+    subs, isWatching, watchStatus, requestWatch, unwatch, removeWatcher, watchedPeople, personFilter, setPersonFilter,
+    accessRequests, acceptAccess, rejectAccess,
     proposal, resolveProposal,
     attributions, resolveAttribution,
     drift, scheduleRefactor,

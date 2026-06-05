@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Poin
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Icon, type IconName } from "../../lib/icon";
-import { ZeroMark } from "../../lib/icon";
 import { ViewChrome } from "../../components/ViewChrome";
 import {
   Avatar, Badge, Button, DiscDot, DISC, IconButton, SectionHeader, StatusIcon, Tab, TrustDot,
@@ -19,6 +18,7 @@ import { ProjectSwitcher } from "../../components/ProjectSwitcher";
 import { KindSurface } from "../KindSurface";
 import type { Member, WorkTask, TaskStatus } from "../../lib/api";
 import { api } from "../../lib/api";
+import { qk } from "../../lib/query";
 
 /* ── local presentational maps + helpers (ported from data.jsx / data3.jsx) ─────────────────────── */
 const RISK_META: Record<string, { label: string; tone: "red" | "amber" | "neutral" }> = {
@@ -55,16 +55,12 @@ const columnOf = (s: string) => (s === "blocked" ? "in_progress" : s);
 export function WorkHub() {
   const { me, role, members, tasks: allTasks } = useApp();
   const byUser = (u: string | null | undefined) => members.find((m) => m.username === u);
-  const [tasks, setTasks] = useState<AnyTask[]>(() => allTasks.map((t) => ({ ...t })));
   const [scope, setScope] = useState(role === "manager" ? "team" : "me"); // me | team
   const [personFilter, setPersonFilter] = useState<string | null>(null); // @person assignee filter
   const [mode, setMode] = useState<"board" | "list" | "timeline">("board");
   const [selected, setSelected] = useState<string | null>(null);
   const [exec, setExec] = useState<string | null>(null); // §25 open the code-focus execution surface
   const projectFilter = useUI((s) => s.projectFilter); // shared cross-view project filter (null = All)
-
-  // keep local board state in sync if the adapter's task list changes
-  useEffect(() => { setTasks(allTasks.map((t) => ({ ...t }))); }, [allTasks]);
 
   // Today "Open scope" deep-link: open the code-focus surface for the requested issue, then clear it.
   const activeIssue = useUI((s) => s.activeIssue);
@@ -73,16 +69,15 @@ export function WorkHub() {
 
   const setTaskStatus = useSetTaskStatus();
   const move = useCallback((id: string, status: string) => {
-    setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, status: status as WorkTask["status"] } : t)));  // instant
-    setTaskStatus.mutate({ id, status: status as TaskStatus });  // persist (+ server reflow-on-done + notify)
+    setTaskStatus.mutate({ id, status: status as TaskStatus });  // optimistic cache patch + persist (+ reflow-on-done + notify)
   }, [setTaskStatus]);
 
-  const shown = tasks.filter((t) =>
+  const shown = allTasks.filter((t) =>
     (scope === "me" ? t.assignee === me.username : true) &&
     (projectFilter == null || (t.project ?? t.project_id) === projectFilter) &&
     (personFilter == null || t.assignee === personFilter));
-  const sel = tasks.find((t) => t.id === selected) || null;
-  const execTask = tasks.find((t) => t.id === exec) || null;
+  const sel = allTasks.find((t) => t.id === selected) || null;
+  const execTask = allTasks.find((t) => t.id === exec) || null;
   // developers/qa open their card straight into the execution surface
   const openCard = (id: string) => { if (role === "manager") setSelected(id); else setExec(id); };
 
@@ -104,14 +99,14 @@ export function WorkHub() {
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
           <ScopeBar scope={scope} setScope={setScope} count={shown.length} members={members} personFilter={personFilter} setPersonFilter={setPersonFilter} byUser={byUser} />
-          {role !== "manager" && <FocusBanner tasks={tasks} onOpen={setExec} />}
+          {role !== "manager" && <FocusBanner tasks={allTasks} onOpen={setExec} />}
           <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {mode === "board" && <Board tasks={shown} onMove={move} onOpen={openCard} selected={selected} byUser={byUser} />}
             {mode === "list" && <ListView tasks={shown} onOpen={openCard} selected={selected} byUser={byUser} />}
             {mode === "timeline" && <Timeline tasks={shown} onOpen={openCard} members={members} />}
           </div>
         </div>
-        {sel && <TaskPanel task={sel} onClose={() => setSelected(null)} onScope={() => { setSelected(null); setExec(sel.id); }} tasks={tasks} byUser={byUser} />}
+        {sel && <TaskPanel task={sel} onClose={() => setSelected(null)} onScope={() => { setSelected(null); setExec(sel.id); }} tasks={allTasks} byUser={byUser} />}
       </div>
     </div>
   );
@@ -161,6 +156,7 @@ function QuickAdd() {
   const [priority, setPriority] = useState("normal");
   const [est, setEst] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const isLead = role !== "manager";  // a dev/qa lead can only create in their own discipline
   if (role !== "manager" && !me?.discipline) return null;
   const target = (projects as any[]).find((p) => p.project_id === projectFilter)
@@ -194,18 +190,22 @@ function QuickAdd() {
               onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
               style={{ height: 32, padding: "0 10px", border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)",
                 fontSize: 13, outline: "none", background: "var(--bg-elevated)", color: "var(--text-primary)" }} />
-            <div style={{ display: "flex", gap: 6 }}>
-              <select value={isLead ? me.discipline : discipline} disabled={isLead} onChange={(e) => setDiscipline(e.target.value)} style={SEL_STYLE}>
-                {["uiux", "backend", "frontend", "devops", "qa"].map((d) => <option key={d} value={d}>{DISC[d]?.label ?? d}</option>)}
-              </select>
-              <select value={priority} onChange={(e) => setPriority(e.target.value)} style={SEL_STYLE}>
-                {["low", "normal", "high", "urgent"].map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <input type="number" min={0.5} step={0.5} value={est} title="estimate (days)"
-                onChange={(e) => setEst(Number(e.target.value) || 1)} style={{ ...SEL_STYLE, width: 62, flex: "none" }} />
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+            {showDetails && (
+              <div style={{ display: "flex", gap: 6 }}>
+                <select value={isLead ? me.discipline : discipline} disabled={isLead} onChange={(e) => setDiscipline(e.target.value)} style={SEL_STYLE}>
+                  {["uiux", "backend", "frontend", "devops", "qa"].map((d) => <option key={d} value={d}>{DISC[d]?.label ?? d}</option>)}
+                </select>
+                <select value={priority} onChange={(e) => setPriority(e.target.value)} style={SEL_STYLE}>
+                  {["low", "normal", "high", "urgent"].map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <input type="number" min={0.5} step={0.5} value={est} title="estimate (days)"
+                  onChange={(e) => setEst(Number(e.target.value) || 1)} style={{ ...SEL_STYLE, width: 62, flex: "none" }} />
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <Button variant="ghost" size="sm" onClick={suggest} disabled={!title.trim()}>✨ Suggest</Button>
+              <button onClick={() => setShowDetails((v) => !v)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11.5, color: "var(--text-tertiary)", padding: "0 2px" }}>{showDetails ? "Hide details" : "Details"}</button>
+              <div style={{ flex: 1 }} />
               <Button variant="primary" size="sm" iconRight="arrowRight" onClick={submit} disabled={!title.trim() || !target || busy}>{busy ? "Adding…" : "Add task"}</Button>
             </div>
           </div>
@@ -430,6 +430,7 @@ function TaskCard({ task: t, onOpen, selected, dragging, floating, onStartDrag, 
           <DiscDot d={t.discipline} /><span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{DISC[t.discipline]?.label}</span>
         </span>
         <div style={{ flex: 1 }} />
+        {byOf(t) && byOf(t) !== "ai" && byOf(t) !== "self" && <Badge tone="outline" mono>added @{byOf(t)}</Badge>}
         {byOf(t) === "ai" && <Badge tone="neutral" mono><span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)", display: "inline-block" }} />ai</Badge>}
         <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{estOf(t)}d</span>
         <Avatar name={byUser(t.assignee)?.name || "?"} size={18} />
@@ -536,8 +537,26 @@ function TaskPanel({ task: t, onClose, onScope, tasks, byUser }: {
   task: AnyTask; onClose: () => void; onScope: () => void; tasks: AnyTask[]; byUser: (u: string | null | undefined) => Member | undefined;
 }) {
   const { projects } = useApp();
+  const qc = useQueryClient();
   const a = byUser(t.assignee);
   const dep = depOf(t);
+  // The compound loop: a merged Done task grows its assignee's passport (per-discipline trust climbs).
+  const recordMerge = async () => {
+    if (!t.assignee) return;
+    try {
+      const grown = (await api.merge({ gitlab_username: t.assignee, task_type: t.discipline })) as any;
+      if (grown?.needs_attribution) {
+        toast.message("Merge queued for the manager to attribute");
+      } else {
+        const disc = grown?.grew_discipline ?? t.discipline;
+        const tier = grown?.trust?.[disc] ?? grown?.trust_level ?? "";
+        toast.success(`Passport grew — ${a?.name ?? t.assignee}: ${DISC[disc as keyof typeof DISC]?.label ?? disc} now ${tier}${grown?.promoted ? " ↑" : ""}`);
+      }
+      qc.invalidateQueries({ queryKey: qk.roster() });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Record merge failed");
+    }
+  };
   return (
     <div style={{ width: "var(--panel-w)", flexShrink: 0, borderLeft: "0.5px solid var(--border)",
       display: "flex", flexDirection: "column", minHeight: 0, background: "var(--bg-elevated)",
@@ -582,13 +601,15 @@ function TaskPanel({ task: t, onClose, onScope, tasks, byUser }: {
           </>
         )}
 
-        <div className="kicker" style={{ marginBottom: 8 }}>Provenance</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)",
-          background: "var(--bg-secondary)", marginBottom: 16 }}>
-          {byOf(t) === "ai"
-            ? <><ZeroMark size={16} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)", flex: 1 }}>Assigned by sprint0{t.gap_cover ? " — covering the orphan gap" : ""}</span>{t.score != null && <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>match {t.score}</span>}</>
-            : <><Avatar name={a?.name} size={18} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>Self-claimed by {a?.name?.split(" ")[0]}</span></>}
-        </div>
+        {byOf(t) !== "ai" && (
+          <>
+            <div className="kicker" style={{ marginBottom: 8 }}>Provenance</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)",
+              background: "var(--bg-secondary)", marginBottom: 16 }}>
+              <Avatar name={a?.name} size={18} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>Self-claimed by {a?.name?.split(" ")[0]}</span>
+            </div>
+          </>
+        )}
 
         {dep.length > 0 && (
           <>
@@ -609,7 +630,9 @@ function TaskPanel({ task: t, onClose, onScope, tasks, byUser }: {
       </div>
 
       <div style={{ borderTop: "0.5px solid var(--border-subtle)", padding: 10, display: "flex", gap: 8 }}>
-        <Button variant="primary" size="md" iconRight="arrowRight" style={{ flex: 1 }} onClick={onScope}>Open scope</Button>
+        {t.status === "done"
+          ? <Button variant="primary" size="md" icon="check" style={{ flex: 1 }} onClick={recordMerge}>Record merge</Button>
+          : <Button variant="primary" size="md" iconRight="arrowRight" style={{ flex: 1 }} onClick={onScope}>Open scope</Button>}
         <Button variant="secondary" size="md" icon="gitlab">Open</Button>
       </div>
     </div>

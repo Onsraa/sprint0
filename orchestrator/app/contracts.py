@@ -108,6 +108,17 @@ class PlanJSON(BaseModel):
     epics: list[Epic]
 
 
+# ── Availability (when can this person start new work — derived from the live schedule) ──
+class Availability(BaseModel):
+    """Honest capacity signal: NOT a load %, but the earliest day a member can pick up new work,
+    computed server-side from their scheduled tasks (+ external-commitment baseline). `free_in_days==0`
+    means free now."""
+    available_on: str                # ISO date — earliest start for new work
+    free_in_days: int = 0            # workdays from today → available_on (0 = free now)
+    queued_days: float = 0.0         # Σ estimate_days of active (not-done) assigned tasks
+    active_count: int = 0            # number of active assigned tasks
+
+
 # ── Developer profiles (spec §4, API view — embedding stays server-side) ──
 class DeveloperProfile(BaseModel):
     name: str
@@ -125,6 +136,7 @@ class DeveloperProfile(BaseModel):
     gitlab_user_id: Optional[int] = None        # real GitLab user → native assignee; None = label-only
     trust: dict[str, TrustLevel] = Field(default_factory=dict)  # per-discipline tier (overrides trust_level)
     joined: Optional[str] = None                # ISO month joined the agency (YYYY-MM); shown on the Passport
+    availability: Optional[Availability] = None  # server-computed (roster API only); when they can start new work
 
     @model_validator(mode="after")
     def _default_username(self) -> "DeveloperProfile":
@@ -175,6 +187,7 @@ class ParsedCV(BaseModel):
     name: str
     gitlab_username: str
     skills_text: str
+    suggested_discipline: Optional[Discipline] = None  # the AI's lane guess (manager confirms → seats them)
 
 
 class PlanRequest(BaseModel):
@@ -214,6 +227,7 @@ class Gate(BaseModel):
     status: GateStatus = "pending"
     depends_on: list[Lane] = Field(default_factory=list)  # gates that must finish first
     note: str = ""
+    delegate: Optional[str] = None  # human-in-control: a lead handed this gate (+ its slice) to this user to ratify
     # ── spine refactor (P0, additive): the router's per-gate decision; all null on legacy gates ──
     tier: Optional[RoutingTier] = None            # auto_pass | one_expert | two_expert (the router's call)
     confidence: Optional[int] = None              # AI confidence (0-100) feeding P(error)
@@ -301,6 +315,116 @@ class Decision(BaseModel):
     updated_at: str
 
 
+# ── Agreements (the coordination spine): AI-drafted, async-ratified, compounding ──
+class SchemaField(BaseModel):
+    """One field of an interface payload — a Gemini-safe stand-in for JSON-Schema (no open dicts)."""
+    name: str
+    type: Literal["string", "number", "integer", "boolean", "object", "array", "null"] = "string"
+    required: bool = True
+    note: str = ""
+
+
+class FileChange(BaseModel):
+    """One file a solution or contract touches, with the KIND of change. `change` is a closed enum (Gemini-safe).
+    The SERVER reconciles it against the known file set (code graph / reuse pack): a path that does not exist can
+    only be `add`, and `remove` is honored only for a known path with explicit intent — never a blind delete."""
+    path: str = ""
+    change: Literal["add", "modify", "remove"] = "modify"
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, v: str) -> str:
+        return (v or "")[:160]
+
+
+class InterfaceDraft(BaseModel):
+    """A cross-discipline interface contract (CDD) — the typed payload of an `interface` Agreement. The AI
+    drafts it from both slices' needs, grounded on past interfaces; both leads ratify it BEFORE either builds."""
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+    path: str = ""                                            # e.g. /api/listings/{id}
+    request_fields: list[SchemaField] = Field(default_factory=list)
+    response_fields: list[SchemaField] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)           # e.g. ["404 not_found", "409 conflict"]
+    note: str = ""
+
+
+class InterfaceProposal(BaseModel):
+    """One pickable API-shape option for a contract — the SolutionCard analogue for an interface. The producer
+    picks one (or writes their own); each carries a short why + pros/cons so the call is informed."""
+    id: str = ""
+    source: Literal["memory", "ai", "user"] = "ai"
+    interface: InterfaceDraft = Field(default_factory=InterfaceDraft)
+    why: str = ""
+    pros: list[str] = Field(default_factory=list)
+    cons: list[str] = Field(default_factory=list)
+    grounded_on: list[str] = Field(default_factory=list)   # past project(s) reused (memory source)
+    confidence: int = 50
+    file_changes: list[FileChange] = Field(default_factory=list)  # producer-side files this shape implies (add/modify/remove)
+
+    @field_validator("why")
+    @classmethod
+    def _why(cls, v: str) -> str:
+        return (v or "")[:140]
+
+    @field_validator("pros", "cons")
+    @classmethod
+    def _items(cls, v: list[str]) -> list[str]:
+        return [_trunc_words(x, 8) for x in (v or [])[:3]]
+
+    @field_validator("confidence")
+    @classmethod
+    def _conf(cls, v: int) -> int:
+        return max(0, min(100, int(v)))
+
+
+class ContractProposalSet(BaseModel):
+    """The AI's answer for ONE cross-discipline edge: either it is NOT a real API boundary (`needed=false` —
+    skip the contract, no noise), or a few shape options the producer chooses from. Gemini-safe (no open dict)."""
+    needed: bool = True
+    skip_reason: str = ""
+    proposals: list[InterfaceProposal] = Field(default_factory=list)
+
+    @field_validator("skip_reason")
+    @classmethod
+    def _skip(cls, v: str) -> str:
+        return (v or "")[:140]
+
+
+class SubteamDraft(BaseModel):
+    """For 2+ devs on ONE discipline's slice — the AI proposes pair (high-risk → review / junior+senior →
+    mentorship) or split (by skill, faster). The lane lead ratifies; the second dev's channel is Watch."""
+    discipline: str = ""
+    mode: Literal["pair", "split"] = "split"
+    members: list[str] = Field(default_factory=list)
+    rationale: str = ""
+
+
+class Agreement(BaseModel):
+    """The coordination unit: an AI-drafted, async-ratified, compounding decision. One shape per kind; the
+    typed draft lives in a per-kind slot (`interface`, `subteam`). Additive — does NOT replace `Decision`."""
+    id: str
+    type: Literal["interface", "subteam", "reuse", "reschedule", "handoff", "assign", "priority"]
+    plan_id: str
+    subject: str = ""                                         # human label of what it binds
+    interface: Optional[InterfaceDraft] = None                # set when type == "interface" — the CURRENT agreed shape
+    proposals: list[InterfaceProposal] = Field(default_factory=list)  # the reuse/fresh/write-own options the producer picks from
+    chosen_proposal_id: Optional[str] = None                  # which proposal the producer signed (→ `interface`)
+    subteam: Optional[SubteamDraft] = None                    # set when type == "subteam"
+    grounded_on: list[str] = Field(default_factory=list)
+    ratifiers: list[str] = Field(default_factory=list)        # the MINIMAL consent set (usernames)
+    ratifications: list[dict] = Field(default_factory=list)   # [{by, decision: ratified|rejected, at, note}]
+    state: Literal["proposed", "auto_passed", "ratified", "rejected", "active", "validated", "superseded"] = "proposed"
+    precedent_id: Optional[str] = None                        # the past ratified agreement it matched (auto-pass)
+    superseded_by: Optional[str] = None                       # the newer versioned agreement that replaced this one (renegotiation)
+    # interface routing/verify context
+    producer_issue_id: Optional[str] = None
+    consumer_issue_id: Optional[str] = None
+    producer_discipline: Optional[str] = None
+    consumer_discipline: Optional[str] = None
+    created_at: str = ""
+    updated_at: str = ""
+
+
 class Notification(BaseModel):
     """A row in a member's Inbox feed. `type` covers ratify, access, QA, ship, and (Phase E)
     reschedule events; `ref` carries deep-link ids (plan_id/grant_id/task_id)."""
@@ -308,7 +432,7 @@ class Notification(BaseModel):
     user_id: str                  # recipient username
     type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed",
                   "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned",
-                  "task_completed", "drift_flagged"]
+                  "task_completed", "drift_flagged", "agreement_proposed"]
     title: str
     body: str = ""
     ref: dict = Field(default_factory=dict)
@@ -544,13 +668,19 @@ class SolutionCard(BaseModel):
     grounded_on: list[str] = Field(default_factory=list)   # past-project name(s) reused (memory source)
     delta_note: str = ""                                   # "variant of X + <delta>" when fresh ≈ memory
     impacted_files: list[str] = Field(default_factory=list)  # server-computed (context_scope ∪ graph deps)
+    file_changes: list[FileChange] = Field(default_factory=list)  # per-file change kind (add/modify/remove); demo-authored, live = server-classified
+    # ── #33 Contract richness: provenance signals (conflict LLM-flagged in context; grade/signal server-derived) ──
+    conflict: bool = False                                  # contradicts a past TEAM decision fed into the prompt
+    conflict_reason: str = ""                               # which decision it contradicts (≤140); shown as the warning
+    grade: Optional[Literal["proposed", "shipped", "prod_survived", "retro_validated"]] = None  # earned strength (memory only)
+    signal: Literal["green", "orange", "grey"] = "grey"     # server-derived triage roll-up (grading.signal_for)
 
     @field_validator("title")
     @classmethod
     def _title(cls, v: str) -> str:
         return _trunc_words(v, 7)
 
-    @field_validator("summary", "delta_note")
+    @field_validator("summary", "delta_note", "conflict_reason")
     @classmethod
     def _line(cls, v: str) -> str:
         return (v or "")[:140]
@@ -575,6 +705,7 @@ class SolutionSet(BaseModel):
     """All solutions for one gate — one LLM call generates them. `discipline` is server-set."""
     discipline: str = ""
     solutions: list[SolutionCard] = Field(default_factory=list)
+    chosen: Optional[SolutionCard] = None  # the ratified pick (review of a done gate); None when auto-passed
 
 
 class RegenIssue(BaseModel):
@@ -587,6 +718,13 @@ class RegenIssue(BaseModel):
 class RegeneratedSlice(BaseModel):
     """The AI's rewrite of a gate's issues to match a user-WRITTEN solution (the reactive beat)."""
     issues: list[RegenIssue] = Field(default_factory=list)
+
+
+class AdaptedCode(BaseModel):
+    """Reuse layer-2: a reused source file lightly adapted to the new project's stack/naming — the
+    seeded focus-branch draft. `code` is the adapted file content; `notes` is a one-line change summary."""
+    code: str = ""
+    notes: str = ""
 
 
 class RatifyRequest(BaseModel):

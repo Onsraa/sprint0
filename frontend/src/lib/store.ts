@@ -3,6 +3,7 @@
  * TanStack Query, never here. Keeping the two apart is what stops the "why is my state stale" class
  * of bugs. (Absorbed AppContext's UI fields across P4–P8 — the last of the spine.) */
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import type { Discipline, PlanJSON } from "./api";
 import type { WizardKind } from "../app/types";
 
@@ -19,6 +20,18 @@ interface UIState {
   /** Bell dropdown (P6). */
   bellOpen: boolean;
   setBellOpen: (open: boolean) => void;
+  /** Transient deep-link payload a notification redirect hands the destination view (e.g. GateContract
+   *  reads `{ disc, agr }` to open the right lane). Set by goTo(view, payload); read once on mount. */
+  navPayload: Record<string, any> | null;
+  setNavPayload: (p: Record<string, any> | null) => void;
+  /** Locally-dismissed notification ids. The demo backend's DELETE no-ops, so the hide must persist
+   *  client-side (every refetch would otherwise resurrect the row); useApp filters notifs by this. */
+  dismissedNotifs: string[];
+  hideNotif: (id: string) => void;
+  /** Left-nav collapsed rail. In the store (not local state) so it survives shell remounts
+   *  (wizard / persona switch) and — via persist — a reload. */
+  navCollapsed: boolean;
+  toggleNav: () => void;
 
   /** Wizard modal (P8 — off AppContext). */
   wizardOpen: boolean;
@@ -47,6 +60,10 @@ interface UIState {
   projectFilter: number | null;
   setProjectFilter: (id: number | null) => void;
 
+  /** Relays person filter (PersonSwitcher): review a watched person's relays. null = your own scope. */
+  personFilter: string | null;
+  setPersonFilter: (u: string | null) => void;
+
   /** Dev-surface focus. */
   activeIssue: string | null;
   setActiveIssue: (id: string | null) => void;
@@ -60,6 +77,7 @@ interface UIState {
   /** Wizard drafts (saved before dispatch; shown on Projects). */
   drafts: any[];
   addDraft: (d: any) => any;
+  removeDraftByName: (name: string) => void;
 
   /** Clear all session-scoped UI on logout. */
   resetSession: () => void;
@@ -79,9 +97,11 @@ const SESSION_DEFAULTS = {
   activeDev: null,
   panelTaskId: null,
   bellOpen: false,
+  navPayload: null,
+  dismissedNotifs: [],
 };
 
-export const useUI = create<UIState>((set) => ({
+export const useUI = create<UIState>()(persist((set) => ({
   paletteOpen: false,
   openPalette: () => set({ paletteOpen: true }),
   closePalette: () => set({ paletteOpen: false }),
@@ -91,6 +111,12 @@ export const useUI = create<UIState>((set) => ({
   closePanel: () => set({ panelTaskId: null }),
   bellOpen: false,
   setBellOpen: (bellOpen) => set({ bellOpen }),
+  navPayload: null,
+  setNavPayload: (navPayload) => set({ navPayload }),
+  dismissedNotifs: [],
+  hideNotif: (id) => set((s) => (s.dismissedNotifs.includes(id) ? s : { dismissedNotifs: [...s.dismissedNotifs, id] })),
+  navCollapsed: false,
+  toggleNav: () => set((s) => ({ navCollapsed: !s.navCollapsed })),
 
   wizardOpen: false,
   setWizardOpen: (wizardOpen) => set({ wizardOpen }),
@@ -112,6 +138,8 @@ export const useUI = create<UIState>((set) => ({
   setLiveCloneUrl: (liveCloneUrl) => set({ liveCloneUrl }),
   projectFilter: null,
   setProjectFilter: (projectFilter) => set({ projectFilter }),
+  personFilter: null,
+  setPersonFilter: (personFilter) => set({ personFilter }),
 
   activeIssue: null,
   setActiveIssue: (activeIssue) => set({ activeIssue }),
@@ -125,6 +153,7 @@ export const useUI = create<UIState>((set) => ({
     set((s) => ({ drafts: [draft, ...s.drafts] }));
     return draft;
   },
+  removeDraftByName: (name) => set((s) => ({ drafts: s.drafts.filter((d: any) => d.name !== name) })),
 
   resetSession: () => set(SESSION_DEFAULTS),
-}));
+}), { name: "sprint0-ui", partialize: (s) => ({ navCollapsed: s.navCollapsed }) }));

@@ -21,7 +21,7 @@ from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
 URI = os.environ["MONGODB_URI"]
-DB = os.getenv("MONGODB_DB", "orchestrator")
+DB = os.getenv("MONGODB_DB", "sprint0")
 PP_INDEX = os.getenv("PAST_PROJECTS_VECTOR_INDEX", "pp_vector_index")
 MODEL = os.getenv("VOYAGE_MODEL", "voyage-3.5-lite")
 DIMS = int(os.getenv("EMBEDDING_DIMS", "1024"))

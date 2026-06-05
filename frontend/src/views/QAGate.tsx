@@ -49,9 +49,11 @@ export function QAGate() {
   const [running, setRunning] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [rejecting, setRejecting] = useState<string | null>(null); // issue_id being rejected
+  const [openId, setOpenId] = useState<number | null>(null); // which project's acceptance detail is open (null = the queue list)
+  const [tester, setTester] = useState<any>(null); // who sprint0 routed acceptance to (qaRun → best-by-passport)
 
   // follow the topbar ProjectSwitcher; otherwise default to the top queue entry once it loads
-  useEffect(() => { if (projectFilter != null && projectFilter !== projectId) { setProjectId(projectFilter); setRan(false); setItems([]); setRejecting(null); } }, [projectFilter, projectId]);
+  useEffect(() => { if (projectFilter != null && projectFilter !== projectId) { setProjectId(projectFilter); setRan(false); setItems([]); setRejecting(null); setTester(null); } }, [projectFilter, projectId]);
   useEffect(() => { if (projectId == null && queue.length) setProjectId(queue[0].project_id); }, [queue, projectId]);
 
   const project = projects.find((p: any) => p.project_id === projectId);
@@ -69,6 +71,7 @@ export function QAGate() {
     try {
       const report = await api.qaRun(projectId);
       setItems(report.items.map(toLocalItem));
+      setTester(report.tester ?? null);
       setRan(true);
       setRejecting(null);
       toast.success("Acceptance run complete", {
@@ -93,87 +96,129 @@ export function QAGate() {
       toast.error(e instanceof Error ? e.message : "Reject failed");
     }
   };
+  const openProject = (id: number) => { setProjectId(id); setOpenId(id); setRan(false); setItems([]); setRejecting(null); setTester(null); };
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <ViewChrome breadcrumb={[project?.name ?? "QA", "Tester"]}>
-        <Badge tone={gateBlocked ? "red" : "green"}>{gateBlocked ? "gate blocked" : "gate open"}</Badge>
-        <Badge tone="outline" mono>{ran ? `${total} checks` : (sel?.plan_id ?? "—")}</Badge>
+      <ViewChrome breadcrumb={openId == null ? ["Studio", "Tester"] : ["Tester", project?.name ?? "Acceptance"]}>
+        {openId == null
+          ? <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{queueShown.length} {queueShown.length === 1 ? "project" : "projects"}</span>
+          : <>
+              <Badge tone={gateBlocked ? "red" : "green"}>{gateBlocked ? "gate blocked" : "gate open"}</Badge>
+              <Badge tone="outline" mono>{ran ? `${total} checks` : (sel?.plan_id ?? "—")}</Badge>
+            </>}
         <ProjectSwitcher />
       </ViewChrome>
 
       <div style={{ flex: 1, overflow: "auto" }}>
         <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 28px 56px" }}>
-          {/* cross-project QA queue — pick a project's acceptance to run */}
-          <div className="kicker" style={{ fontSize: 10, marginBottom: 10 }}>QA queue · acceptance across projects</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 22 }}>
-            {queueShown.length === 0 ? (
-              <div style={{ padding: "13px 14px", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)",
-                background: "var(--bg-secondary)", fontSize: 12.5, color: "var(--text-tertiary)" }}>
-                {projectFilter != null ? "This project's accept gate has no outstanding QA." : "No projects need QA right now."}
+          {openId == null ? (
+            /* the acceptance QUEUE — the list of projects with outstanding acceptance (JIT, like the relays) */
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 6px" }}>Acceptance queue</h1>
+                <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.5 }}>
+                  Every project with acceptance work — pick one to run its checklist. The <b style={{ color: "var(--text-primary)" }}>accept</b> gate is the last stage before ship.
+                </p>
               </div>
-            ) : queueShown.map((e) => (
-              <QueueRow key={e.project_id} e={e} active={projectId === e.project_id}
-                onClick={() => { setProjectId(e.project_id); setRan(false); setItems([]); setRejecting(null); }} />
-            ))}
-          </div>
-
-          {/* header */}
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 16, marginBottom: 20 }}>
-            <div style={{ flex: 1 }}>
-              <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 6px" }}>Acceptance & integration</h1>
-              <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.5 }}>
-                The <b style={{ color: "var(--text-primary)" }}>accept</b> gate — stage <span className="mono" style={{ color: "var(--text-secondary)" }}>build ∥ → integrate → accept</span>. Reject a failing check to reroute it to the runner.
-              </p>
-            </div>
-            <Button variant="secondary" size="md" icon="ratify" disabled={running || projectId == null} onClick={runAcceptance}>{running ? "Running…" : ran ? "Re-run acceptance" : "Run acceptance"}</Button>
-          </div>
-
-          {!ran ? (
-            /* empty state — no real run yet (the seed strip/checklist below stays as a preview) */
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderRadius: "var(--r-lg)",
-              border: "0.5px solid var(--border)", background: "var(--bg-secondary)", marginBottom: 20 }}>
-              <Icon name="ratify" size={14} style={{ color: "var(--text-tertiary)" }} />
-              <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>
-                {running ? "Running the acceptance checklist…" : "Run acceptance to score this project's checklist against the real backend."}
-              </span>
-            </div>
-          ) : null}
-
-          {/* score */}
-          <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: "var(--r-lg)",
-            border: "0.5px solid var(--border)", background: "var(--bg-secondary)", marginBottom: 20 }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: 26, fontWeight: 600, letterSpacing: "-1px" }}>{pass}<span style={{ color: "var(--text-quaternary)" }}>/{total}</span></span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 500 }}>acceptance checks pass</div>
-              <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
-                {display.map((i: any) => (
-                  <span key={i.issue_id} style={{ flex: 1, height: 5, borderRadius: 3,
-                    background: i.rerouted ? "var(--text-quaternary)" : `var(--${VERDICT_META[i.verdict].tone === "green" ? "green" : VERDICT_META[i.verdict].tone === "red" ? "red" : "amber"})` }} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {queueShown.length === 0 ? (
+                  <div style={{ padding: "13px 14px", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)",
+                    background: "var(--bg-secondary)", fontSize: 12.5, color: "var(--text-tertiary)" }}>
+                    {projectFilter != null ? "This project's accept gate has no outstanding acceptance." : "No projects need acceptance right now."}
+                  </div>
+                ) : queueShown.map((e) => (
+                  <QueueRow key={e.project_id} e={e} active={false} onClick={() => openProject(e.project_id)} />
                 ))}
               </div>
-            </div>
-          </div>
-
-          {/* checklist */}
-          <div className="kicker" style={{ marginBottom: 10 }}>Acceptance checklist</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
-            {ran && display.length === 0 ? (
-              <div style={{ padding: "13px 14px", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)",
-                background: "var(--bg-elevated)", fontSize: 12.5, color: "var(--text-tertiary)" }}>
-                No acceptance checks for this project.
+            </>
+          ) : (
+            /* the selected project's acceptance DETAIL — run + score + checklist + integration */
+            <>
+              <button onClick={() => setOpenId(null)} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 14, fontSize: 12.5, fontWeight: 500, color: "var(--text-tertiary)" }}>
+                <Icon name="chevronLeft" size={14} /> Acceptance queue
+              </button>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 16, marginBottom: 20 }}>
+                <div style={{ flex: 1 }}>
+                  <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 6px" }}>Acceptance & integration</h1>
+                  <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.5 }}>
+                    The <b style={{ color: "var(--text-primary)" }}>accept</b> gate — stage <span className="mono" style={{ color: "var(--text-secondary)" }}>build ∥ → integrate → accept</span>. Reject a failing check to reroute it to the runner.
+                  </p>
+                </div>
+                <Button variant="secondary" size="md" icon="ratify" disabled={running || projectId == null} onClick={runAcceptance}>{running ? "Running…" : ran ? "Re-run acceptance" : "Run acceptance"}</Button>
               </div>
-            ) : display.map((i: any) => (
-              <AcceptanceItem key={i.issue_id} item={i} byUser={byUser} members={members}
-                rejecting={rejecting === i.issue_id}
-                onToggleReject={() => setRejecting(r => r === i.issue_id ? null : i.issue_id)}
-                onReroute={reroute} />
-            ))}
-          </div>
 
-          {/* integration / failing-API — consumer + QA side */}
-          <Integration />
+              {ran && tester && <TesterRouting tester={tester} />}
+
+              {!ran ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderRadius: "var(--r-lg)",
+                  border: "0.5px solid var(--border)", background: "var(--bg-secondary)", marginBottom: 20 }}>
+                  <Icon name="ratify" size={14} style={{ color: "var(--text-tertiary)" }} />
+                  <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>
+                    {running ? "Running the acceptance checklist…" : "Run acceptance to score this project's checklist against the real backend."}
+                  </span>
+                </div>
+              ) : null}
+
+              <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: "var(--r-lg)",
+                border: "0.5px solid var(--border)", background: "var(--bg-secondary)", marginBottom: 20 }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 26, fontWeight: 600, letterSpacing: "-1px" }}>{pass}<span style={{ color: "var(--text-quaternary)" }}>/{total}</span></span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>acceptance checks pass</div>
+                  <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
+                    {display.map((i: any) => (
+                      <span key={i.issue_id} style={{ flex: 1, height: 5, borderRadius: 3,
+                        background: i.rerouted ? "var(--text-quaternary)" : `var(--${VERDICT_META[i.verdict].tone === "green" ? "green" : VERDICT_META[i.verdict].tone === "red" ? "red" : "amber"})` }} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="kicker" style={{ marginBottom: 10 }}>Acceptance checklist</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
+                {ran && display.length === 0 ? (
+                  <div style={{ padding: "13px 14px", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)",
+                    background: "var(--bg-elevated)", fontSize: 12.5, color: "var(--text-tertiary)" }}>
+                    No acceptance checks for this project.
+                  </div>
+                ) : display.map((i: any) => (
+                  <AcceptanceItem key={i.issue_id} item={i} byUser={byUser} members={members}
+                    rejecting={rejecting === i.issue_id}
+                    onToggleReject={() => setRejecting(r => r === i.issue_id ? null : i.issue_id)}
+                    onReroute={reroute} />
+                ))}
+              </div>
+
+              <Integration />
+            </>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* who sprint0 routed acceptance to + why (best-by-passport — skill × trust, not always a titled QA). */
+function TesterRouting({ tester }: { tester: { name: string; discipline?: string | null; score?: number; reason?: string } }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 15px", marginBottom: 20,
+      borderRadius: "var(--r-lg)", border: "0.5px solid var(--border)", background: "var(--bg-secondary)", boxShadow: "var(--shadow-1)" }}>
+      <Avatar name={tester.name} size={34} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Icon name="bolt" size={13} style={{ color: "var(--text-primary)" }} />
+          <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>sprint0 routed acceptance to <b style={{ color: "var(--text-primary)", fontWeight: 600 }}>{tester.name}</b></span>
+          {tester.discipline && <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-tertiary)" }}><DiscDot d={tester.discipline as never} />{tester.discipline}</span>}
+        </div>
+        <div style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+          {typeof tester.score === "number" && tester.score > 0 && (
+            <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 19, padding: "0 8px", borderRadius: "var(--r-pill)", fontSize: 10.5, fontWeight: 600, background: "var(--ink-fill)", color: "#fff" }}>match {tester.score.toFixed(2)}</span>
+          )}
+          {tester.reason && (
+            <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 19, padding: "0 8px", borderRadius: "var(--r-pill)", fontSize: 10.5, fontWeight: 600, background: "var(--bg-elevated)", color: "var(--text-tertiary)", border: "0.5px solid var(--border)" }}>{tester.reason}</span>
+          )}
+        </div>
+      </div>
+      <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", flexShrink: 0, textAlign: "right", maxWidth: 130, lineHeight: 1.45 }}>skill × trust · not always a titled QA</span>
     </div>
   );
 }

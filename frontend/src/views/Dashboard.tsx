@@ -11,7 +11,7 @@ import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 
 export function Dashboard() {
-  const { setView, projects, members, drafts } = useApp();
+  const { setView, projects, members, drafts, relaySummaries } = useApp();
   const setProjectFilter = useUI((s) => s.setProjectFilter);
   const [filter, setFilter] = useState("all"); // all | drafts | active | shipped | reference
   const [sel, setSel] = useState<any>(null);
@@ -64,10 +64,10 @@ export function Dashboard() {
             <div style={{ display: "flex", alignItems: "center", height: 30, padding: "0 20px",
               borderBottom: "0.5px solid var(--border-subtle)", position: "sticky", top: 0, background: "var(--bg-elevated)", zIndex: 1 }}>
               <span className="kicker" style={{ flex: 1, minWidth: 0 }}>Project</span>
-              {!selP && <span className="kicker" style={{ width: 168, flexShrink: 0 }}>Stack</span>}
-              <span className="kicker" style={{ width: 58, flexShrink: 0 }}>Issues</span>
-              {!selP && <span className="kicker" style={{ width: 96, flexShrink: 0 }}>Team</span>}
-              <span className="kicker" style={{ width: 78, flexShrink: 0, textAlign: "right" }}>Status</span>
+              {!selP && <span className="kicker" style={{ width: 196, flexShrink: 0 }}>Stack</span>}
+              <span className="kicker" style={{ width: 76, flexShrink: 0 }}>Issues</span>
+              {!selP && <span className="kicker" style={{ width: 116, flexShrink: 0 }}>Team</span>}
+              <span className="kicker" style={{ width: 92, flexShrink: 0, textAlign: "right" }}>Status</span>
             </div>
 
             {/* drafts — above a divider */}
@@ -87,7 +87,9 @@ export function Dashboard() {
             )}
           </div>
         </div>
-        {selP && <ProjectPanel p={selP} onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => setView("wizard")} />}
+        {selP && <ProjectPanel p={selP}
+          hasRelays={(relaySummaries as any[]).some((r) => r.target_project_id === selP.project_id || r.project === selP.name)}
+          onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => setView("wizard")} />}
       </div>
     </div>
   );
@@ -119,23 +121,23 @@ function ProjectRow({ p, members, selected, onOpen, compact }: { p: any; members
         </div>
       </div>
       {!compact && (
-        <div style={{ width: 168, flexShrink: 0, display: "flex", gap: 4, overflow: "hidden" }}>
+        <div style={{ width: 196, flexShrink: 0, display: "flex", gap: 4, overflow: "hidden" }}>
           {(p.stack || []).slice(0, 2).map((s: string) => <Badge key={s} tone="outline">{s}</Badge>)}
           {(p.stack || []).length > 2 && <Badge tone="neutral">+{p.stack.length - 2}</Badge>}
         </div>
       )}
-      <div style={{ width: 58, flexShrink: 0 }}>
+      <div style={{ width: 76, flexShrink: 0 }}>
         {isRef || isDraft ? <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>—</span>
           : <span className="mono" style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{p.issues}</span>}
       </div>
       {!compact && (
-        <div style={{ width: 96, flexShrink: 0 }}>
+        <div style={{ width: 116, flexShrink: 0, overflow: "hidden" }}>
           {isRef ? <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>memory</span>
             : isDraft ? <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>—</span>
             : <AvatarStack n={p.devs} members={members} />}
         </div>
       )}
-      <div style={{ width: 78, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ width: 92, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
         {isDraft
           ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 20, padding: "0 8px 0 7px", borderRadius: "var(--r-pill)",
               border: "1px dashed var(--border-strong)", fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)" }}>
@@ -156,7 +158,8 @@ function AvatarStack({ n = 0, members }: { n?: number; members: any[] }) {
   );
 }
 
-function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRelays: () => void; onClose: () => void; onResume: () => void }) {
+function ProjectPanel({ p, hasRelays, onViewRelays, onClose, onResume }: { p: any; hasRelays: boolean; onViewRelays: () => void; onClose: () => void; onResume: () => void }) {
+  const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
   const isRef = p.kind === "reference";
   const isDraft = p.kind === "draft";
   return (
@@ -167,7 +170,7 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
         borderBottom: "0.5px solid var(--border-subtle)" }}>
         <span className="mono" style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>{isDraft ? "draft" : `#${p.id}`}</span>
         <div style={{ flex: 1 }} />
-        {!isDraft && <IconButton name="gitlab" title="Open in GitLab" />}
+        {!isDraft && p.web_url && <IconButton name="gitlab" title="Open in GitLab" onClick={() => window.open(p.web_url, "_blank", "noopener")} />}
         <IconButton name="close" onClick={onClose} />
       </div>
       <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
@@ -202,12 +205,14 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
 
         <div className="kicker" style={{ marginBottom: 8 }}>{isDraft ? "Proposed stack" : "Tech stack"}</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 16 }}>
-          {(p.stack || []).map((s: string) => <Badge key={s} tone="outline">{s}</Badge>)}
+          {(p.stack || []).filter(Boolean).length
+            ? (p.stack as string[]).filter(Boolean).map((s) => <Badge key={s} tone="outline">{s}</Badge>)
+            : <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>not set</span>}
         </div>
 
-        {(p.grounded?.length || p.tags?.length) ? (
+        {isRef && (p.grounded?.length || p.tags?.length) ? (
           <>
-            <div className="kicker" style={{ marginBottom: 8 }}>{isRef ? "Reused modules" : "Grounded on memory"}</div>
+            <div className="kicker" style={{ marginBottom: 8 }}>Reused modules</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 16 }}>
               {(p.grounded || p.tags || []).map((g: string) => (
                 <span key={g} style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 22, padding: "0 8px",
@@ -220,9 +225,13 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
         ) : null}
 
         {!isRef && !isDraft && (
-          <Button variant="secondary" size="sm" iconRight="arrowRight" style={{ width: "100%" }} onClick={onViewRelays}>
-            View this project's relays
-          </Button>
+          hasRelays
+            ? <Button variant="secondary" size="sm" iconRight="arrowRight" style={{ width: "100%" }} onClick={onViewRelays}>
+                View this project's relays
+              </Button>
+            : <Button variant="secondary" size="sm" disabled style={{ width: "100%", opacity: 0.5, cursor: "default" }}>
+                No relays yet
+              </Button>
         )}
       </div>
       {isDraft ? (
@@ -231,7 +240,7 @@ function ProjectPanel({ p, onViewRelays, onClose, onResume }: { p: any; onViewRe
         </div>
       ) : !isRef && (
         <div style={{ borderTop: "0.5px solid var(--border-subtle)", padding: 10, display: "flex", gap: 8 }}>
-          <Button variant="secondary" size="md" icon="plus" style={{ flex: 1 }}>Add feature</Button>
+          <Button variant="secondary" size="md" icon="plus" style={{ flex: 1 }} onClick={() => setFeatureProjectId(p.project_id)}>Add feature</Button>
           <Button variant="secondary" size="md" onClick={onClose}>Close</Button>
         </div>
       )}

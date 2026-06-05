@@ -11,6 +11,7 @@ import json
 import os
 import time
 from contextlib import AsyncExitStack
+from functools import lru_cache
 from pathlib import Path
 
 import voyageai
@@ -24,7 +25,7 @@ from app import demo
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 _URI = os.environ["MONGODB_URI"]
-_DB = os.getenv("MONGODB_DB", "orchestrator")
+_DB = os.getenv("MONGODB_DB", "sprint0")
 _MODEL = os.getenv("VOYAGE_MODEL", "voyage-3.5-lite")
 _DIMS = int(os.getenv("EMBEDDING_DIMS", "1024"))
 PP_COLL = os.getenv("PAST_PROJECTS_COLLECTION", "PastProjects")
@@ -55,10 +56,26 @@ def _embed(texts: list[str], input_type: str = "query") -> list[list[float]]:
     return []
 
 
+@lru_cache(maxsize=256)
+def _embed_query_cached(text: str) -> tuple[float, ...]:
+    """One brief is embedded across clarify→architectures→plan; cache the deterministic vector so
+    we pay Voyage once, not 3×. Tuple (immutable) so a caller can't mutate the cached entry."""
+    return tuple(_embed([text])[0])
+
+
 def embed_query(text: str) -> list[float]:
     if demo.is_demo():
         return list(_DEMO_VEC)
-    return _embed([text])[0]
+    return list(_embed_query_cached(text))
+
+
+def cosine_score(a: list[float], b: list[float]) -> float:
+    """Atlas `$vectorSearch` cosine score, computed locally: (1 + cosine)/2 ∈ [0,1]. Replicated so a
+    one-shot roster fetch + local rank reproduces the per-skill vectorSearch scores exactly."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return (1.0 + dot / (na * nb)) / 2.0 if na and nb else 0.0
 
 
 def embed_queries(texts: list[str]) -> list[list[float]]:
@@ -70,6 +87,8 @@ def embed_queries(texts: list[str]) -> list[list[float]]:
 
 def embed_document(text: str) -> list[float]:
     """Embed a stored document (matches the seed corpus' input_type)."""
+    if demo.is_demo():
+        return list(_DEMO_VEC)  # demo writes are no-ops (below) → the vector is discarded anyway
     return _embed([text], input_type="document")[0]
 
 
@@ -130,6 +149,12 @@ async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85
         dev.update(sets)
         dev["promoted"], dev["grew_discipline"] = promoted, disc
     return {k: v for k, v in dev.items() if k != "skill_embedding"}
+
+
+async def set_developer_discipline(username: str, discipline: str) -> None:
+    """Seat a member in a discipline (manager action) → they enter the assignment pool in-lane."""
+    async with MongoMCP() as m:
+        await m.update_many(DEV_COLL, {"username": username}, {"$set": {"discipline": discipline}})
 
 
 async def save_project_record(record: dict) -> None:
@@ -210,6 +235,81 @@ async def all_decisions(limit: int = 500) -> list[dict]:
     """The whole Decisions pool — the cross-user surfacing endpoint filters it by the quality gate."""
     async with MongoMCP() as m:
         return await m.find(DECISIONS_COLLECTION, projection={"_id": 0}, limit=limit)
+
+
+# ── Agreements (the coordination spine: AI-drafted, async-ratified, compounding) ──
+AGREEMENTS_COLLECTION = "Agreements"
+_DEMO_AGREEMENTS: dict[str, dict] = {}  # DEMO_MODE in-mem store — Atlas writes no-op, so agreements live here
+
+
+def reset_demo_agreements() -> None:
+    """DEMO reset/seed: drop every in-mem interface contract so the canned set is the only one left."""
+    _DEMO_AGREEMENTS.clear()
+
+
+async def save_agreement(doc: dict) -> None:
+    if demo.is_demo():
+        _DEMO_AGREEMENTS[doc["id"]] = dict(doc)
+        return
+    async with MongoMCP() as m:
+        await m.insert_many(AGREEMENTS_COLLECTION, [doc])
+
+
+async def agreements_for_plan(plan_id: str) -> list[dict]:
+    if demo.is_demo():
+        return [dict(d) for d in _DEMO_AGREEMENTS.values() if d.get("plan_id") == plan_id]
+    async with MongoMCP() as m:
+        return await m.find(AGREEMENTS_COLLECTION, query={"plan_id": plan_id}, projection={"_id": 0}, limit=200)
+
+
+async def agreements_for_ratifier(username: str) -> list[dict]:
+    """The agreements awaiting THIS person's signature (their Inbox queue). Demo: filter the in-mem
+    store. Atlas: push the filter server-side (indexed on `ratifiers`) — array membership + state."""
+    if demo.is_demo():
+        return [r for r in (dict(d) for d in _DEMO_AGREEMENTS.values())
+                if username in (r.get("ratifiers") or []) and r.get("state") == "proposed"]
+    async with MongoMCP() as m:
+        return await m.find(AGREEMENTS_COLLECTION, query={"ratifiers": username, "state": "proposed"},
+                            projection={"_id": 0}, limit=200)
+
+
+async def all_agreements(limit: int = 1000) -> list[dict]:
+    """The whole pool — the precedent memory the compounding check reads (find a ratified match → auto-pass)."""
+    if demo.is_demo():
+        return [dict(d) for d in _DEMO_AGREEMENTS.values()]
+    async with MongoMCP() as m:
+        return await m.find(AGREEMENTS_COLLECTION, projection={"_id": 0}, limit=limit)
+
+
+async def reuse_pack(projects: list[str], limit: int = 30) -> list[dict]:
+    """The reuse agreement's executable payload: the cited source files for a chosen MEMORY solution —
+    the CodeChunks of the grounded project(s) (file_path · web_url · excerpt). Loose-matched on the first
+    name token so 'QuantaPay (2024)' finds the 'quantapay-2024' repo's chunks. 'it was built before' →
+    'it's already in your branch'."""
+    toks = {p.split()[0].split("-")[0].lower() for p in projects if p}
+    if not toks:
+        return []
+    async with MongoMCP() as m:
+        rows = await m.find(CODE_COLL, projection={"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1}, limit=300)
+    out = [r for r in rows if str(r.get("project", "")).split("-")[0].lower() in toks]
+    return out[:limit]
+
+
+async def get_agreement(agreement_id: str) -> dict:
+    if demo.is_demo():
+        return dict(_DEMO_AGREEMENTS.get(agreement_id) or {})
+    async with MongoMCP() as m:
+        rows = await m.find(AGREEMENTS_COLLECTION, query={"id": agreement_id}, projection={"_id": 0}, limit=1)
+    return rows[0] if rows else {}
+
+
+async def update_agreement(agreement_id: str, patch: dict) -> None:
+    if demo.is_demo():
+        if agreement_id in _DEMO_AGREEMENTS:
+            _DEMO_AGREEMENTS[agreement_id].update(patch)
+        return
+    async with MongoMCP() as m:
+        await m.update_many(AGREEMENTS_COLLECTION, {"id": agreement_id}, {"$set": patch})
 
 
 # ── Code Graph (System 4): Graph A (nodes/edges) + Graph B (governance rules) ──
@@ -315,6 +415,42 @@ async def mark_all_read(user_id: str) -> None:
         await m.update_many(NOTIFICATIONS_COLL, {"user_id": user_id}, {"$set": {"read": True}})
 
 
+async def delete_notification(user_id: str, notif_id: str) -> None:
+    """Dismiss one of the caller's own notifications (scoped to user_id; demo writes no-op)."""
+    async with MongoMCP() as m:
+        await m.delete_many(NOTIFICATIONS_COLL, {"user_id": user_id, "id": notif_id})
+
+
+async def notification_exists(user_id: str, type: str, ref: dict) -> bool:
+    """Dedup: True if an UNREAD notification of this type for this user + ref already exists."""
+    q: dict = {"user_id": user_id, "type": type, "read": False}
+    for k in ("plan_id", "issue_id"):
+        if (ref or {}).get(k) is not None:
+            q[f"ref.{k}"] = ref[k]
+    async with MongoMCP() as m:
+        rows = await m.find(NOTIFICATIONS_COLL, query=q, projection={"_id": 0, "id": 1}, limit=1)
+    return bool(rows)
+
+
+async def dedup_notifications() -> int:
+    """One-shot cleanup: collapse duplicates — keep the latest per (user_id, type, ref), drop the rest."""
+    async with MongoMCP() as m:
+        rows = await m.find(NOTIFICATIONS_COLL,
+                            projection={"_id": 0, "id": 1, "user_id": 1, "type": 1, "ref": 1, "created_at": 1}, limit=2000)
+        seen: set = set()
+        drop: list[str] = []
+        for r in sorted(rows, key=lambda x: x.get("created_at", ""), reverse=True):
+            ref = r.get("ref") or {}
+            key = (r.get("user_id"), r.get("type"), ref.get("plan_id"), ref.get("issue_id"))
+            if key in seen:
+                drop.append(r["id"])
+            else:
+                seen.add(key)
+        if drop:
+            await m.delete_many(NOTIFICATIONS_COLL, {"id": {"$in": drop}})
+    return len(drop)
+
+
 async def save_access_grant(doc: dict) -> None:
     async with MongoMCP() as m:
         await m.insert_many(ACCESS_GRANTS_COLL, [doc])
@@ -342,32 +478,47 @@ async def access_grants_for_requester(requester_id: str) -> list[dict]:
 
 
 TASKS_COLL = "Tasks"  # PascalCase, the Work hub's source of truth (Phase A)
+_DEMO_TASKS: dict[str, dict] = {}  # DEMO_MODE in-mem task store — Atlas writes no-op, so the Work hub lives here
 
 
 async def save_tasks(docs: list[dict]) -> None:
     if not docs:
+        return
+    if demo.is_demo():
+        for d in docs:
+            _DEMO_TASKS[d["id"]] = dict(d)
         return
     async with MongoMCP() as m:
         await m.insert_many(TASKS_COLL, docs)
 
 
 async def tasks_for_project(project_id: int) -> list[dict]:
+    if demo.is_demo():
+        return [dict(d) for d in _DEMO_TASKS.values() if d.get("project_id") == project_id]
     async with MongoMCP() as m:
         return await m.find(TASKS_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=500)
 
 
 async def all_tasks() -> list[dict]:
+    if demo.is_demo():
+        return [dict(d) for d in _DEMO_TASKS.values()]
     async with MongoMCP() as m:
         return await m.find(TASKS_COLL, projection={"_id": 0}, limit=1000)
 
 
 async def get_task(task_id: str) -> dict:
+    if demo.is_demo():
+        return dict(_DEMO_TASKS.get(task_id) or {})
     async with MongoMCP() as m:
         rows = await m.find(TASKS_COLL, query={"id": task_id}, projection={"_id": 0}, limit=1)
     return rows[0] if rows else {}
 
 
 async def update_task(task_id: str, doc: dict) -> None:
+    if demo.is_demo():
+        if task_id in _DEMO_TASKS:
+            _DEMO_TASKS[task_id].update(doc)
+        return
     async with MongoMCP() as m:
         await m.update_many(TASKS_COLL, {"id": task_id}, {"$set": doc})
 
@@ -375,6 +526,10 @@ async def update_task(task_id: str, doc: dict) -> None:
 async def delete_tasks_for_project(project_id: int) -> None:
     """Drop a project's Tasks — used on dispatch to re-key the plan-time placeholder project_id
     to the real GitLab project_id without leaving ghost docs (Phase A: deviation from the plan)."""
+    if demo.is_demo():
+        for tid in [k for k, v in _DEMO_TASKS.items() if v.get("project_id") == project_id]:
+            _DEMO_TASKS.pop(tid, None)
+        return
     async with MongoMCP() as m:
         await m.delete_many(TASKS_COLL, {"project_id": project_id})
 
@@ -425,20 +580,6 @@ def _parse_docs(text: str) -> list[dict]:
         return json.loads(text[a : b + 1])
     except json.JSONDecodeError:
         return []
-
-
-def _rrf_fuse(ranked_lists: list[list[dict]], key: str, k: int = 3, c: int = 60) -> list[dict]:
-    """Reciprocal Rank Fusion — merge ranked result lists; a doc's score += 1/(c + rank)."""
-    scores: dict = {}
-    docs: dict = {}
-    for lst in ranked_lists:
-        for rank, d in enumerate(lst):
-            kk = d.get(key)
-            if kk is None:
-                continue
-            scores[kk] = scores.get(kk, 0.0) + 1.0 / (c + rank + 1)
-            docs[kk] = d
-    return [docs[x] for x in sorted(scores, key=scores.get, reverse=True)[:k]]
 
 
 # ── Persistent MCP session ──────────────────────────────────────────────────
@@ -525,25 +666,27 @@ class MongoMCP:
 
     async def hybrid_search(
         self, collection: str, vector_index: str, text_index: str, vpath: str,
-        query_vec: list[float], query_text: str, k: int = 3, key: str = "name", projection: dict | None = None,
+        query_vec: list[float], query_text: str, k: int = 3, projection: dict | None = None,
     ) -> list[dict]:
-        """Hybrid retrieval: fuse $vectorSearch + $search (full-text) by Reciprocal Rank Fusion.
-        Falls back to vector-only if the full-text index is absent (e.g. not seeded yet)."""
+        """Hybrid retrieval: native MongoDB $rankFusion (server-side reciprocal rank fusion of
+        $vectorSearch + $search full-text). Falls back to vector-only if fusion errors (e.g. the
+        full-text index is absent, or the server predates 8.1)."""
         proj: dict = {"_id": 0}
         proj.update(projection or {})
-        vec = await self._aggregate(collection, [
-            {"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k * 2}},
-            {"$project": proj},
-        ])
         try:
-            txt = await self._aggregate(collection, [
-                {"$search": {"index": text_index, "text": {"query": query_text, "path": {"wildcard": "*"}}}},
-                {"$limit": k * 2},
+            return await self._aggregate(collection, [
+                {"$rankFusion": {"input": {"pipelines": {
+                    "vector": [{"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k * 2}}],
+                    "text": [{"$search": {"index": text_index, "text": {"query": query_text, "path": {"wildcard": "*"}}}}, {"$limit": k * 2}],
+                }}}},
+                {"$limit": k},
                 {"$project": proj},
             ])
         except Exception:
-            return vec[:k]  # no full-text index yet → degrade to vector-only
-        return _rrf_fuse([vec, txt], key=key, k=k)
+            return await self._aggregate(collection, [
+                {"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k}},
+                {"$project": proj},
+            ])
 
     async def code_search(self, query_vec: list[float], k: int = 5, projection: dict | None = None) -> list[dict]:
         """Code-RAG: vector search over CodeChunks — reusable code across the agency's past repos."""
@@ -565,6 +708,8 @@ class MongoMCP:
         return _parse_docs(text)
 
     async def update_many(self, collection: str, query: dict, update: dict) -> str:
+        if demo.is_demo():
+            return '{"acknowledged": true, "demo_noop": true}'  # demo: read-only against the shared DB
         res = await self.session.call_tool(
             "update-many", {"database": _DB, "collection": collection, "filter": query, "update": update}
         )
@@ -574,6 +719,8 @@ class MongoMCP:
         return text
 
     async def insert_many(self, collection: str, documents: list[dict]) -> str:
+        if demo.is_demo():
+            return '{"acknowledged": true, "demo_noop": true}'  # demo: read-only against the shared DB
         res = await self.session.call_tool("insert-many", {"database": _DB, "collection": collection, "documents": documents})
         text = "".join(getattr(b, "text", "") or "" for b in res.content)
         if getattr(res, "isError", False):
@@ -581,6 +728,8 @@ class MongoMCP:
         return text
 
     async def delete_many(self, collection: str, query: dict) -> str:
+        if demo.is_demo():
+            return '{"acknowledged": true, "demo_noop": true}'  # demo: read-only against the shared DB
         res = await self.session.call_tool("delete-many", {"database": _DB, "collection": collection, "filter": query})
         text = "".join(getattr(b, "text", "") or "" for b in res.content)
         if getattr(res, "isError", False):

@@ -70,6 +70,25 @@ function StateLine({ waits, blocks, role }: { waits: number; blocks: number; rol
   );
 }
 
+function MetricTile({ icon, label, value, sub, accent }: { icon: IconName; label: string; value: number; sub: string; accent?: boolean }) {
+  return (
+    <div style={{ position: "relative", overflow: "hidden", padding: "14px 16px", borderRadius: "var(--r-xl)",
+      background: "var(--bg-elevated)", border: `0.5px solid ${accent ? "var(--text-primary)" : "var(--border)"}`,
+      boxShadow: "var(--shadow-1)" }}>
+      {accent && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: "var(--text-primary)" }} />}
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
+        <Icon name={icon} size={13} style={{ color: accent ? "var(--text-primary)" : "var(--text-tertiary)" }} />
+        <span className="kicker" style={{ fontSize: 10.5 }}>{label}</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 30, fontWeight: 600, letterSpacing: "-1px", lineHeight: 1,
+          color: accent ? "var(--text-primary)" : "var(--text-secondary)" }}>{value}</span>
+        <span style={{ fontSize: 11.5, color: "var(--text-quaternary)", lineHeight: 1.35, maxWidth: 150 }}>{sub}</span>
+      </div>
+    </div>
+  );
+}
+
 function StartHere({ a, onGo }: { a: NextItem; onGo: (t: NextTarget) => void }) {
   const [h, setH] = useState(false);
   return (
@@ -133,7 +152,7 @@ export function Today() {
       case "relay": if (t.planId) setPlanId(t.planId); if (t.discipline) setActiveGate(t.discipline); setView("relay"); break;
       case "qagate": if (t.planId) setPlanId(t.planId); setView("qagate"); break;
       case "scope": if (t.taskId) setActiveIssue(t.taskId); setView("mywork"); break;
-      case "reschedule": setView("inbox"); break;
+      case "reschedule": useUI.getState().setBellOpen(true); break;
       case "relays": setView("relays"); break;
     }
   };
@@ -143,6 +162,8 @@ export function Today() {
   const items = [start, ...rest].filter((i): i is NextItem => !!i);
   const waits = items.filter((i) => i.chips.some((c) => c.kind === "baton")).length;
   const blocks = items.filter((i) => i.chips.some((c) => c.kind === "blocks")).length;
+  // downstream legs blocked = sum of the blocks-chip counts (the tile shows the total, not the row count)
+  const downstream = items.reduce((s, i) => { const b = i.chips.find((c) => c.kind === "blocks"); return s + (b?.n ?? 0); }, 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -163,6 +184,14 @@ export function Today() {
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <div style={{ maxWidth: 720, margin: "0 auto", padding: "28px 28px 64px" }}>
           <StateLine waits={waits} blocks={blocks} role={role} />
+
+          {/* two metric tiles — Baton on you / You block downstream */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, margin: "16px 0 4px" }}>
+            <MetricTile icon="flag" label="Baton on you" value={waits} accent={waits > 0}
+              sub={waits === 1 ? "gate waits on your call" : "gates wait on your call"} />
+            <MetricTile icon="bolt" label="You block downstream" value={downstream}
+              sub={downstream === 1 ? "leg waits on your work" : "legs wait on your work"} />
+          </div>
 
           {start ? (
             <>

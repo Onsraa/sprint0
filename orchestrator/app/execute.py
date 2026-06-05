@@ -136,7 +136,7 @@ def _invite_assignees(project_id: int, plan: PlanJSON) -> None:
             pass  # already a member
 
 
-def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: bool = True) -> dict:
+def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: bool = True, reuse_seeds: dict[str, list[dict]] | None = None) -> dict:
     if demo.is_demo():  # public demo: no real GitLab writes — point at a pre-made showcase project
         n = sum(len(e.issues) for e in plan.epics)
         return {
@@ -173,7 +173,7 @@ def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: 
 
     extra: dict = {}
     if with_handoff:  # per-kind focus branches + a QA-only issue (the relay's tail)
-        branches = handoff.commit_context_branches(pid, plan, default_branch=scaf["default_branch"])
+        branches = handoff.commit_context_branches(pid, plan, default_branch=scaf["default_branch"], reuse_seeds=reuse_seeds)
         qa = handoff.create_qa_issue(pid, plan, staging_url=scaf["web_url"])
         extra = {"context_branches": len(branches), "qa_issue_iid": qa.get("iid")}
 
@@ -183,7 +183,7 @@ def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: 
     }
 
 
-def extend_project(plan: PlanJSON, project_id: int, default_branch: str = "main") -> dict:
+def extend_project(plan: PlanJSON, project_id: int, default_branch: str = "main", reuse_seeds: dict[str, list[dict]] | None = None) -> dict:
     """Mid-prod: append a delta plan's issues + focus branches to an EXISTING project."""
     if demo.is_demo():  # public demo: no real GitLab writes
         n = sum(len(e.issues) for e in plan.epics)
@@ -192,5 +192,5 @@ def extend_project(plan: PlanJSON, project_id: int, default_branch: str = "main"
     gl.create_labels(project_id, _plan_labels(plan))
     _invite_assignees(project_id, plan)
     created = gl.create_issues(project_id, _issue_dicts(plan, clone_url))
-    branches = handoff.commit_context_branches(project_id, plan, default_branch=default_branch)
+    branches = handoff.commit_context_branches(project_id, plan, default_branch=default_branch, reuse_seeds=reuse_seeds)
     return {"issues_created": len(created), "context_branches": len(branches)}

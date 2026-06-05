@@ -94,6 +94,7 @@ export type ArchitectureOptions = z.infer<typeof ArchitectureOptions>;
 /* ── relay ───────────────────────────────────────────────────────────── */
 export const Gate = z.object({
   discipline: Discipline, status: GateStatus, depends_on: z.array(Discipline), note: z.string(),
+  delegate: z.string().nullish(),   // human-in-control: a lead handed this gate to this user to ratify
   // spine (P1): the router's per-gate decision; null on legacy gates
   tier: RoutingTier.nullish(), confidence: z.number().nullish(), blast_radius: z.number().nullish(),
   expected_cost: z.number().nullish(), routed_note: z.string().optional(),
@@ -199,7 +200,7 @@ export type QueueItem = z.infer<typeof QueueItem>;
 
 export const RelaySummary = z.object({
   plan_id: z.string(), project: z.string(), baton: z.array(Discipline),
-  gates: z.array(z.object({ discipline: Discipline, status: GateStatus, note: z.string() })),
+  gates: z.array(z.object({ discipline: Discipline, status: GateStatus, note: z.string(), delegate: z.string().nullish() })),
   is_delta: z.boolean(), target_project_id: z.number().nullable(), all_ratified: z.boolean(),
 });
 export type RelaySummary = z.infer<typeof RelaySummary>;
@@ -280,6 +281,11 @@ export type QAQueue = z.infer<typeof QAQueue>;
 
 // Reuse-or-Innovate (the Contract spine): per-gate solution options the lead selects.
 // Every field is always serialized by the backend (Pydantic defaults), so these are required.
+export const FileChange = z.object({
+  path: z.string(),
+  change: z.enum(["add", "modify", "remove"]).optional(),   // server-classified against the known file set; default modify
+});
+export type FileChange = z.infer<typeof FileChange>;
 export const SolutionCard = z.object({
   id: z.string(),
   source: z.enum(["memory", "ai", "user"]),
@@ -292,19 +298,70 @@ export const SolutionCard = z.object({
   grounded_on: z.array(z.string()),   // past project(s) reused (memory source)
   delta_note: z.string(),             // "variant of X + Δ" when a fresh option ≈ memory
   impacted_files: z.array(z.string()),
+  file_changes: z.array(FileChange).optional(),   // per-file change kind (add/modify/remove); falls back to impacted_files
+  // #33 Contract richness — provenance signals (server-derived except conflict). Optional (symmetric
+  // in/out) so jget's type inference stays clean; the backend always sends them.
+  conflict: z.boolean().optional(),
+  conflict_reason: z.string().optional(),
+  grade: Grade.nullish(),                                  // earned strength (memory options only)
+  signal: z.enum(["green", "orange", "grey"]).optional(),
 });
 export type SolutionCard = z.infer<typeof SolutionCard>;
 export const SolutionSet = z.object({
   discipline: z.string(),
   solutions: z.array(SolutionCard),
+  chosen: SolutionCard.nullish(),   // the ratified pick — the done-gate review renders it
 });
 export type SolutionSet = z.infer<typeof SolutionSet>;
+
+/* ── Agreements (the coordination spine): AI-drafted, async-ratified ──────── */
+export const SchemaField = z.object({
+  name: z.string(), type: z.string(), required: z.boolean().optional(), note: z.string().optional(),
+});
+export const InterfaceDraft = z.object({
+  method: z.string(), path: z.string(),
+  request_fields: z.array(SchemaField), response_fields: z.array(SchemaField),
+  errors: z.array(z.string()), note: z.string().optional(),
+});
+export type InterfaceDraft = z.infer<typeof InterfaceDraft>;
+export const InterfaceProposal = z.object({
+  id: z.string(), source: z.string(), interface: InterfaceDraft,
+  why: z.string().optional(), pros: z.array(z.string()).optional(), cons: z.array(z.string()).optional(),
+  grounded_on: z.array(z.string()).optional(), confidence: z.number().optional(),
+  file_changes: z.array(FileChange).optional(),   // producer-side files this shape implies
+});
+export type InterfaceProposal = z.infer<typeof InterfaceProposal>;
+export const SubteamDraft = z.object({
+  discipline: z.string(), mode: z.string(), members: z.array(z.string()), rationale: z.string().optional(),
+});
+export type SubteamDraft = z.infer<typeof SubteamDraft>;
+export const Agreement = z.object({
+  id: z.string(), type: z.string(), plan_id: z.string(), subject: z.string(),
+  interface: InterfaceDraft.nullish(),
+  proposals: z.array(InterfaceProposal).optional(),   // reuse/fresh/write-own shape options the producer picks
+  chosen_proposal_id: z.string().nullish(),
+  subteam: SubteamDraft.nullish(),
+  grounded_on: z.array(z.string()).optional(), ratifiers: z.array(z.string()),
+  ratifications: z.array(unknownRecord).optional(), state: z.string(),
+  precedent_id: z.string().nullish(),   // P3: the past ratified agreement it auto-passed from (compounded)
+  producer_discipline: z.string().nullish(), consumer_discipline: z.string().nullish(),
+  producer_issue_id: z.string().nullish(), consumer_issue_id: z.string().nullish(),
+});
+export type Agreement = z.infer<typeof Agreement>;
+export const AgreementList = z.object({ agreements: z.array(Agreement) });
+
 export const RejectResult = z.object({
   issue_iid: z.number(), rerouted_to: z.string().nullable(), awaiting_reqa: z.array(z.number()),
 });
 export type RejectResult = z.infer<typeof RejectResult>;
 
 /* ── members / staffing ──────────────────────────────────────────────── */
+// When a member can start NEW work — the honest capacity signal (server-computed from the live schedule).
+export const Availability = z.object({
+  available_on: z.string(), free_in_days: z.number(),
+  queued_days: z.number(), active_count: z.number(),
+});
+export type Availability = z.infer<typeof Availability>;
 export const Member = z.object({
   username: z.string(), name: z.string(), email: z.string(), role: MemberRole,
   discipline: Discipline.nullable(), seniority: Seniority, load: z.number(),
@@ -312,6 +369,7 @@ export const Member = z.object({
   trust: z.record(z.string(), TrustLevel), trust_level: TrustLevel,
   joined: z.string().nullish(),   // ISO month joined the agency (YYYY-MM) — shown on the Passport
   history: z.array(unknownRecord), promoted: z.boolean().optional(),
+  availability: Availability.nullish(),   // server-computed; when they can start new work
 });
 export type Member = z.infer<typeof Member>;
 /** Back-compat alias — onboarding/merge endpoints call it a profile. */

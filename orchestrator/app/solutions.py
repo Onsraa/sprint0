@@ -6,7 +6,7 @@ a solution set (ids + the write-your-own slot), and the cross-gate overlap that 
 """
 from __future__ import annotations
 
-from app.contracts import PlanJSON, SolutionCard, SolutionSet
+from app.contracts import PlanJSON, SolutionSet
 
 
 def gate_slice_files(plan: PlanJSON, discipline: str) -> set[str]:
@@ -24,18 +24,15 @@ def impacted_files(slice_files: set[str], dependents: dict[str, list[str]] | Non
 
 
 def finalize_solution_set(sset: SolutionSet, discipline: str, impacted: list[str]) -> SolutionSet:
-    """Assign ids, force LLM `source` to memory|ai (never `user`), attach the gate's impacted files, and
-    append the write-your-own slot. The LLM's memory/ai labelling is trusted; only `user` is server-built."""
+    """Assign ids, force LLM `source` to memory|ai (never `user`), attach the gate's impacted files. The
+    write-your-own slot is the FRONTEND's own (RatifyPanel renders it), so the set stays AI/memory-only —
+    the server no longer appends a `user` card (that produced a duplicate slot in the gate)."""
     for n, s in enumerate(sset.solutions):
         s.id = f"sol_{discipline}_{n}"
         if s.source == "user":
             s.source = "ai"
         s.impacted_files = impacted
     sset.discipline = discipline
-    sset.solutions.append(SolutionCard(
-        id=f"sol_{discipline}_user", source="user",
-        title="Write your own", summary="Propose a solution the AI didn't.", impacted_files=[],
-    ))
     return sset
 
 
