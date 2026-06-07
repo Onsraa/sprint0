@@ -296,7 +296,7 @@ class ProjectRecord(BaseModel):
     tech_stack: TechStack
     grounded_on: list[str] = Field(default_factory=list)
     plan: PlanJSON
-    status: Literal["scaffolded", "in_progress", "shipped", "closed"] = "scaffolded"
+    status: Literal["reserved", "scaffolded", "in_progress", "shipped", "closed"] = "scaffolded"  # reserved = empty repo, relay still open (two-phase)
     module_manifest: list[str] = Field(default_factory=list)  # key files/modules for mid-prod grounding
 
 

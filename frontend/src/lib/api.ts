@@ -623,7 +623,10 @@ export const api = {
     return jget(`/api/plans/${planId}/dispatch/preview`, S.DispatchPreview);
   },
 
-  /* Dispatch + mid-prod */
+  /* Two-phase create + dispatch + mid-prod */
+  reserve(planId: string, projectName?: string): Promise<{ project_id: number; web_url: string; relay_open: boolean }> {
+    return jpost(`/api/plans/${planId}/reserve`, { mode: "copilot", project_name: projectName });
+  },
   dispatch(planId: string, projectName?: string): Promise<DispatchResult> {
     return jpost(`/api/plans/${planId}/dispatch`, { mode: "copilot", project_name: projectName });
   },

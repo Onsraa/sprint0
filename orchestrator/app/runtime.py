@@ -35,7 +35,8 @@ def rebuild_runtime(events: list[dict]) -> tuple[dict[str, PlanJSON], dict[str, 
                              bool(p.get("approve", True)), str(p.get("note", "")))
             except Exception:
                 continue
-        elif kind == "plan_dispatched" and pid:
-            plans.pop(pid, None)        # dispatched → finished → leaves the in-flight pool (PROJECTS owns it)
+        elif kind in ("plan_dispatched", "plan_scaffolded") and pid:
+            plans.pop(pid, None)        # scaffolded/dispatched → finished → leaves the in-flight pool (PROJECTS owns it)
             relays.pop(pid, None)
+        # project_reserved: no-op — the plan is already in-flight from plan_created; reserve only adds an empty repo
     return plans, relays

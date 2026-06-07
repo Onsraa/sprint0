@@ -1273,6 +1273,12 @@ async def ratify_gate(
         for a in sorted({i.assignee for e in plan.epics for i in e.issues if i.assignee}):
             await notify(a, "task_completed", f"{plan.project_name}: all relay gates ratified", ref={"plan_id": plan_id})
             await notify_watchers(a, "completed", f"{plan.project_name} cleared the relay", ref={"plan_id": plan_id})
+        if plan_id in RESERVED or plan_id in DELTA_TARGET:  # two-phase: the relay just CLOSED → auto-scaffold to GitLab
+            try:
+                pid = (RESERVED.get(plan_id) or {}).get("project_id") or DELTA_TARGET.get(plan_id)
+                await _finalize_scaffold(plan_id, plan, project_id=pid)  # issues/branches/focus/QA + real tasks + pop relay
+            except Exception:
+                pass  # a scaffold failure must never 500 the lead's ratify — surfaced via notifications
     await _persist_relay(plan_id)  # durable: snapshot the plan + relay after this ratify (no-op if a scaffold just popped it)
     return state
 
@@ -1709,6 +1715,44 @@ async def _finalize_scaffold(plan_id: str, plan: PlanJSON, *, project_id: int | 
     for _s in ("plans", "relays", "reserved"):  # durable: the finished relay leaves the in-flight snapshot too
         await _unpersist(_s, plan_id)
     return result
+
+
+@app.post("/api/plans/{plan_id}/reserve")
+async def reserve_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """Phase 1 of two-phase create (the wizard 'Create'): RESERVE the GitLab project — an empty repo, name
+    only — and KEEP the relay OPEN so the leads ratify their gates live. The real scaffold (issues, branches,
+    focus files, QA + the work tasks) fires AUTOMATICALLY when the relay closes (the last gate's ratify).
+    No GitLab work here beyond the empty repo; nothing is auto-approved."""
+    plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
+    if plan is None or state is None:
+        raise HTTPException(404, "plan not found")
+    if plan_id in RESERVED:  # idempotent — already reserved
+        r = RESERVED[plan_id]
+        return {"project_id": r["project_id"], "web_url": r.get("web_url", ""), "relay_open": True}
+    if req.project_name and req.project_name.strip():  # the manager validated/edited the AI-filled name
+        plan.project_name = req.project_name.strip()[:80]
+    res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))
+    RESERVED[plan_id] = res
+    await _persist("reserved", plan_id, res)          # durable: survive a restart between reserve and close
+    await _persist_relay(plan_id)                     # the (possibly edited) name lives on the plan snapshot
+    PROJECTS[res["project_id"]] = plan
+    record = ProjectRecord(
+        project_id=res["project_id"], name=plan.project_name, web_url=res.get("web_url", ""),
+        tech_stack=plan.tech_stack, grounded_on=plan.grounded_on, plan=plan,
+        module_manifest=_manifest_of(plan), status="reserved",
+    )
+    rec = record.model_dump()
+    rec["created_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        await save_project_record(rec)
+    except Exception:
+        pass
+    try:  # durable runtime: re-fold RESERVED on a restart from this event
+        await eventlog.emit("project_reserved", created_at=datetime.now(timezone.utc).isoformat(),
+                            payload={"plan_id": plan_id, "reserved": res})
+    except Exception:
+        pass
+    return {"project_id": res["project_id"], "web_url": res.get("web_url", ""), "relay_open": True}
 
 
 @app.post("/api/plans/{plan_id}/dispatch")

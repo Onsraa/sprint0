@@ -237,6 +237,7 @@ export function WizardBrief() {
   };
 
   const closeToProjects = () => { setView("projects"); setWizardOpen(false); };
+  const closeToRelays = () => { setView("relays"); setWizardOpen(false); };  // after reserve → the leads ratify here
 
   const archStack = chosenStack ? Object.values(chosenStack).filter(Boolean) : [];
   const previewName = preview?.project_name ?? plan?.project_name ?? "New project";
@@ -260,18 +261,17 @@ export function WizardBrief() {
     setDispatching(true);
     const finalName = projectName.trim() || previewName;
     api
-      .dispatch(planId, projectName.trim() || undefined)     // always supervised; the manager's edited name (or the AI's)
+      .reserve(planId, projectName.trim() || undefined)       // PHASE 1: reserve the repo; the relay stays OPEN to ratify
       .then(() => {
-        qc.invalidateQueries({ queryKey: ["work"] });        // the dispatched project's tasks now show
         qc.invalidateQueries({ queryKey: qk.projects() });
-        qc.invalidateQueries({ queryKey: qk.allRelays() });
-        removeDraftByName(previewName);                       // the real project replaces the stale draft
+        qc.invalidateQueries({ queryKey: qk.allRelays() });   // the open relay now shows on the board
+        removeDraftByName(previewName);                       // the reserved project replaces the stale draft
         commitRef.current = () => { setDispatching(false); setDispatched(true);
-          toast("Created on GitLab", { description: finalName + " · gates open for the team to ratify" }); };
-        // if the dispatch loader already finished animating, advance now; else its onDone will
+          toast("Project reserved", { description: finalName + " · the relay is open for your leads to ratify" }); };
+        // if the loader already finished animating, advance now; else its onDone will
         if (loaderDoneRef.current) { commitRef.current(); commitRef.current = null; }
       })
-      .catch((e) => { setDispatching(false); toast.error(e instanceof Error ? e.message : "Dispatch failed"); });
+      .catch((e) => { setDispatching(false); toast.error(e instanceof Error ? e.message : "Reserve failed"); });
   };
 
   const busy = loader != null || dispatching;
@@ -312,7 +312,7 @@ export function WizardBrief() {
                     dispatching={dispatching} dispatched={dispatched}
                     onDispatch={onDispatch}
                     onDone={onLoaderDone}
-                    onGoProjects={closeToProjects} />}
+                    onGoRelays={closeToRelays} />}
                 </>
               )}
             </div>
@@ -578,10 +578,10 @@ function StepPlan({ plan, relay, staffing, members }: {
 }
 
 /* The Contract step — sign each open gate's reuse-or-innovate Contract (the posture auto-passed the rest). */
-function StepReview({ preview, projectName, setProjectName, dispatching, dispatched, onDispatch, onDone, onGoProjects }: {
+function StepReview({ preview, projectName, setProjectName, dispatching, dispatched, onDispatch, onDone, onGoRelays }: {
   preview: DispatchPreview; projectName: string; setProjectName: (v: string) => void;
   dispatching: boolean; dispatched: boolean;
-  onDispatch: () => void; onDone: () => void; onGoProjects: () => void;
+  onDispatch: () => void; onDone: () => void; onGoRelays: () => void;
 }) {
   const p = preview;
   const name = projectName.trim() || p.project_name;
@@ -591,8 +591,8 @@ function StepReview({ preview, projectName, setProjectName, dispatching, dispatc
     return (
       <SequenceLoader
         kicker="sprint0 · create"
-        headline={`Creating ${name}`}
-        lines={["Creating the GitLab project", `Scaffolding ${taskN} task${taskN === 1 ? "" : "s"} across the relay`, "Opening the relay for its owners to ratify"]}
+        headline={`Reserving ${name}`}
+        lines={["Reserving the GitLab project", "Opening the relay for its owners", "Each gate is the lead's to ratify"]}
         stepMs={780}
         onDone={onDone} />);
 
@@ -602,12 +602,12 @@ function StepReview({ preview, projectName, setProjectName, dispatching, dispatc
         <span style={{ width: 56, height: 56, borderRadius: "50%", background: "var(--text-primary)", display: "grid", placeItems: "center", margin: "0 auto 18px", animation: "s0-check-pop 0.45s var(--ease-out) both" }}>
           <Icon name="check" size={28} style={{ color: "#fff" }} />
         </span>
-        <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 8px" }}>Created on GitLab</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 8px" }}>Project reserved</h1>
         <p style={{ fontSize: 14, color: "var(--text-tertiary)", lineHeight: 1.55, margin: "0 0 22px" }}>
-          <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{name}</b> is live — {taskN} task{taskN === 1 ? "" : "s"} scaffolded across the relay. Its gates are <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>open for the team to ratify</b>.
+          <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{name}</b> is reserved and the relay is <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>open for your leads to ratify</b>. The {taskN} task{taskN === 1 ? "" : "s"} + branches scaffold to GitLab automatically once every gate is signed.
         </p>
         <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
-          <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onGoProjects}>Go to Projects</Button>
+          <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onGoRelays}>Go to the relay</Button>
         </div>
       </div>);
 
@@ -639,7 +639,7 @@ function StepReview({ preview, projectName, setProjectName, dispatching, dispatc
         {`Create ${name}`}
       </Button>
       <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", textAlign: "center", margin: "10px 0 0", lineHeight: 1.5 }}>
-        Creates the real GitLab project + its tasks. The gates open for the team to ratify.
+        Reserves the GitLab project + opens the relay. The {taskN} task{taskN === 1 ? "" : "s"} + branches scaffold automatically once every lead ratifies their gate.
       </p>
     </div>);
 }
