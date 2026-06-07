@@ -137,6 +137,7 @@ class DeveloperProfile(BaseModel):
     trust: dict[str, TrustLevel] = Field(default_factory=dict)  # per-discipline tier (overrides trust_level)
     joined: Optional[str] = None                # ISO month joined the agency (YYYY-MM); shown on the Passport
     availability: Optional[Availability] = None  # server-computed (roster API only); when they can start new work
+    needs_link: bool = False                    # server-derived (roster API): a repo-needing dev with no GitLab link
 
     @model_validator(mode="after")
     def _default_username(self) -> "DeveloperProfile":
@@ -170,6 +171,12 @@ class Constraints(BaseModel):
     reliability: Literal["low-cost", "standard", "high-availability"] = "standard"
 
 
+class ReuseItem(BaseModel):
+    from_project: str
+    feature: str
+    action: Literal["reuse", "adapt", "drop"] = "reuse"
+
+
 class ArchitectureCard(BaseModel):
     name: str = Field(description="≤4 words")
     tech_stack: TechStack
@@ -177,10 +184,26 @@ class ArchitectureCard(BaseModel):
     rationale: str = Field(description="≤200 chars — why; cite past projects + which roster devs fit")
     grounded_on: list[str] = Field(default_factory=list)
     fit_to_constraints: str = Field(description="≤80 chars — how it meets the constraints")
+    pros: list[str] = Field(default_factory=list)          # ≤3, each ≤8 words
+    cons: list[str] = Field(default_factory=list)          # ≤3, each ≤8 words
+    reuse: list[ReuseItem] = Field(default_factory=list)   # features fetched from memory + the project each came from
+    recommended: bool = False                              # server-set: the deterministic pick (most proven reuse + fit)
+
+    @field_validator("pros", "cons")
+    @classmethod
+    def _trunc_proscons(cls, v: list[str]) -> list[str]:
+        return [_trunc_words(x, 8) for x in (v or [])[:3]]
 
 
 class ArchitectureOptions(BaseModel):
     cards: list[ArchitectureCard]
+    ai_pick_name: str = ""    # the option the AI itself would pick (may favor a modern/fresh stack over the most-reuse one)
+    ai_pick_why: str = ""     # one-line why (≤140)
+
+    @field_validator("ai_pick_why")
+    @classmethod
+    def _trunc_why(cls, v: str) -> str:
+        return (v or "")[:140]
 
 
 class ParsedCV(BaseModel):
@@ -202,12 +225,6 @@ class AmbiguityCard(BaseModel):
     question: str
     options: list[str]                 # 2-3 candidate interpretations
     resolution: Optional[str] = None   # manager's pick or free-text escape
-
-
-class ReuseItem(BaseModel):
-    from_project: str
-    feature: str
-    action: Literal["reuse", "adapt", "drop"] = "reuse"
 
 
 class ClarifiedSpec(BaseModel):
@@ -339,7 +356,9 @@ class FileChange(BaseModel):
 
 class InterfaceDraft(BaseModel):
     """A cross-discipline interface contract (CDD) — the typed payload of an `interface` Agreement. The AI
-    drafts it from both slices' needs, grounded on past interfaces; both leads ratify it BEFORE either builds."""
+    drafts it from both slices' needs, grounded on past interfaces; both leads ratify it BEFORE either builds.
+    This is the **API** contract kind (backend↔frontend: method/path/schema). The CDD concept generalizes to
+    other discipline pairs (deploy/runtime, design-handoff, acceptance) — a per-kind shape is future work."""
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
     path: str = ""                                            # e.g. /api/listings/{id}
     request_fields: list[SchemaField] = Field(default_factory=list)
@@ -359,7 +378,6 @@ class InterfaceProposal(BaseModel):
     cons: list[str] = Field(default_factory=list)
     grounded_on: list[str] = Field(default_factory=list)   # past project(s) reused (memory source)
     confidence: int = 50
-    file_changes: list[FileChange] = Field(default_factory=list)  # producer-side files this shape implies (add/modify/remove)
 
     @field_validator("why")
     @classmethod
@@ -470,7 +488,7 @@ class ChangeEvent(BaseModel):
     id: str
     kind: Literal["meeting", "holiday", "sick", "time_off", "capacity",        # calendar
                   "estimate_change", "spec_change", "scope_change", "blocked", # work
-                  "dependency_added", "task_done",
+                  "dependency_added", "task_done", "source_changed",          # work (source_changed = a reused feature's content moved upstream)
                   "claim", "release", "reassign"]                              # assignment
     user_id: Optional[str] = None          # whose calendar/capacity (calendar + assignment kinds)
     task_id: Optional[str] = None          # which task (work + assignment kinds)
@@ -742,6 +760,7 @@ class RatifyRequest(BaseModel):
 
 class DispatchRequest(BaseModel):
     mode: Literal["copilot", "autonomous"] = "copilot"
+    project_name: Optional[str] = None   # manager's edited name (AI auto-fills; the human validates before create)
 
 
 class FeatureRequest(BaseModel):  # mid-prod feature add
@@ -752,19 +771,32 @@ class FeatureRequest(BaseModel):  # mid-prod feature add
 
 # ── Code Graph (roadmap System 4): dependency graph (A) + decision governance (B) + drift ──
 class GraphNode(BaseModel):
-    path: str                                              # repo-relative file path
+    path: str                                              # repo-relative file path; for a feature node: f"feat:{hash12}"
     domain: str = "backend"                                # inferred from path
-    node_type: Literal["file", "module", "interface"] = "file"
+    node_type: Literal["file", "module", "interface", "feature"] = "file"  # "feature" = a content-addressed reusable unit (Living Project Graph)
     project_id: str = "local"
     loc: int = 0                                           # lines of code (cheap size signal)
     governed_by: list[str] = Field(default_factory=list)   # decision ids that govern this file
+    content_hash: str = ""                                  # pillar 2: sha over normalized content — the unit's identity (feature nodes); "" for file nodes
+    title: str = ""                                         # human label for a feature node (e.g. "QuantaPay JWT+TOTP auth")
+    ref_project_id: Optional[int] = None                    # for a reuse INSTANCE node: the real project it belongs to (so a sync task lands on the right board); None for the canonical source feature
+    source_project_id: Optional[int] = None                 # for a CANONICAL feature: the GitLab project its source lives in → a real merge webhook maps to it
+    # bitemporal (Living Project Graph): a node is a VERSION. Current reads see valid_to=None; as_of(T) reads see vf<=T<vt.
+    valid_from: str = ""                                    # ISO time this version became true ("" = always/seed)
+    valid_to: Optional[str] = None                          # ISO time it stopped being current (None = still current)
+    tx_time: str = ""                                       # when the system recorded it (transaction time)
+    deleted: bool = False                                   # tombstone: explicitly retired (kept for history; closed via valid_to)
 
 
 class GraphEdge(BaseModel):
     from_path: str
     to_path: str
-    edge_type: Literal["import", "export", "contract", "data-flow"] = "import"
+    edge_type: Literal["import", "export", "contract", "data-flow", "derived_from", "supersedes"] = "import"  # derived_from = reuse lineage; supersedes = a fix's new hash → old
     project_id: str = "local"
+    valid_from: str = ""                                    # bitemporal (see GraphNode)
+    valid_to: Optional[str] = None
+    tx_time: str = ""
+    deleted: bool = False
 
 
 class GovernanceRule(BaseModel):

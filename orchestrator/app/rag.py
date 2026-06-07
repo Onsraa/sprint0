@@ -157,27 +157,46 @@ async def set_developer_discipline(username: str, discipline: str) -> None:
         await m.update_many(DEV_COLL, {"username": username}, {"$set": {"discipline": discipline}})
 
 
+_DEMO_PROJECTS: dict[int, dict] = {}  # DEMO_MODE in-mem store — Atlas writes no-op, so dispatched projects live here
+
+
+def reset_demo_projects() -> None:
+    """DEMO reset/seed: drop every session-dispatched project record (only the canned workspace remains)."""
+    _DEMO_PROJECTS.clear()
+
+
 async def save_project_record(record: dict) -> None:
     """Persist a scaffolded project (milestone write) so mid-prod feature-adds can
     ground against its real state later. Each dispatch is a new GitLab project_id → insert."""
+    if demo.is_demo():
+        _DEMO_PROJECTS[record["project_id"]] = dict(record)
+        return
     async with MongoMCP() as m:
         await m.insert_many(PROJ_COLL, [record])
 
 
 async def update_project_record(project_id: int, patch: dict) -> None:
+    if demo.is_demo():
+        if project_id in _DEMO_PROJECTS:
+            _DEMO_PROJECTS[project_id].update(patch)
+        return
     async with MongoMCP() as m:
         await m.update_many(PROJ_COLL, {"project_id": project_id}, {"$set": patch})
 
 
 async def get_project_record(project_id: int) -> dict:
+    if demo.is_demo():
+        return dict(_DEMO_PROJECTS.get(project_id) or {})
     async with MongoMCP() as m:
         rows = await m.find(PROJ_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=1)
     return rows[0] if rows else {}
 
 
 async def all_project_records() -> list[dict]:
+    if demo.is_demo():
+        return [dict(r) for r in _DEMO_PROJECTS.values()]
     async with MongoMCP() as m:
-        return await m.find(PROJ_COLL, projection={"_id": 0}, limit=50)
+        return await m.find(PROJ_COLL, projection={"_id": 0}, limit=2000)  # was 50 — a real org has >50 projects
 
 
 async def past_projects() -> list[dict]:
@@ -295,6 +314,24 @@ async def reuse_pack(projects: list[str], limit: int = 30) -> list[dict]:
     return out[:limit]
 
 
+async def code_chunks_for_project(project: str) -> list[dict]:
+    """Living corpus (P7): the stored CodeChunks for a project (by name) — to compare content_hash on re-embed."""
+    if demo.is_demo():
+        return []
+    async with MongoMCP() as m:
+        return await m.find(CODE_COLL, query={"project": project}, projection={"_id": 0}, limit=500)
+
+
+async def upsert_code_chunk(doc: dict) -> None:
+    """Living corpus (P7): replace the current chunk for (project, file_path) with the freshly re-embedded one,
+    so recall grounds on CURRENT code, not the seed-time snapshot. Demo writes are no-ops."""
+    if demo.is_demo():
+        return
+    async with MongoMCP() as m:
+        await m.delete_many(CODE_COLL, {"project": doc.get("project"), "file_path": doc.get("file_path")})
+        await m.insert_many(CODE_COLL, [doc])
+
+
 async def get_agreement(agreement_id: str) -> dict:
     if demo.is_demo():
         return dict(_DEMO_AGREEMENTS.get(agreement_id) or {})
@@ -317,9 +354,24 @@ GRAPH_NODES_COLL = "GraphNodes"
 GRAPH_EDGES_COLL = "GraphEdges"
 GOVERNANCE_COLL = "GovernanceRules"
 
+_DEMO_GRAPH_NODES: list[dict] = []  # DEMO in-mem graph (Atlas writes no-op) — the lineage/feature graph lives here
+_DEMO_GRAPH_EDGES: list[dict] = []
+
+
+def reset_demo_graph() -> None:
+    """DEMO reset/seed: drop the in-mem graph (lineage/feature nodes + edges) before re-seeding."""
+    _DEMO_GRAPH_NODES.clear()
+    _DEMO_GRAPH_EDGES.clear()
+
 
 async def save_graph(nodes: list[dict], edges: list[dict], project_id: str) -> None:
-    """Replace the stored Graph A for a project (clear then insert) — a rebuild is idempotent."""
+    """Replace the stored Graph A for a project (clear then insert) — a rebuild is idempotent.
+    Per-project_id isolation matters: the file graph ('local') and the lineage graph ('lineage') never
+    clobber each other, since this only clears the partition it's writing."""
+    if demo.is_demo():
+        _DEMO_GRAPH_NODES[:] = [n for n in _DEMO_GRAPH_NODES if n.get("project_id") != project_id] + [dict(n) for n in nodes]
+        _DEMO_GRAPH_EDGES[:] = [e for e in _DEMO_GRAPH_EDGES if e.get("project_id") != project_id] + [dict(e) for e in edges]
+        return
     async with MongoMCP() as m:
         await m.delete_many(GRAPH_NODES_COLL, {"project_id": project_id})
         await m.delete_many(GRAPH_EDGES_COLL, {"project_id": project_id})
@@ -330,13 +382,52 @@ async def save_graph(nodes: list[dict], edges: list[dict], project_id: str) -> N
 
 
 async def graph_nodes(project_id: str = "local") -> list[dict]:
+    if demo.is_demo():
+        return [dict(n) for n in _DEMO_GRAPH_NODES if n.get("project_id") == project_id]
     async with MongoMCP() as m:
         return await m.find(GRAPH_NODES_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=2000)
 
 
 async def graph_edges(project_id: str = "local") -> list[dict]:
+    if demo.is_demo():
+        return [dict(e) for e in _DEMO_GRAPH_EDGES if e.get("project_id") == project_id]
     async with MongoMCP() as m:
         return await m.find(GRAPH_EDGES_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=5000)
+
+
+async def add_graph_nodes(nodes: list[dict]) -> None:
+    """Append node VERSIONS (bitemporal) WITHOUT clearing the partition — for versioned/incremental writes."""
+    if not nodes:
+        return
+    if demo.is_demo():
+        _DEMO_GRAPH_NODES.extend(dict(n) for n in nodes)
+        return
+    async with MongoMCP() as m:
+        await m.insert_many(GRAPH_NODES_COLL, nodes)
+
+
+async def add_graph_edges(edges: list[dict]) -> None:
+    """Append edge VERSIONS (bitemporal) without clearing the partition."""
+    if not edges:
+        return
+    if demo.is_demo():
+        _DEMO_GRAPH_EDGES.extend(dict(e) for e in edges)
+        return
+    async with MongoMCP() as m:
+        await m.insert_many(GRAPH_EDGES_COLL, edges)
+
+
+async def close_graph_node(path: str, project_id: str, patch: dict) -> None:
+    """Close the CURRENT (valid_to is None) version of a node path — e.g. {'valid_to': now, 'deleted': True}
+    on supersede/tombstone. The old version stays queryable via as_of."""
+    if demo.is_demo():
+        for n in _DEMO_GRAPH_NODES:
+            if n.get("path") == path and n.get("project_id") == project_id and n.get("valid_to") is None:
+                n.update(patch)
+        return
+    async with MongoMCP() as m:
+        await m.update_many(GRAPH_NODES_COLL,
+                            {"path": path, "project_id": project_id, "valid_to": None}, {"$set": patch})
 
 
 async def save_governance_rule(doc: dict) -> None:
@@ -399,30 +490,56 @@ async def watchers_of(subject_id: str) -> list[dict]:
 NOTIFICATIONS_COLL = "Notifications"
 ACCESS_GRANTS_COLL = "AccessGrants"
 
+_DEMO_NOTIFICATIONS: list[dict] = []  # DEMO in-mem feed (Atlas writes no-op) — runtime pings persist here so the bell works
+
+
+def reset_demo_notifications() -> None:
+    """DEMO reset: drop session-generated notifications (the canned feed is added by the inbox endpoint)."""
+    _DEMO_NOTIFICATIONS.clear()
+
 
 async def save_notification(doc: dict) -> None:
+    if demo.is_demo():
+        _DEMO_NOTIFICATIONS.append(dict(doc))
+        return
     async with MongoMCP() as m:
         await m.insert_many(NOTIFICATIONS_COLL, [doc])
 
 
 async def notifications_for_user(user_id: str, limit: int = 30) -> list[dict]:
+    if demo.is_demo():
+        return [dict(n) for n in _DEMO_NOTIFICATIONS if n.get("user_id") == user_id][-limit:]
     async with MongoMCP() as m:
         return await m.find(NOTIFICATIONS_COLL, query={"user_id": user_id}, projection={"_id": 0}, limit=limit)
 
 
 async def mark_all_read(user_id: str) -> None:
+    if demo.is_demo():
+        for n in _DEMO_NOTIFICATIONS:
+            if n.get("user_id") == user_id:
+                n["read"] = True
+        return
     async with MongoMCP() as m:
         await m.update_many(NOTIFICATIONS_COLL, {"user_id": user_id}, {"$set": {"read": True}})
 
 
 async def delete_notification(user_id: str, notif_id: str) -> None:
-    """Dismiss one of the caller's own notifications (scoped to user_id; demo writes no-op)."""
+    """Dismiss one of the caller's own notifications (scoped to user_id)."""
+    if demo.is_demo():
+        _DEMO_NOTIFICATIONS[:] = [n for n in _DEMO_NOTIFICATIONS
+                                  if not (n.get("user_id") == user_id and n.get("id") == notif_id)]
+        return
     async with MongoMCP() as m:
         await m.delete_many(NOTIFICATIONS_COLL, {"user_id": user_id, "id": notif_id})
 
 
 async def notification_exists(user_id: str, type: str, ref: dict) -> bool:
     """Dedup: True if an UNREAD notification of this type for this user + ref already exists."""
+    if demo.is_demo():
+        return any(n.get("user_id") == user_id and n.get("type") == type and not n.get("read")
+                   and all((ref or {}).get(k) is None or (n.get("ref") or {}).get(k) == ref[k]
+                           for k in ("plan_id", "issue_id"))
+                   for n in _DEMO_NOTIFICATIONS)
     q: dict = {"user_id": user_id, "type": type, "read": False}
     for k in ("plan_id", "issue_id"):
         if (ref or {}).get(k) is not None:
@@ -481,6 +598,11 @@ TASKS_COLL = "Tasks"  # PascalCase, the Work hub's source of truth (Phase A)
 _DEMO_TASKS: dict[str, dict] = {}  # DEMO_MODE in-mem task store — Atlas writes no-op, so the Work hub lives here
 
 
+def reset_demo_tasks() -> None:
+    """DEMO reset/seed: drop every in-mem task so only the freshly re-seeded board's tasks remain."""
+    _DEMO_TASKS.clear()
+
+
 async def save_tasks(docs: list[dict]) -> None:
     if not docs:
         return
@@ -503,7 +625,7 @@ async def all_tasks() -> list[dict]:
     if demo.is_demo():
         return [dict(d) for d in _DEMO_TASKS.values()]
     async with MongoMCP() as m:
-        return await m.find(TASKS_COLL, projection={"_id": 0}, limit=1000)
+        return await m.find(TASKS_COLL, projection={"_id": 0}, limit=10000)  # was 1000 — don't drop tasks at scale
 
 
 async def get_task(task_id: str) -> dict:
@@ -534,17 +656,69 @@ async def delete_tasks_for_project(project_id: int) -> None:
         await m.delete_many(TASKS_COLL, {"project_id": project_id})
 
 
-EVENTS_COLL = "ChangeEvents"  # append-only change log (calendar + work) driving the reflow engine
+EVENTS_COLL = "ChangeEvents"  # append-only change log (calendar + work) driving the reflow engine + the LPG spine
+
+_DEMO_EVENTS: list[dict] = []  # DEMO in-mem event log (Atlas writes no-op) — append-ordered = chronological
+
+
+def reset_demo_events() -> None:
+    """DEMO reset: drop the session event log."""
+    _DEMO_EVENTS.clear()
 
 
 async def save_event(doc: dict) -> None:
+    if demo.is_demo():
+        _DEMO_EVENTS.append(dict(doc))
+        return
     async with MongoMCP() as m:
         await m.insert_many(EVENTS_COLL, [doc])
 
 
-async def all_events(limit: int = 1000) -> list[dict]:
+async def all_events(limit: int = 20000) -> list[dict]:  # was 1000 — the reflow + runtime rebuild need the full log
+    if demo.is_demo():
+        return [dict(e) for e in _DEMO_EVENTS[-limit:]]
     async with MongoMCP() as m:
         return await m.find(EVENTS_COLL, projection={"_id": 0}, limit=limit)
+
+
+# ── Durable session state (production): the in-memory workflow dicts (BRIEFS/SPECS/ARCHS/PLANS/RELAYS/
+# CHOSEN/SOLUTIONS/RESERVED/DELTA_*/REQA/ATTRIBUTIONS/RESULTS) write THROUGH to here so they survive a
+# restart, while the dicts stay the fast read cache (hot paths never hit Mongo). Rehydrated on startup. ──
+SESSION_COLL = "SessionState"
+_DEMO_SESSION: dict[tuple[str, str], dict] = {}  # DEMO in-mem (store,key) → value (Atlas writes no-op)
+
+
+def reset_demo_session() -> None:
+    """DEMO reset: drop the persisted session snapshot."""
+    _DEMO_SESSION.clear()
+
+
+async def save_state(store: str, key: str, value: dict) -> None:
+    """Write-through one session entry (durable). value MUST be JSON-able (model_dump primitives). Cold-path
+    only (brief/plan/ratify/dispatch), so the delete+insert upsert cost is fine."""
+    if demo.is_demo():
+        _DEMO_SESSION[(store, key)] = dict(value)
+        return
+    async with MongoMCP() as m:
+        await m.delete_many(SESSION_COLL, {"store": store, "key": key})
+        await m.insert_many(SESSION_COLL, [{"store": store, "key": key, "value": value}])
+
+
+async def delete_state(store: str, key: str) -> None:
+    if demo.is_demo():
+        _DEMO_SESSION.pop((store, key), None)
+        return
+    async with MongoMCP() as m:
+        await m.delete_many(SESSION_COLL, {"store": store, "key": key})
+
+
+async def load_states(store: str) -> dict[str, dict]:
+    """All persisted entries for a store → {key: value}, for startup rehydration."""
+    if demo.is_demo():
+        return {k: dict(v) for (s, k), v in _DEMO_SESSION.items() if s == store}
+    async with MongoMCP() as m:
+        rows = await m.find(SESSION_COLL, query={"store": store}, projection={"_id": 0}, limit=10000)
+    return {r["key"]: r["value"] for r in rows if "key" in r}
 
 
 RESCHEDULE_COLL = "RescheduleProposals"

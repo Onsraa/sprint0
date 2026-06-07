@@ -95,16 +95,27 @@ def _safe_username(raw: str) -> str:
 
 async def propose_architectures(brief_text: str, constraints: Constraints | None = None) -> ArchitectureOptions:
     async with MongoMCP() as m:
-        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
+        qv = embed_query(brief_text)
+        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)
+        try:  # ground the per-card `reuse` block in real reusable files (code-RAG), not just project names
+            code = await m.code_search(qv, k=5)
+        except Exception:
+            code = []
     prompt = (
         f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"SIMILAR PAST PROJECTS (agency memory):\n{_format_past(past)}\n\n"
+        f"SIMILAR PAST PROJECTS (agency memory — the `reuse` source):\n{_format_past(past)}\n\n"
+        f"REUSABLE CODE (chunk-level — cite the project + feature in each card's `reuse`):\n{_format_code(code)}\n\n"
         f"DEV ROSTER:\n{_format_roster(roster)}\n\n"
-        f"Propose 2-3 distinct, grounded architecture cards."
+        f"Propose 2-3 distinct, grounded architecture cards + your own ai_pick."
     )
-    return await generate_architectures(prompt)
+    opts = await generate_architectures(prompt)
+    from app import grading
+    idx = grading.recommend_architecture(opts.cards)   # the deterministic 'most proven reuse' badge (server-set)
+    if idx is not None:
+        opts.cards[idx].recommended = True
+    return opts
 
 
 async def clarify_brief(brief_text: str, constraints: Constraints | None = None) -> ClarifiedSpec:
@@ -458,7 +469,12 @@ async def link_gitlab(username: str) -> dict:
         except Exception:
             u = None
         uid = u["id"] if u else None
-        if uid:
+        if uid:  # uniqueness: one GitLab account ↔ one sprint0 member — refuse to bind an id already taken
+            taken = await m.find(DEV_COLL, projection={"_id": 0, "username": 1}, query={"gitlab_user_id": uid})
+            other = next((t.get("username") for t in taken if t.get("username") != username), None)
+            if other:
+                return {"username": username, "gitlab_username": gl_username, "gitlab_user_id": None,
+                        "linked": False, "conflict": f"GitLab @{gl_username} is already linked to {other}"}
             await m.update_many(DEV_COLL, {"username": username}, {"$set": {"gitlab_user_id": uid}})
         return {"username": username, "gitlab_username": gl_username, "gitlab_user_id": uid, "linked": uid is not None}
 
@@ -473,6 +489,7 @@ async def reconcile_links() -> dict:
         rows = await m.find(
             DEV_COLL, projection={"_id": 0, "username": 1, "gitlab_username": 1, "gitlab_user_id": 1}, limit=100,
         )
+        taken_uids = {r["gitlab_user_id"] for r in rows if r.get("gitlab_user_id")}  # uniqueness: one id ↔ one member
         for r in rows:
             if r.get("gitlab_user_id"):
                 continue
@@ -481,9 +498,10 @@ async def reconcile_links() -> dict:
                 u = gl.search_user(gl_username)
             except Exception:
                 u = None
-            if u:
+            if u and u["id"] not in taken_uids:
                 await m.update_many(DEV_COLL, {"username": r["username"]}, {"$set": {"gitlab_user_id": u["id"]}})
+                taken_uids.add(u["id"])
                 linked.append(r["username"])
             else:
-                unresolved.append(r["username"])
+                unresolved.append(r["username"])  # not found, or its GitLab id is already linked to another member
     return {"linked": linked, "unresolved": unresolved}

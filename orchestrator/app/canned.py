@@ -3,7 +3,7 @@ Phase 3. Kept schema-valid so the frontend + tests exercise the real contract.
 """
 from app.contracts import (
     ArchitectureOptions, ClarifiedSpec, ConflictVerdict, ContractProposalSet, Decision, DecisionCardPass1,
-    DeveloperProfile, FileChange, InterfaceDraft, InterfaceProposal, Notification, ParsedCV, PlanJSON,
+    DeveloperProfile, InterfaceDraft, InterfaceProposal, Notification, ParsedCV, PlanJSON,
     ProjectRecord, QAReport, RegeneratedSlice, RescheduleStrategy, SchemaField, SolutionSet,
 )
 
@@ -214,6 +214,7 @@ def _seat_plan(plan: PlanJSON) -> PlanJSON:
 
 
 DEMO_PLAN = _seat_plan(CANNED_PLAN)  # the roster-seated working copy seed_demo + CANNED_PROJECTS both use
+DEMO_PLAN.project_name = "Atlas Billing"  # the seeded in-progress board — a DISTINCT name from the wizard's FinTrack (so they never collide)
 
 # ── Demo-mode fixtures (Phase 6 hybrid deploy) ──────────────────────────
 # Returned by the gated `generate_*` agents when DEMO_MODE is on, so the public URL
@@ -235,6 +236,12 @@ CANNED_ARCHITECTURES = ArchitectureOptions.model_validate(
                 "rationale": "Mirrors LedgerLite (2024) which shipped in 6 weeks; Maria fits auth, Sam fits the dashboard.",
                 "grounded_on": ["LedgerLite (2024)", "BudgetBuddy (2023)"],
                 "fit_to_constraints": "Fast time-to-market, standard reliability, medium scale.",
+                "pros": ["Fastest to ship", "Least ops", "Proven path"],
+                "cons": ["Less headroom at scale"],
+                "reuse": [
+                    {"from_project": "LedgerLite (2024)", "feature": "JWT auth + refresh", "action": "reuse"},
+                    {"from_project": "BudgetBuddy (2023)", "feature": "Plaid webhook ingestion", "action": "adapt"},
+                ],
             },
             {
                 "name": "Scalable Event Core",
@@ -248,8 +255,16 @@ CANNED_ARCHITECTURES = ArchitectureOptions.model_validate(
                 "rationale": "BudgetBuddy's webhook backlog hurt under load; a queue absorbs Plaid bursts. Priya fits the infra.",
                 "grounded_on": ["BudgetBuddy (2023)"],
                 "fit_to_constraints": "Higher scalability + reliability; slower to first ship.",
+                "pros": ["Absorbs traffic spikes", "Higher headroom"],
+                "cons": ["More ops", "Slower to ship"],
+                "reuse": [
+                    {"from_project": "BudgetBuddy (2023)", "feature": "Queue-backed ingestion", "action": "reuse"},
+                ],
             },
-        ]
+        ],
+        # the AI's OWN pick DIVERGES from the deterministic 'most reuse' badge (Fast Managed) → shows the tension
+        "ai_pick_name": "Scalable Event Core",
+        "ai_pick_why": "The brief's bank-sync spikes will outgrow the managed path within a quarter — build for it now.",
     }
 )
 
@@ -407,13 +422,20 @@ def contract_options_for(discipline: str) -> ContractProposalSet:
     return ContractProposalSet(needed=True, proposals=[
         InterfaceProposal(id="p-reuse", source="memory", interface=jwt,
             why="Reuse QuantaPay's proven login response", pros=["Battle-tested", "Fields the FE already knows"],
-            cons=["Token handling on the FE"], grounded_on=["QuantaPay (2024)"], confidence=84,
-            file_changes=[FileChange(path="services/auth/jwt.py", change="modify"), FileChange(path="api/routes/auth.py", change="add")]),
+            cons=["Token handling on the FE"], grounded_on=["QuantaPay (2024)"], confidence=84),
         InterfaceProposal(id="p-fresh", source="ai", interface=session,
             why="Cookie session instead of a token in the body", pros=["No token handling on the FE"],
-            cons=["Needs CSRF protection"], confidence=62,
-            file_changes=[FileChange(path="services/auth/session.py", change="add"), FileChange(path="api/routes/auth.py", change="add")]),
+            cons=["Needs CSRF protection"], confidence=62),
     ])
+
+
+def shape_from_desc(desc: str) -> InterfaceDraft:
+    """DEMO: a stub interface draft seeded from a one-line description — the human edits it in the editor."""
+    return InterfaceDraft(
+        method="POST", path="/api/endpoint",
+        request_fields=[SchemaField(name="input")],
+        response_fields=[SchemaField(name="result")],
+        note=(desc or "")[:140])
 
 
 CANNED_CV = ParsedCV(
@@ -481,8 +503,8 @@ DEMO_PROJECT_ID = 4201
 DEMO_PLAN_ID = "demo-fintrack"
 
 _FINTRACK_RECORD = ProjectRecord(
-    project_id=DEMO_PROJECT_ID, name="FinTrack",
-    web_url="https://gitlab.com/sprint0-demo/fintrack",
+    project_id=DEMO_PROJECT_ID, name="Atlas Billing",
+    web_url="https://gitlab.com/sprint0-demo/atlas-billing",
     tech_stack=DEMO_PLAN.tech_stack, grounded_on=DEMO_PLAN.grounded_on,
     plan=DEMO_PLAN, status="in_progress",
 )
@@ -505,12 +527,41 @@ CANNED_PROJECTS = [
      "last_activity_at": "2026-03-02T10:00:00Z"},
 ]
 
+# ── Living Project Graph (reuse lineage) demo seed ──
+# QuantaPay's JWT+TOTP auth (the same battle-tested slice CANNED_SOLUTIONS lifts) is ONE content-addressed
+# feature node reused by all 3 workspace projects → 3 `derived_from` edges to ONE node (dedup: 1 node, N
+# edges, not N copies). A `source_changed` event on it proposes a sync task in each dependent. project_id
+# "lineage" isolates this graph so a /api/graph/build on "local" can never clobber it.
+LINEAGE_PID = "lineage"
+LINEAGE_FEATURE = {
+    "path": "feat:qpauth0001", "node_type": "feature", "project_id": LINEAGE_PID, "domain": "backend",
+    "title": "QuantaPay JWT+TOTP auth", "content_hash": "sha256:qpauth0001", "loc": 180,
+    "source_project_id": 5001,  # the GitLab repo the canonical source lives in → a real merge webhook maps here (P6)
+}
+LINEAGE_DEPENDENTS = [  # each project's auth INSTANCE — same content_hash (identical reused code), real ref_project_id
+    {"path": "proj:atlas/auth", "node_type": "feature", "project_id": LINEAGE_PID, "domain": "backend",
+     "title": "Atlas Billing · auth", "content_hash": "sha256:qpauth0001", "ref_project_id": 4201},
+    {"path": "proj:ledgerlite/auth", "node_type": "feature", "project_id": LINEAGE_PID, "domain": "backend",
+     "title": "LedgerLite · auth", "content_hash": "sha256:qpauth0001", "ref_project_id": 4187},
+    {"path": "proj:budgetbuddy/auth", "node_type": "feature", "project_id": LINEAGE_PID, "domain": "backend",
+     "title": "BudgetBuddy · auth", "content_hash": "sha256:qpauth0001", "ref_project_id": 4163},
+]
+LINEAGE_FEATURE_ALT = {  # a SEMANTIC near-dup of QuantaPay auth (same intent, different impl + hash) — P5 dedup demo
+    "path": "feat:auth0oidc01", "node_type": "feature", "project_id": LINEAGE_PID, "domain": "backend",
+    "title": "Auth0 social + OIDC login", "content_hash": "sha256:auth0oidc01", "loc": 140, "ref_project_id": None,
+}
+LINEAGE_NODES = [LINEAGE_FEATURE, LINEAGE_FEATURE_ALT, *LINEAGE_DEPENDENTS]
+LINEAGE_EDGES = [
+    {"from_path": d["path"], "to_path": LINEAGE_FEATURE["path"], "edge_type": "derived_from", "project_id": LINEAGE_PID}
+    for d in LINEAGE_DEPENDENTS
+]
+
 CANNED_DECISIONS = [
     Decision(
         id="dec_demo_1", owner_id="Onsraa", domain="backend",
         context_tags=["auth", "jwt"], recommendation="Reuse LedgerLite JWT auth + refresh rotation",
         reasoning="Security-sensitive gate; LedgerLite's slice shipped and survived prod, so reuse beats a rebuild.",
-        project_id=DEMO_PLAN_ID, project_name="FinTrack", issue_ids=["E1-1", "E1-2"],
+        project_id=DEMO_PLAN_ID, project_name="Atlas Billing", issue_ids=["E1-1", "E1-2"],
         outcome_validated=True, visibility="team", grade="prod_survived",
         merged=True, qa_passed=True, days_clean=21,
         created_at="2026-05-20T10:00:00Z", updated_at="2026-05-31T10:00:00Z",
@@ -519,7 +570,7 @@ CANNED_DECISIONS = [
         id="dec_demo_2", owner_id="Onsraa", domain="frontend",
         context_tags=["dataviz"], recommendation="Fresh category spend chart (no reuse fit)",
         reasoning="No past dashboard slice matched the brief, so a focused category chart was built from scratch.",
-        project_id=DEMO_PLAN_ID, project_name="FinTrack", issue_ids=["E3-1"],
+        project_id=DEMO_PLAN_ID, project_name="Atlas Billing", issue_ids=["E3-1"],
         outcome_validated=True, visibility="team", grade="shipped",
         merged=True, qa_passed=True, days_clean=4,
         created_at="2026-05-25T10:00:00Z", updated_at="2026-05-30T10:00:00Z",
@@ -537,7 +588,7 @@ CANNED_DECISIONS = [
 
 CANNED_INBOX = [
     Notification(id="ntf_demo_1", user_id="Onsraa", type="project_shipped",
-        title="FinTrack reached the acceptance gate",
+        title="Atlas Billing reached the acceptance gate",
         body="The relay cleared build + integration; QA holds the baton.",
         ref={"plan_id": DEMO_PLAN_ID}, read=False, created_at="2026-05-31T15:30:00Z").model_dump(),
     Notification(id="ntf_demo_2", user_id="Onsraa", type="task_completed",

@@ -10,9 +10,18 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import hashlib
 import os
 
 from app.contracts import DriftReport, GovernanceRule, GraphEdge, GraphNode
+
+
+def normalize_and_hash(content: str) -> str:
+    """Content-addressed identity (Living Project Graph, pillar 2): collapse whitespace, sha256 → a stable id.
+    EXACT-match only — identical normalized content yields the SAME hash → one node, N reuse edges, no
+    duplication. Near-duplicate / semantically-equal-but-different code is explicitly out of scope."""
+    norm = " ".join(content.split())
+    return f"sha256:{hashlib.sha256(norm.encode('utf-8')).hexdigest()[:16]}"
 
 
 def _domain_of(path: str) -> str:
