@@ -23,7 +23,7 @@ import type { SolutionCard, Discipline, HandoffCandidate } from "../lib/api";
 
 /* ───────── routing-tier presentation (§10) — the two_expert tier is the ink "spark" ───────── */
 const TIER_META: Record<string, { label: string; experts: number; fg: string; bg: string }> = {
-  auto_pass:  { label: "auto-pass", experts: 0, fg: "var(--text-tertiary)",  bg: "var(--bg-secondary)" },
+  auto_pass:  { label: "owner only", experts: 0, fg: "var(--text-tertiary)",  bg: "var(--bg-secondary)" },
   one_expert: { label: "1 expert",  experts: 1, fg: "var(--text-secondary)", bg: "var(--bg-secondary)" },
   two_expert: { label: "2 experts", experts: 2, fg: "var(--text-primary)",   bg: "var(--bg-active)" },
 };
@@ -470,7 +470,7 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
           );
         })()}
 
-        <div className="kicker" style={{ marginBottom: 8 }}>The slice · {slice.length} issues</div>
+        <div className="kicker" style={{ marginBottom: 8 }}>The slice · {slice.length} task{slice.length === 1 ? "" : "s"}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 1, marginBottom: 16 }}>
           {slice.map(i => (
             <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 9, minHeight: 34, padding: "5px 8px", borderRadius: "var(--r-md)" }}>

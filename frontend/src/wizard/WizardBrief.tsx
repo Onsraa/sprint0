@@ -19,9 +19,8 @@ import { toast } from "sonner";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { Icon, ZeroMark, FullLogo } from "../lib/icon";
-import { Button, Avatar, Badge, DiscDot, DISC, CapTag } from "../components/ui";
+import { Button, Badge, DiscDot, DISC, CapTag } from "../components/ui";
 import { Stepper, SequenceLoader, ConfirmDraft } from "./WizardMotion";
-import { RatifyPanel, GATE_META } from "../views/RatifyPanel";
 import { api } from "../lib/api";
 import type {
   ArchitectureCard,
@@ -57,9 +56,8 @@ const STEPS = [
   { id: "brief", label: "Brief", sub: "Paste or drop" },
   { id: "clarify", label: "Clarify", sub: "Resolve ambiguities" },
   { id: "arch", label: "Architecture", sub: "Pick a stack" },
-  { id: "plan", label: "Plan", sub: "Draft relay" },
-  { id: "contract", label: "Gates", sub: "Ratify the gates" },
-  { id: "review", label: "Review", sub: "Dispatch preview" },
+  { id: "plan", label: "Plan", sub: "The relay" },
+  { id: "review", label: "Review", sub: "Create the project" },
 ];
 
 const DEFAULT_BRIEF = `Build a tenant portal for a freight client. They need: a saved-search experience over shipments, shareable read-only views with expiring links, a live map with thousands of vehicle pins, and CSV export of any filtered view. Must scaffold a real GitLab project. Tight 8-week window.`;
@@ -70,15 +68,13 @@ const DEFAULT_BRIEF = `Build a tenant portal for a freight client. They need: a 
 type LoaderCfg = { kicker: string; headline: React.ReactNode; lines: string[]; stepMs?: number };
 
 export function WizardBrief() {
-  const { setView, members, addDraft, gates, actGate, dial } = useApp();
+  const { setView, members, addDraft } = useApp();
   const setWizardOpen = useUI((s) => s.setWizardOpen);
-  const setUiPlanId = useUI((s) => s.setPlanId);
   const removeDraftByName = useUI((s) => s.removeDraftByName);
   const qc = useQueryClient();
 
   const [step, setStep] = useState(0);
   const [brief, setBrief] = useState(DEFAULT_BRIEF);
-  const [mode, setMode] = useState<"supervised" | "autonomous">("supervised");
   const [confirmDraft, setConfirmDraft] = useState(false);
 
   // real async state (replaces the scripted WIZARD_SPEC/WIZARD_ARCHITECTURES/DISPATCH_PREVIEW/STAFFING)
@@ -86,12 +82,14 @@ export function WizardBrief() {
   const [spec, setSpec] = useState<ClarifiedSpec | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [cards, setCards] = useState<ArchitectureCard[]>([]);
+  const [aiPick, setAiPick] = useState<{ name: string; why: string }>({ name: "", why: "" });
   const [chosenStack, setChosenStack] = useState<TechStack | null>(null);
   const [planId, setPlanId] = useState<string | null>(null);
   const [plan, setPlan] = useState<PlanJSON | null>(null);
   const [relay, setRelay] = useState<RelayState | null>(null);
   const [staffing, setStaffing] = useState<StaffingResponse | null>(null);
   const [preview, setPreview] = useState<DispatchPreview | null>(null);
+  const [projectName, setProjectName] = useState("");  // editable; AI auto-fills, the manager validates before create
 
   // generic SequenceLoader driver: the loader animates while the real call runs; we advance
   // only once the call resolved (commitRef holds the "what to do next" set by the resolved call).
@@ -134,12 +132,10 @@ export function WizardBrief() {
   };
 
   const ambiguityCount = spec?.ambiguities.length ?? 0;
-  const relayCleared = gates.length > 0 && gates.every((g: any) => g.status === "ratified" || g.status === "auto_passed");
   const canNext =
     step === 0 ? brief.trim().length > 20 :
     step === 1 ? ambiguityCount === 0 || Object.keys(answers).length === ambiguityCount :
     step === 2 ? !!chosenStack :
-    step === 4 ? relayCleared :
     true;
 
   // STEP 0 → 1: createBrief, then clarify (the AI "digest" loader)
@@ -178,8 +174,9 @@ export function WizardBrief() {
         }
         const opts = await api.architectures(briefId);
         setCards(opts.cards);
-        // default the choice to the first (recommended) card's stack
-        setChosenStack(opts.cards[0]?.tech_stack ?? null);
+        setAiPick({ name: opts.ai_pick_name ?? "", why: opts.ai_pick_why ?? "" });
+        // default the choice to the server's recommended (most proven reuse) card, else the first
+        setChosenStack((opts.cards.find((c) => c.recommended) ?? opts.cards[0])?.tech_stack ?? null);
         commitRef.current = () => setStep(2);
       },
       "Could not generate architectures",
@@ -193,7 +190,7 @@ export function WizardBrief() {
       {
         kicker: "sprint0 · plan",
         headline: "Drafting the relay",
-        lines: ["Planning epics and issues", "Sequencing the discipline relay", "Checking team coverage for each gate"],
+        lines: ["Planning epics and tasks", "Sequencing the discipline relay", "Checking team coverage for each gate"],
       },
       async () => {
         const res = await api.plan(briefId, { chosen_stack: chosenStack });
@@ -211,39 +208,23 @@ export function WizardBrief() {
     );
   };
 
-  // STEP 3 → 4: apply the Autonomy posture (auto-pass low-risk gates), then the Contract step
-  const goContract = () => {
-    if (!planId) return;
-    setUiPlanId(planId);  // point useApp().gates + the Contract (RatifyPanel) at this plan
-    runLoader(
-      {
-        kicker: "sprint0 · gates",
-        headline: "Applying your posture",
-        lines: ["Scoring trust × risk per gate", "Auto-passing the low-risk gates", "Surfacing the gates that need your call"],
-      },
-      async () => {
-        await api.relayAuto(planId, dial);
-        commitRef.current = () => setStep(4);
-      },
-      "Could not apply the posture",
-    );
-  };
-
-  // STEP 4 → 5: dispatch dry-run preview
+  // STEP 3 → 4: dispatch dry-run preview (NO ratify/auto-pass step — gates stay open, ratified live after create)
   const goReview = () => {
     if (!planId) return;
     runLoader(
       {
         kicker: "sprint0 · review",
-        headline: "Building the dispatch preview",
-        lines: ["Resolving the GitLab project name", "Counting issues to scaffold", "Reconciling member invites against the free-tier cap"],
+        headline: "Building the create preview",
+        lines: ["Resolving the GitLab project name", "Counting the tasks to scaffold", "Readying the relay for its owners"],
         stepMs: 640,
       },
       async () => {
-        setPreview(await api.dispatchPreview(planId));
-        commitRef.current = () => setStep(5);
+        const pv = await api.dispatchPreview(planId);
+        setPreview(pv);
+        setProjectName(pv.project_name ?? plan?.project_name ?? "");  // prefill the editable name with the AI's
+        commitRef.current = () => setStep(4);
       },
-      "Could not build the dispatch preview",
+      "Could not build the create preview",
     );
   };
 
@@ -252,8 +233,7 @@ export function WizardBrief() {
     if (step === 0) return goClarify();
     if (step === 1) return goArch();
     if (step === 2) return goPlan();
-    if (step === 3) return goContract();
-    if (step === 4) return goReview();
+    if (step === 3) return goReview();
   };
 
   const closeToProjects = () => { setView("projects"); setWizardOpen(false); };
@@ -278,15 +258,16 @@ export function WizardBrief() {
     loaderDoneRef.current = false; // reset so the dispatch loader always plays through
     commitRef.current = null;
     setDispatching(true);
+    const finalName = projectName.trim() || previewName;
     api
-      .dispatch(planId, mode === "supervised" ? "copilot" : "autonomous")
+      .dispatch(planId, projectName.trim() || undefined)     // always supervised; the manager's edited name (or the AI's)
       .then(() => {
         qc.invalidateQueries({ queryKey: ["work"] });        // the dispatched project's tasks now show
         qc.invalidateQueries({ queryKey: qk.projects() });
         qc.invalidateQueries({ queryKey: qk.allRelays() });
         removeDraftByName(previewName);                       // the real project replaces the stale draft
         commitRef.current = () => { setDispatching(false); setDispatched(true);
-          toast("Dispatched to GitLab", { description: previewName + " · " + mode }); };
+          toast("Created on GitLab", { description: finalName + " · gates open for the team to ratify" }); };
         // if the dispatch loader already finished animating, advance now; else its onDone will
         if (loaderDoneRef.current) { commitRef.current(); commitRef.current = null; }
       })
@@ -324,11 +305,10 @@ export function WizardBrief() {
                 <>
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
                   {step === 1 && spec && <StepClarify spec={spec} answers={answers} setAnswers={setAnswers} />}
-                  {step === 2 && <StepArch cards={cards} chosenStack={chosenStack} setChosenStack={setChosenStack} />}
+                  {step === 2 && <StepArch cards={cards} aiPick={aiPick} chosenStack={chosenStack} setChosenStack={setChosenStack} />}
                   {step === 3 && plan && <StepPlan plan={plan} relay={relay} staffing={staffing} members={members} />}
-                  {step === 4 && <StepContract gates={gates} actGate={actGate} />}
-                  {step === 5 && preview && <StepReview mode={mode} setMode={setMode}
-                    preview={preview} members={members}
+                  {step === 4 && preview && <StepReview
+                    preview={preview} projectName={projectName} setProjectName={setProjectName}
                     dispatching={dispatching} dispatched={dispatched}
                     onDispatch={onDispatch}
                     onDone={onLoaderDone}
@@ -346,7 +326,7 @@ export function WizardBrief() {
               <div style={{ flex: 1 }} />
               {step < STEPS.length - 1 &&
               <Button variant="primary" size="md" iconRight="arrowRight" disabled={!canNext} style={{ opacity: canNext ? 1 : 0.45 }} onClick={onPrimary}>
-                  {step === 0 ? "Clarify spec" : step === 1 ? "Generate architectures" : step === 2 ? "Generate plan" : step === 3 ? "Ratify the gates" : "Review & dispatch"}
+                  {step === 0 ? "Clarify spec" : step === 1 ? "Generate architectures" : step === 2 ? "Generate plan" : "Review & create"}
                 </Button>}
             </div>
           )}
@@ -455,180 +435,164 @@ function StepClarify({ spec, answers, setAnswers }: {
 
 }
 
-function StepArch({ cards, chosenStack, setChosenStack }: {
-  cards: ArchitectureCard[]; chosenStack: TechStack | null; setChosenStack: (s: TechStack) => void;
+const TECH_ROWS: { key: keyof TechStack; label: string }[] = [
+  { key: "frontend", label: "Frontend" }, { key: "backend", label: "Backend" },
+  { key: "db", label: "Database" }, { key: "infra", label: "Infra" },
+];
+
+function StepArch({ cards, aiPick, chosenStack, setChosenStack }: {
+  cards: ArchitectureCard[]; aiPick: { name: string; why: string }; chosenStack: TechStack | null; setChosenStack: (s: TechStack) => void;
 }) {
   const sameStack = (a: TechStack | null, b: TechStack) =>
     !!a && a.frontend === b.frontend && a.backend === b.backend && a.db === b.db && a.infra === b.infra;
+  const recCard = cards.find((c) => c.recommended);
+  const aiCard = cards.find((c) => c.name === aiPick.name);
+  const diverge = !!recCard && !!aiCard && recCard.name !== aiCard.name;
+  const cols = `96px repeat(${cards.length}, minmax(0, 1fr))`;
+  const cell: React.CSSProperties = { padding: "9px 10px", borderTop: "0.5px solid var(--border-subtle)", minWidth: 0 };
+  const rowLabel: React.CSSProperties = { ...cell, fontSize: 10.5, color: "var(--text-quaternary)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 };
+
   return (
     <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
-      <WizHead title="Pick a stack" sub="Grounded architecture options — the recommended one reuses the most validated modules from memory." />
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {cards.map((o, idx) => {
-          const stack = Object.values(o.tech_stack).filter(Boolean);
-          const grounded = o.grounded_on ?? [];
-          const on = sameStack(chosenStack, o.tech_stack);
-          return (
-            <button key={o.name + idx} className="s0-press" onClick={() => setChosenStack(o.tech_stack)} style={{ textAlign: "left", width: "100%",
-              border: `0.5px solid ${on ? "var(--text-primary)" : "var(--border)"}`, borderRadius: "var(--r-lg)", padding: 16,
-              background: "var(--bg-elevated)", boxShadow: on ? "var(--shadow-2)" : "var(--shadow-1)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <span style={{ width: 18, height: 18, borderRadius: "50%", border: `1.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`,
-                  display: "grid", placeItems: "center", transition: "border-color var(--t-reg)" }}>{on && <span style={{ width: 9, height: 9, borderRadius: "50%", background: "var(--text-primary)", animation: "s0-check-pop 0.3s var(--ease-out) both" }} />}</span>
-                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", flex: 1 }}>{stack.map((s) => <Badge key={s} tone="outline">{s}</Badge>)}</div>
-                {idx === 0 && <Badge tone="ink">recommended</Badge>}
-              </div>
-              <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "0 0 6px", lineHeight: 1.5 }}>{o.rationale}</p>
-              <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "0 0 10px", lineHeight: 1.5 }}><b style={{ fontWeight: 500 }}>Trade-off:</b> {o.fit_to_constraints}</p>
-              {grounded.length > 0 &&
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <ZeroMark size={13} /><span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>reuses</span>
-                  {grounded.map((g) => <CapTag key={g} tag={g} />)}
-                </div>
-              }
-            </button>);
+      <WizHead title="Pick a stack" sub="Compare the options side by side. The AI recommends; you choose." />
 
-        })}
+      {/* dual-recommendation legend */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 12, fontSize: 11.5, color: "var(--text-tertiary)" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><ZeroMark size={12} /> <b style={{ fontWeight: 600, color: "var(--text-secondary)" }}>Most proven reuse</b> — the safe, memory-grounded pick</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="bolt" size={12} style={{ color: "var(--amber)" }} /> <b style={{ fontWeight: 600, color: "var(--text-secondary)" }}>AI's pick</b> — the model's own call</span>
+      </div>
+      {diverge && aiCard && (
+        <div style={{ display: "flex", gap: 8, padding: "9px 12px", marginBottom: 14, borderRadius: "var(--r-md)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
+          <Icon name="bolt" size={14} style={{ color: "var(--amber)", flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45 }}>
+            They differ — proven reuse says <b>{recCard?.name}</b>, the AI would take <b>{aiCard.name}</b>{aiPick.why ? <> — {aiPick.why}</> : ""}. <b style={{ color: "var(--text-primary)" }}>Your call.</b>
+          </span>
+        </div>
+      )}
+
+      <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)" }}>
+        {/* selectable card headers */}
+        <div style={{ display: "grid", gridTemplateColumns: cols }}>
+          <div />
+          {cards.map((c) => {
+            const on = sameStack(chosenStack, c.tech_stack);
+            return (
+              <button key={c.name} className="s0-press" onClick={() => setChosenStack(c.tech_stack)}
+                style={{ textAlign: "left", padding: "11px 10px", borderLeft: "0.5px solid var(--border-subtle)", minWidth: 0,
+                  background: on ? "var(--bg-secondary)" : "transparent", boxShadow: on ? "inset 0 0 0 1.5px var(--text-primary)" : "none", cursor: "pointer" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <span style={{ width: 15, height: 15, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center", border: `1.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`, background: on ? "var(--ink-fill)" : "transparent" }}>{on && <Icon name="check" size={10} style={{ color: "#fff" }} />}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {c.recommended && <Badge tone="green" mono><ZeroMark size={9} /> proven</Badge>}
+                  {c.name === aiPick.name && <Badge tone="amber" mono><Icon name="bolt" size={9} /> AI's pick</Badge>}
+                </div>
+              </button>);
+          })}
+        </div>
+
+        {/* BLOCK 1 — tech stack, row by row */}
+        {TECH_ROWS.map((r) => (
+          <div key={r.key} style={{ display: "grid", gridTemplateColumns: cols }}>
+            <div style={rowLabel}>{r.label}</div>
+            {cards.map((c) => <div key={c.name} className="mono" style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", fontSize: 11.5, color: "var(--text-secondary)" }}>{c.tech_stack[r.key]}</div>)}
+          </div>
+        ))}
+
+        {/* BLOCK 2 — pros / cons */}
+        <div style={{ display: "grid", gridTemplateColumns: cols, background: "var(--bg-secondary)" }}>
+          <div style={rowLabel}>Trade-offs</div>
+          {cards.map((c) => (
+            <div key={c.name} style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 3 }}>
+              {(c.pros ?? []).map((p, i) => <span key={"p" + i} style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.35 }}><b style={{ color: "var(--green)" }}>+</b> {p}</span>)}
+              {(c.cons ?? []).map((p, i) => <span key={"c" + i} style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.35 }}><b style={{ color: "var(--amber)" }}>−</b> {p}</span>)}
+            </div>
+          ))}
+        </div>
+
+        {/* BLOCK 3 — reuse from memory */}
+        <div style={{ display: "grid", gridTemplateColumns: cols }}>
+          <div style={rowLabel}>Reuse</div>
+          {cards.map((c) => (
+            <div key={c.name} style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 4 }}>
+              {(c.reuse ?? []).length ? (c.reuse ?? []).map((r, i) => (
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <span style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.3 }}>{r.feature}</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9.5, color: "var(--text-quaternary)" }}><ZeroMark size={9} /> {r.from_project} · {r.action}</span>
+                </div>
+              )) : <span style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>fresh build — nothing from memory</span>}
+            </div>
+          ))}
+        </div>
       </div>
     </div>);
-
 }
 
 function StepPlan({ plan, relay, staffing, members }: {
   plan: PlanJSON; relay: RelayState | null; staffing: StaffingResponse | null; members: any[];
 }) {
   const byUser = (u: string) => members.find((m: any) => m.username === u);
-  const issueCount = plan.epics.reduce((n, e) => n + e.issues.length, 0);
-
-  // coverage from the real staffing response; derive gaps + per-discipline devs from plan assignees
+  const taskCount = plan.epics.reduce((n, e) => n + e.issues.length, 0);
   const coverage = staffing?.coverage ?? [];
-  const gaps = coverage.filter((c) => !c.covered).map((c) => c.discipline);
+  const covOf = (disc: string) => coverage.find((c) => c.discipline === disc);
   const allIssues = plan.epics.flatMap((e) => e.issues);
-  const devsFor = (disc: string) =>
-    Array.from(new Set(allIssues.filter((i) => i.discipline === disc && i.assignee).map((i) => i.assignee as string)));
-
-  // relay order: prefer the real baton sequence, fall back to the canonical relay order
-  const order = relay?.baton?.length ? relay.baton : ["uiux", "backend", "devops", "frontend", "qa"];
-  // top stretch candidate for the first gap (advisory copy)
-  const firstGap = coverage.find((c) => !c.covered);
-  const topStretch = firstGap?.recommendation?.stretch_candidates?.[0] ?? null;
+  const leadFor = (disc: string) => allIssues.find((i) => i.discipline === disc && i.assignee)?.assignee as string | undefined;
+  // ONE viz from the FULL relay (every gate in DAG order — NOT the baton, which only holds the active ones)
+  const gateList = (relay?.gates ?? []).map((g: any) => g.discipline);
+  const order = gateList.length ? gateList : coverage.map((c) => c.discipline);
+  const gapCount = coverage.filter((c) => !c.covered).length;
 
   return (
     <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
-      <WizHead title="Plan & draft relay" sub={`${issueCount} issues planned across the relay. The plan enters as a draft — nothing ships until the gates clear.`} />
+      <WizHead title="The relay" sub={`${taskCount} task${taskCount === 1 ? "" : "s"} across ${order.length} discipline gate${order.length === 1 ? "" : "s"}. Each gate is ratified by its owner — nothing auto-passes.`} />
 
-      <div className="kicker" style={{ marginBottom: 10 }}>Draft relay</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "10px 4px 20px" }}>
-        {order.map((dd, i) =>
-        <Fragment key={dd}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 30, height: 30, borderRadius: "50%", display: "grid", placeItems: "center",
-              background: gaps.includes(dd as never) ? "var(--bg-elevated)" : "var(--bg-secondary)",
-              border: gaps.includes(dd as never) ? "1px dashed var(--text-primary)" : "0.5px solid var(--border)" }}>
-                <DiscDot d={dd} size={9} />
-              </span>
-              <span style={{ fontSize: 9.5, color: gaps.includes(dd as never) ? "var(--text-primary)" : "var(--text-quaternary)", fontWeight: gaps.includes(dd as never) ? 600 : 400 }}>{DISC[dd]?.label ?? dd}</span>
-            </div>
-            {i < order.length - 1 && <span style={{ flex: 1, height: 1, background: "var(--border-strong)", marginTop: -16 }} />}
-          </Fragment>
-        )}
-      </div>
-
-      {/* §7 staffing in review */}
-      {coverage.length > 0 &&
-      <div style={{ border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: 14, background: "var(--bg-secondary)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <Icon name="team" size={15} />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Coverage</span>
-          <div style={{ flex: 1 }} />
-          <Badge tone="outline" mono>{gaps.length} gap{gaps.length === 1 ? "" : "s"}</Badge>
-        </div>
-        {gaps.length > 0 ?
-        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", margin: "0 0 10px", lineHeight: 1.5 }}>
-          <b style={{ color: "var(--text-primary)", fontWeight: 500 }}>{DISC[gaps[0]]?.label ?? gaps[0]}</b> has no dedicated dev — its gate routes to you (manager).{topStretch && <> Strongest stretch: <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{byUser(topStretch.username)?.name ?? topStretch.username}</b> (match {topStretch.score}).</>}
-        </p> :
-        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", margin: "0 0 10px", lineHeight: 1.5 }}>Every discipline in the relay has a dedicated lead — no orphan gates.</p>}
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${coverage.length},1fr)`, gap: 6 }}>
-          {coverage.map((p) => {
-            const devs = devsFor(p.discipline);
-            return (
-            <div key={p.discipline} style={{ textAlign: "center", padding: "8px 4px", borderRadius: "var(--r-md)",
-              background: p.covered ? "var(--bg-elevated)" : "transparent", border: p.covered ? "0.5px solid var(--border)" : "1px dashed var(--text-primary)" }}>
-              <DiscDot d={p.discipline} size={8} />
-              <div style={{ fontSize: 10, marginTop: 5, color: "var(--text-tertiary)" }}>{DISC[p.discipline]?.label ?? p.discipline}</div>
-              <div className="mono" style={{ fontSize: 9, color: p.covered ? "var(--green)" : "var(--text-primary)", marginTop: 2, fontWeight: 600 }}>{p.covered ? `${devs.length} dev` : "gap"}</div>
-            </div>);
-          })}
-        </div>
-      </div>}
-    </div>);
-
-}
-
-/* The Contract step — sign each open gate's reuse-or-innovate Contract (the posture auto-passed the rest). */
-function StepContract({ gates, actGate }: { gates: any[]; actGate: (d: string, s: string) => void }) {
-  const isDone = (g: any) => g.status === "ratified" || g.status === "auto_passed";
-  const isOpen = (g: any) => !isDone(g) && g.status !== "locked";
-  const open = gates.filter(isOpen);
-  const [focus, setFocus] = useState<string | null>(null);
-  const focused = gates.find((g) => g.discipline === focus && isOpen(g)) ?? open[0] ?? null;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div>
-        <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 5px" }}>Ratify the gates</h1>
-        <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.55 }}>
-          Your Autonomy posture auto-passed the low-risk gates. Sign the rest — reuse from agency memory, take a fresh option, or write your own — to clear the relay before dispatch.
-        </p>
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        {gates.map((g: any) => {
-          const d = isDone(g); const o = isOpen(g); const meta = GATE_META[g.status];
+      <div className="kicker" style={{ marginBottom: 12 }}>Who runs each gate, in order{gapCount > 0 ? ` · ${gapCount} gap${gapCount === 1 ? "" : "s"}` : ""}</div>
+      <div style={{ display: "flex", alignItems: "stretch", gap: 0, flexWrap: "wrap", rowGap: 14 }}>
+        {order.map((disc: string, i: number) => {
+          const cov = covOf(disc);
+          const isGap = cov ? !cov.covered : !leadFor(disc);
+          const lead = leadFor(disc);
+          const leadName = isGap ? "Routes to you" : (byUser(lead ?? "")?.name?.split(" ")[0] ?? lead ?? "—");
           return (
-            <button key={g.discipline} disabled={!o} onClick={() => o && setFocus(g.discipline)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 30, padding: "0 11px", borderRadius: "var(--r-md)",
-                border: focused?.discipline === g.discipline ? "0.5px solid var(--text-primary)" : "0.5px solid var(--border)",
-                background: "var(--bg-elevated)", cursor: o ? "pointer" : "default", opacity: g.status === "locked" ? 0.5 : 1 }}>
-              {d ? <Icon name="check" size={12} style={{ color: "var(--green)" }} /> : <DiscDot d={g.discipline} size={8} />}
-              <span style={{ fontSize: 12.5, fontWeight: 500 }}>{DISC[g.discipline]?.label ?? g.discipline}</span>
-              <span style={{ fontSize: 10.5, color: meta?.fg }}>{meta?.label}</span>
-            </button>
+            <Fragment key={disc}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, minWidth: 80 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "10px 8px", borderRadius: "var(--r-lg)", minWidth: 78,
+                  background: "var(--bg-elevated)", border: isGap ? "1px dashed var(--text-primary)" : "0.5px solid var(--border)", boxShadow: "var(--shadow-1)" }}>
+                  <DiscDot d={disc} size={11} />
+                  <span style={{ fontSize: 11.5, fontWeight: 600 }}>{DISC[disc]?.label ?? disc}</span>
+                  <span style={{ fontSize: 10, color: isGap ? "var(--text-primary)" : "var(--text-tertiary)", fontWeight: isGap ? 600 : 400, textAlign: "center" }}>{leadName}</span>
+                </div>
+              </div>
+              {i < order.length - 1 && <div style={{ display: "flex", alignItems: "center", alignSelf: "flex-start", height: 60 }}><Icon name="arrowRight" size={13} style={{ color: "var(--border-strong)" }} /></div>}
+            </Fragment>
           );
         })}
       </div>
-      {open.length > 0 ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>{open.length} gate{open.length > 1 ? "s" : ""} need your call.</span>
-          <Button variant="secondary" size="sm" onClick={() => open.forEach((g) => actGate(g.discipline, "ratified"))}>Ratify all remaining (accept drafts)</Button>
-        </div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 12, background: "var(--bg-secondary)", borderRadius: "var(--r-md)", fontSize: 13, color: "var(--text-secondary)" }}>
-          <Icon name="check" size={15} style={{ color: "var(--green)" }} />Relay cleared — continue to the dispatch preview.
-        </div>
+      {gapCount > 0 && (
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 16, lineHeight: 1.5 }}>
+          A dashed gate has no dedicated dev — it routes to you (manager) to ratify or hand off, just like any gate.
+        </p>
       )}
-      {focused && (
-        <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", display: "flex", minHeight: 380, maxHeight: 560 }}>
-          <RatifyPanel g={focused} />
-        </div>
-      )}
-    </div>
-  );
+    </div>);
 }
 
-function StepReview({ mode, setMode, preview, members, dispatching, dispatched, onDispatch, onDone, onGoProjects }: {
-  mode: "supervised" | "autonomous"; setMode: (v: "supervised" | "autonomous") => void;
-  preview: DispatchPreview; members: any[];
+/* The Contract step — sign each open gate's reuse-or-innovate Contract (the posture auto-passed the rest). */
+function StepReview({ preview, projectName, setProjectName, dispatching, dispatched, onDispatch, onDone, onGoProjects }: {
+  preview: DispatchPreview; projectName: string; setProjectName: (v: string) => void;
   dispatching: boolean; dispatched: boolean;
   onDispatch: () => void; onDone: () => void; onGoProjects: () => void;
 }) {
-  const byUser = (u: string) => members.find((m: any) => m.username === u);
   const p = preview;
+  const name = projectName.trim() || p.project_name;
+  const taskN = p.creates.issues;
 
   if (dispatching)
     return (
       <SequenceLoader
-        kicker="sprint0 · dispatch"
-        headline={`Creating ${p.project_name}`}
-        lines={["Creating the GitLab project", `Scaffolding ${p.creates.issues} issues across the relay`, `Sending ${p.invite_count} member invites`, "Opening the supervised relay"]}
+        kicker="sprint0 · create"
+        headline={`Creating ${name}`}
+        lines={["Creating the GitLab project", `Scaffolding ${taskN} task${taskN === 1 ? "" : "s"} across the relay`, "Opening the relay for its owners to ratify"]}
         stepMs={780}
         onDone={onDone} />);
 
@@ -638,9 +602,9 @@ function StepReview({ mode, setMode, preview, members, dispatching, dispatched, 
         <span style={{ width: 56, height: 56, borderRadius: "50%", background: "var(--text-primary)", display: "grid", placeItems: "center", margin: "0 auto 18px", animation: "s0-check-pop 0.45s var(--ease-out) both" }}>
           <Icon name="check" size={28} style={{ color: "#fff" }} />
         </span>
-        <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 8px" }}>Dispatched to GitLab</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 8px" }}>Created on GitLab</h1>
         <p style={{ fontSize: 14, color: "var(--text-tertiary)", lineHeight: 1.55, margin: "0 0 22px" }}>
-          <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{p.project_name}</b> is live — {p.creates.issues} issues scaffolded across the relay in <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{mode}</b> mode.
+          <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{name}</b> is live — {taskN} task{taskN === 1 ? "" : "s"} scaffolded across the relay. Its gates are <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>open for the team to ratify</b>.
         </p>
         <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
           <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onGoProjects}>Go to Projects</Button>
@@ -648,79 +612,38 @@ function StepReview({ mode, setMode, preview, members, dispatching, dispatched, 
       </div>);
 
   return (
-    <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
-      <WizHead title="Dispatch preview" sub="The router can clear a relay with no human in the loop — so creating the real GitLab project is a separate, explicit commit. Review the irreversible side-effects." />
+    <div style={{ animation: "s0-fade-in var(--t-reg) both", maxWidth: 520 }}>
+      <WizHead title="Create the project" sub="Name it, then create. The AI drafted the plan and assigned the work — the gates open for each owner to ratify live." />
 
-      <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", marginBottom: 16, boxShadow: "var(--shadow-1)" }}>
-        <div style={{ padding: 16, borderBottom: "0.5px solid var(--border-subtle)" }}>
-          <div className="kicker" style={{ marginBottom: 8 }}>Creates</div>
-          <div style={{ display: "flex", gap: 22 }}>
-            <Stat n={p.creates.project} l="GitLab project" mono={p.project_name} />
-            <Stat n={p.creates.issues} l="issues" />
-            <Stat n={p.invite_count} l="member invites" />
-          </div>
-        </div>
-        <div style={{ padding: 16 }}>
-          <div className="kicker" style={{ marginBottom: 10 }}>Member invites · free tier cap {p.free_tier_cap}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: p.exceeds_cap ? 12 : 0 }}>
-            {p.member_invites.map((username, i) =>
-            <span key={username} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 9px 0 5px",
-              borderRadius: "var(--r-pill)", background: i >= p.free_tier_cap ? "var(--bg-active)" : "var(--bg-secondary)",
-              border: i >= p.free_tier_cap ? "0.5px solid var(--text-primary)" : "0.5px solid transparent" }}>
-                <Avatar name={byUser(username)?.name ?? username} size={18} />
-                <span style={{ fontSize: 11.5, fontWeight: 500 }}>{(byUser(username)?.name ?? username).split(" ")[0]}</span>
-                {i >= p.free_tier_cap && <span className="mono" style={{ fontSize: 9.5, color: "var(--text-primary)", fontWeight: 600 }}>over</span>}
-              </span>
-            )}
-          </div>
-          {p.exceeds_cap &&
-          <div style={{ display: "flex", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)", background: "rgba(212,58,58,0.08)", border: "0.5px solid var(--red)" }}>
-              <Icon name="flag" size={14} style={{ color: "var(--red)", flexShrink: 0, marginTop: 1 }} />
-              <span style={{ fontSize: 12, color: "var(--red)", lineHeight: 1.45 }}>
-                {p.invite_count} invites exceeds the {p.free_tier_cap}-member free-tier cap. Drop {p.invite_count - p.free_tier_cap} member or upgrade before dispatch.
-              </span>
-            </div>
-          }
-        </div>
+      {/* editable, AI-filled name */}
+      <div style={{ marginBottom: 16 }}>
+        <div className="kicker" style={{ marginBottom: 7 }}>Project name</div>
+        <input value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder={p.project_name}
+          style={{ width: "100%", height: 40, padding: "0 12px", fontSize: 15, fontWeight: 500, border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)", background: "var(--bg-elevated)", fontFamily: "inherit" }} />
+        <div style={{ fontSize: 11, color: "var(--text-quaternary)", marginTop: 6 }}>sprint0 suggested this from the brief — edit it if you like.</div>
       </div>
 
-      <div className="kicker" style={{ marginBottom: 8 }}>Dispatch mode</div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-        {([["supervised", "Supervised", "You ratify every expert gate"], ["autonomous", "Autonomous", "Auto-pass clears with no human"]] as const).map(([id, label, desc]) => {
-          const on = mode === id;
-          return (
-            <button key={id} className="s0-press" onClick={() => setMode(id)} style={{ flex: 1, textAlign: "left", padding: 13, borderRadius: "var(--r-lg)",
-              border: `0.5px solid ${on ? "var(--text-primary)" : "var(--border)"}`, background: "var(--bg-elevated)", boxShadow: on ? "var(--shadow-2)" : "var(--shadow-1)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
-                <span style={{ width: 15, height: 15, borderRadius: "50%", border: `1.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`, display: "grid", placeItems: "center" }}>
-                  {on && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--text-primary)" }} />}</span>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
-              </div>
-              <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", paddingLeft: 22 }}>{desc}</div>
-            </button>);
-
-        })}
+      {/* what it creates — quiet, with icons */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: "var(--r-lg)", border: "0.5px solid var(--border)", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)" }}>
+          <Icon name="gitlab" size={18} style={{ color: "var(--text-tertiary)" }} />
+          <div><div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>1</div><div style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>GitLab project</div></div>
+        </div>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: "var(--r-lg)", border: "0.5px solid var(--border)", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)" }}>
+          <Icon name="list" size={18} style={{ color: "var(--text-tertiary)" }} />
+          <div><div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>{taskN}</div><div style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>task{taskN === 1 ? "" : "s"} scaffolded</div></div>
+        </div>
       </div>
 
       <Button variant="primary" size="lg" icon="gitlab" className="s0-press" style={{ width: "100%" }} onClick={onDispatch}>
-        {`Dispatch — create ${p.project_name}`}
+        {`Create ${name}`}
       </Button>
       <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", textAlign: "center", margin: "10px 0 0", lineHeight: 1.5 }}>
-        Irreversible. Scaffolds the real GitLab project, issues, and invites.
+        Creates the real GitLab project + its tasks. The gates open for the team to ratify.
       </p>
     </div>);
-
 }
 
-function Stat({ n, l, mono }: { n: number; l: string; mono?: string }) {
-  return (
-    <div>
-      <div style={{ fontFamily: "var(--font-mono)", fontSize: 22, fontWeight: 600, letterSpacing: "-0.5px" }}>{n}</div>
-      <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", marginTop: 2 }}>{l}</div>
-      {mono && <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", marginTop: 1 }}>{mono}</div>}
-    </div>);
-
-}
 function WizHead({ title, sub }: { title: string; sub: string }) {
   return (
     <div style={{ marginBottom: 22 }}>

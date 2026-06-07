@@ -15,7 +15,6 @@ import type { Member } from "../lib/api";
 import { qk } from "../lib/query";
 
 // real Member uses gitlab_username / trust_level; the mock used gitlab / trust.
-const gitlabOf = (m: Member) => (m as Member & { gitlab?: string }).gitlab ?? m.gitlab_username;
 const trustOf = (m: Member) => (m as Member & { trust?: unknown }).trust_level ?? "medium";
 
 // TODO(reconcile): the mockup read STAFFING.plan_HARB_42.coverage (gaps + stretch_candidates) — there is
@@ -25,10 +24,20 @@ const ORPHAN_GAP = "uiux";
 
 export function TeamView() {
   const { chrome, members, role } = useApp();
+  const qc = useQueryClient();
   const setWizardKind = useUI((s) => s.setWizardKind);
   const setWizardOpen = useUI((s) => s.setWizardOpen);
   const openHire = () => { setWizardKind("hire"); setWizardOpen(true); };
   const [tab, setTab] = useState<"roster" | "capabilities">("roster");
+  const needsLink = members.filter((m: Member) => m.needs_link);
+  const reconcile = async () => {
+    try {
+      const r = (await api.reconcileTeam()) as { linked?: string[]; unresolved?: string[] };
+      const n = r.linked?.length ?? 0;
+      toast[n ? "success" : "message"](n ? `Linked ${n} dev${n === 1 ? "" : "s"} to GitLab` : "No new links — the rest have no matching GitLab account");
+      qc.invalidateQueries({ queryKey: qk.roster() });
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Reconcile failed"); }
+  };
   const gap = ORPHAN_GAP;
   // strongest non-uiux candidate by trust as the stretch suggestion (mock had cov.stretch_candidates[0]).
   const stretch =
@@ -43,6 +52,7 @@ export function TeamView() {
           <Tab active={tab === "roster"} onClick={() => setTab("roster")}>Roster</Tab>
           <Tab active={tab === "capabilities"} onClick={() => setTab("capabilities")}>Capabilities</Tab>
         </div>
+        {role === "manager" && needsLink.length > 0 && <Button variant="secondary" size="sm" icon="gitlab" onClick={reconcile}>Reconcile links</Button>}
         {chrome.canOnboard && <Button variant="primary" size="sm" icon="plus" onClick={openHire}>Onboard a dev</Button>}
       </ViewChrome>
       {tab === "capabilities" ? (
@@ -58,6 +68,16 @@ export function TeamView() {
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No dedicated dev — the gate routes to the manager. Stretch: {stretch?.name} (match {stretchScore}).</div>
           </div>
           {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus" onClick={openHire}>Onboard</Button>}
+        </div>
+        )}
+
+        {role === "manager" && needsLink.length > 0 && (
+        <div style={{ margin: "12px 20px 0", border: "0.5px solid var(--amber)", borderRadius: "var(--r-lg)", padding: "11px 14px", background: "rgba(199,120,0,0.07)", display: "flex", alignItems: "center", gap: 10 }}>
+          <Icon name="warn" size={16} style={{ color: "var(--amber)", flexShrink: 0 }} />
+          <div style={{ flex: 1, fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.45 }}>
+            <b style={{ fontWeight: 600 }}>{needsLink.length} dev{needsLink.length === 1 ? "" : "s"}</b> need a GitLab link — they can't be assigned real issues until linked. ({needsLink.map((m: Member) => m.name.split(" ")[0]).join(", ")})
+          </div>
+          <Button variant="secondary" size="sm" icon="gitlab" onClick={reconcile}>Auto-link</Button>
         </div>
         )}
 
@@ -88,7 +108,7 @@ function TeamRow({ m }: { m: Member }) {
         <Avatar name={m.name} size={28} tone={m.role === "manager" ? "ink" : undefined} />
         <div>
           <div style={{ fontSize: 13.5, fontWeight: 500 }}>{m.name} {isSelf && <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>· you</span>}</div>
-          <div className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>@{m.username} · gitlab:{gitlabOf(m)}</div>
+          <GitLabLink m={m} />
         </div>
       </div>
       <div style={{ width: 110 }}><SeatControl m={m} /></div>
@@ -101,6 +121,35 @@ function TeamRow({ m }: { m: Member }) {
       </div>
     </div>
   );
+}
+
+/* GitLab link status + manual link. Linked = a native assignee; unlinked + repo-needing (needs_link) = the
+   manager can link it now. A craft that doesn't need a repo (uiux) shows nothing. Backend enforces uniqueness. */
+function GitLabLink({ m }: { m: Member }) {
+  const { role } = useApp();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const linked = m.gitlab_user_id != null;
+  const link = async () => {
+    setBusy(true);
+    try {
+      const r = (await api.linkMember(m.username)) as { linked?: boolean; conflict?: string };
+      if (r?.linked) { toast.success(`Linked ${m.name.split(" ")[0]} → GitLab`); qc.invalidateQueries({ queryKey: qk.roster() }); }
+      else if (r?.conflict) toast.error(r.conflict);
+      else toast.error(`No GitLab account found for @${m.gitlab_username}`);
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Link failed"); }
+    finally { setBusy(false); }
+  };
+  if (linked)
+    return <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <Icon name="gitlab" size={11} style={{ color: "var(--green)" }} /> @{m.gitlab_username}</span>;
+  if (m.needs_link)
+    return <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--amber)" }}><Icon name="warn" size={11} /> no GitLab link</span>
+      {role === "manager" && <button onClick={link} disabled={busy} title={`Link @${m.gitlab_username} to a GitLab account`}
+        style={{ height: 19, padding: "0 7px", fontSize: 10.5, fontWeight: 600, borderRadius: "var(--r-sm)", border: "0.5px solid var(--border-strong)", background: "var(--bg-elevated)", color: "var(--text-primary)", cursor: busy ? "default" : "pointer" }}>Link</button>}
+    </span>;
+  return <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>@{m.username}</span>;
 }
 
 /* §6 Watch — a consent-based access grant (request → they accept → granted). The one key to a watched

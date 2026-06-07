@@ -70,10 +70,6 @@ interface UIState {
   activeDev: string | null;
   setActiveDev: (id: string | null) => void;
 
-  /** Trust Dial (0–100) — global auto-pass sensitivity, surfaced in Relay/Settings. */
-  dial: number;
-  setDial: (d: number) => void;
-
   /** Wizard drafts (saved before dispatch; shown on Projects). */
   drafts: any[];
   addDraft: (d: any) => any;
@@ -145,8 +141,6 @@ export const useUI = create<UIState>()(persist((set) => ({
   setActiveIssue: (activeIssue) => set({ activeIssue }),
   activeDev: null,
   setActiveDev: (activeDev) => set({ activeDev }),
-  dial: 55,
-  setDial: (dial) => set({ dial }),
   drafts: [],
   addDraft: (d) => {
     const draft = { ...d, id: d.id || "dft_" + Date.now(), kind: "draft", status: "draft", created: "just now" };

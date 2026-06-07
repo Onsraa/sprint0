@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { Availability, Avatar, Badge, DiscDot, DISC, TrustDot, Button } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
-import { useApp, AUTONOMY_MODES } from "../app/useApp";
+import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { api } from "../lib/api";
 import { qk } from "../lib/query";
@@ -30,7 +30,7 @@ const STAGE_ORDER = ["build", "integrate", "accept"] as const;
 const STAGE_CLEAR_LABEL: Record<string, string> = { build: "build wave clears", integrate: "frontend ratified" };
 
 export function RelayBoard() {
-  const { gates, autonomy, setAutonomy, me, role, chrome, planId, relaySummaries, personFilter, setView }: any = useApp();
+  const { gates, me, role, chrome, planId, relaySummaries, personFilter, setView }: any = useApp();
   const activeGate = useUI((s) => s.activeGate);
   const setActiveGate = useUI((s) => s.setActiveGate);
   const gateOf = (d: string) => gates.find((g: any) => g.discipline === d);
@@ -60,7 +60,7 @@ export function RelayBoard() {
   const dispatch = useMutation({
     mutationFn: () => api.dispatch(planId as string, "copilot"),
     onSuccess: (res) => {
-      toast.success("Dispatched to GitLab", { description: `${planName} · ${res.issues_created} issues` });
+      toast.success("Created on GitLab", { description: `${planName} · ${res.issues_created} tasks` });
       qc.invalidateQueries({ queryKey: qk.allRelays() });  // the finished relay leaves the board
       qc.invalidateQueries({ queryKey: ["work"] });         // the new tasks land
     },
@@ -77,7 +77,6 @@ export function RelayBoard() {
       <ViewChrome breadcrumb={["Studio", "Relay"]}>
         {mode === "own" && <Badge tone="outline" mono><Icon name="lock" size={10} /> your slice only</Badge>}
         {mode === "peer" && <Badge tone="outline" mono><Icon name="eye" size={10} /> reviewing</Badge>}
-        <AutonomyControl mode={autonomy} onChange={setAutonomy} editable={role === "manager" && mode === "full"} />
         {planId && <Badge tone="outline" mono>{planId}</Badge>}
       </ViewChrome>
 
@@ -93,7 +92,7 @@ export function RelayBoard() {
                   <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: 0 }}>{planName}</h1>
                   <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
                     <span className="mono" style={{ color: "var(--text-secondary)" }}>{stageFlow}</span> ·
-                    expert attention is a budget — <b style={{ color: "var(--text-primary)" }}>{autoCount}</b> gates auto-pass.
+                    expert attention is a budget — <b style={{ color: "var(--text-primary)" }}>{autoCount}</b> need only their owner.
                   </p>
                 </div>
                 <div style={{ flexShrink: 0, textAlign: "right", paddingTop: 2 }}>
@@ -262,32 +261,6 @@ function DispatchBanner({ gates, canDispatch, onDispatch, pending }: { gates: an
         ? <Button variant="primary" size="md" icon="bolt" disabled={pending} onClick={onDispatch}>{pending ? "Dispatching…" : "Dispatch"}</Button>
         : <span style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 32, padding: "0 10px", fontSize: 12, color: "var(--text-quaternary)" }}>
             <Icon name="lock" size={13} />Manager dispatches</span>}
-    </div>
-  );
-}
-
-/* §10 Autonomy — a discrete named posture (manager-only); read-only for leads. Replaces the old 0–100
-   "Trust Dial" — the 3 modes map to the backend dial (~30/60/85). Frees "trust" to mean only the passport. */
-function AutonomyControl({ mode, onChange, editable }: { mode: string; onChange: (m: string) => void; editable: boolean }) {
-  return (
-    <div title="Autonomy — how aggressively sprint0 auto-ratifies low-risk gates"
-      style={{ display: "flex", alignItems: "center", gap: 8, height: 28 }}>
-      <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", letterSpacing: "0.04em", textTransform: "uppercase" }}>Autonomy</span>
-      <div style={{ display: "flex", gap: 2, padding: 2, borderRadius: "var(--r-md)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
-        {AUTONOMY_MODES.map((m) => {
-          const active = m.id === mode;
-          return (
-            <button key={m.id} title={editable ? m.hint : `${m.hint} · manager sets this`} disabled={!editable}
-              onClick={() => editable && onChange(m.id)}
-              style={{ height: 22, padding: "0 9px", borderRadius: "var(--r-sm)", fontSize: 11.5, fontWeight: 500, whiteSpace: "nowrap",
-                background: active ? "var(--bg-elevated)" : "transparent", color: active ? "var(--text-primary)" : "var(--text-quaternary)",
-                boxShadow: active ? "var(--shadow-1)" : "none", cursor: editable ? "pointer" : "default", transition: "color var(--t-quick)" }}>
-              {m.label}
-            </button>
-          );
-        })}
-      </div>
-      {!editable && <Icon name="lock" size={12} style={{ color: "var(--text-quaternary)" }} />}
     </div>
   );
 }

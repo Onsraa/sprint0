@@ -121,7 +121,18 @@ function ResultCard({ member }: { member: Member & { suggested_discipline?: stri
   const qc = useQueryClient();
   const linked = member.gitlab_user_id != null;
   const [seated, setSeated] = useState<string | null>(member.discipline ?? null);
+  const [linkBusy, setLinkBusy] = useState(false);
   const suggestion = member.suggested_discipline;
+  const tryLink = async () => {
+    setLinkBusy(true);
+    try {
+      const r = (await api.linkMember(member.username || member.gitlab_username)) as { linked?: boolean; conflict?: string };
+      if (r?.linked) { toast.success(`Linked ${member.name.split(" ")[0]} → GitLab`); qc.invalidateQueries({ queryKey: qk.roster() }); }
+      else if (r?.conflict) toast.error(r.conflict);
+      else toast.error(`No GitLab account found for @${member.gitlab_username}`);
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Link failed"); }
+    finally { setLinkBusy(false); }
+  };
   const seat = async (d: string) => {
     try {
       await api.setDiscipline(member.gitlab_username, d);
@@ -139,7 +150,11 @@ function ResultCard({ member }: { member: Member & { suggested_discipline?: stri
         <h1 style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-0.3px", margin: 0 }}>{member.name} joined the team</h1>
       </div>
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 11, background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", boxShadow: "var(--shadow-1)" }}>
-        <Row k="GitLab" v={linked ? `@${member.gitlab_username} · native assignee` : `@${member.gitlab_username} · label-only (no matching GitLab account)`} ok={linked} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ flex: 1 }}><Row k="GitLab" v={linked ? `@${member.gitlab_username} · native assignee` : `@${member.gitlab_username} · no matching GitLab account yet`} ok={linked} /></div>
+          {!linked && <button onClick={tryLink} disabled={linkBusy}
+            style={{ height: 24, padding: "0 9px", fontSize: 11.5, fontWeight: 600, borderRadius: "var(--r-md)", border: "0.5px solid var(--border-strong)", background: "var(--bg-secondary)", color: "var(--text-primary)", cursor: linkBusy ? "default" : "pointer" }}>Link now</button>}
+        </div>
         <Row k="Role" v={`${member.seniority ?? "junior"} ${seated ?? "developer"}`} />
         <Row k="Trust" v={`${member.trust_level} (cold-start) — grows per-discipline with every merge`} />
         <Row k="Skills" v={member.skills_text} />

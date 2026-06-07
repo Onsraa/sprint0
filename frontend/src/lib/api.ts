@@ -283,7 +283,6 @@ export interface WizardDraft {
   isFeature: boolean;
   featureProjectId: number | null;
   chosenStack: TechStack | null;
-  dial: number;
   projectName: string;
   savedAt: number;
 }
@@ -532,9 +531,6 @@ export const api = {
   relay(planId: string): Promise<RelayState> {
     return jget(`/api/plans/${planId}/relay`, S.RelayState);
   },
-  relayAuto(planId: string, dial: number): Promise<RelayState> {
-    return jpost(`/api/plans/${planId}/relay/auto`, { dial });
-  },
   ratify(
     planId: string,
     discipline: Discipline,
@@ -571,6 +567,17 @@ export const api = {
   },
   createRefactorTask(projectId: number, report: DriftReport): Promise<WorkTask> {
     return jpost(`/api/graph/refactor`, { project_id: projectId, report });
+  },
+  /* Living Project Graph (reuse lineage): simulate a reused source feature changing → propose a sync task
+     in every dependent project (what a GitLab merge webhook would trigger). Manager-gated. */
+  simulateSourceChange(body: { feature_node: string; new_hash?: string; summary?: string }):
+    Promise<{ event: unknown; dependents: number; proposed: WorkTask[] }> {
+    return jpost(`/api/lineage/simulate-change`, body);
+  },
+  /* Semantic near-duplicate detection (P5): same-intent / different-code features flagged by embedding similarity. */
+  lineageDuplicates(threshold = 0.82): Promise<{ threshold: number; note?: string;
+    pairs: { a: string; a_title?: string; b: string; b_title?: string; similarity: number }[] }> {
+    return jget(`/api/lineage/duplicates?threshold=${threshold}`);
   },
   /* Subscriptions + live notifications (roadmap System 5) */
   subscribe(subjectId: string, events: string[] = ["assigned", "qa_failed"]): Promise<UserSubscription> {
@@ -617,8 +624,8 @@ export const api = {
   },
 
   /* Dispatch + mid-prod */
-  dispatch(planId: string, mode: "copilot" | "autonomous"): Promise<DispatchResult> {
-    return jpost(`/api/plans/${planId}/dispatch`, { mode });
+  dispatch(planId: string, projectName?: string): Promise<DispatchResult> {
+    return jpost(`/api/plans/${planId}/dispatch`, { mode: "copilot", project_name: projectName });
   },
   addFeature(
     projectId: number,
@@ -649,13 +656,17 @@ export const api = {
   ratifyAgreement(id: string, decision: "ratified" | "rejected", note = ""): Promise<S.Agreement> {
     return jpost(`/api/agreements/${id}/ratify`, { decision, note });
   },
-  // producer signs by picking a shape (reuse/fresh/write-own) → state active, sent to the consumer
-  signAgreement(id: string, chosen_proposal_id: string): Promise<S.Agreement> {
-    return jpost(`/api/agreements/${id}/ratify`, { decision: "ratified", chosen_proposal_id });
+  // producer signs by picking a proposal OR authoring their own shape (interface) → state active, sent to the consumer
+  signAgreement(id: string, pick: { proposal_id?: string; interface?: S.InterfaceDraft }): Promise<S.Agreement> {
+    return jpost(`/api/agreements/${id}/ratify`, { decision: "ratified", chosen_proposal_id: pick.proposal_id, interface: pick.interface });
   },
   // consumer (or producer) counters with a different shape + a one-line why → bounces back to the other side
   counterAgreement(id: string, body: { why: string; proposal_id?: string; interface?: S.InterfaceDraft }): Promise<S.Agreement> {
     return jpost(`/api/agreements/${id}/counter`, body);
+  },
+  // author-assist: draft an interface shape from a one-line description, to seed the write-own / counter editor
+  draftShape(id: string, description: string): Promise<S.InterfaceDraft> {
+    return jpost(`/api/agreements/${id}/draft-shape`, { description });
   },
   /* The reuse agreement made executable: the cited source files for a chosen memory solution */
   reusePack(projects: string[]): Promise<{ count: number; files: { project: string; file_path: string; web_url: string; excerpt: string }[] }> {
