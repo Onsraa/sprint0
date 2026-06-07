@@ -899,7 +899,7 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
     plan = await run_brief(BRIEFS[brief_id], chosen_stack=req.chosen_stack, constraints=req.constraints)
     plan_id = f"plan_{brief_id}"
     PLANS[plan_id] = plan
-    RELAYS[plan_id] = relay.build_relay(plan)  # the one-shot output is now a DRAFT entering the relay
+    RELAYS[plan_id] = relay.build_relay(plan, setup_owner=req.setup_owner)  # +setup gate if the stack was redirected to a lead
     await _persist_relay(plan_id)  # durable: snapshot the plan + open relay so they survive a restart
     try:  # durable runtime (P8): the spine records the plan so an in-flight relay survives a restart
         await eventlog.emit("plan_created", created_at=datetime.now(timezone.utc).isoformat(),
@@ -1196,6 +1196,8 @@ async def ratify_gate(
         raise HTTPException(403, f"only this gate's owner ({_gate.delegate or discipline + ' lead'}) or the manager can ratify it")
     if next(g.status for g in state.gates if g.discipline == discipline) == "blocked":
         raise HTTPException(409, "gate is blocked by an open integration failure — mark it api-ok first")
+    if discipline == "setup" and req.tech_stack is not None:  # the redirected lead confirms or OVERRIDES the stack
+        plan.tech_stack = req.tech_stack                      # propagates to the scaffold (README/focus) at relay-close
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
     try:  # durable runtime (P8): record the ratification so the relay's progress survives a restart
         await eventlog.emit("gate_ratified", created_at=datetime.now(timezone.utc).isoformat(),
@@ -1427,6 +1429,16 @@ async def gate_candidates(plan_id: str, discipline: str, member: DeveloperProfil
     await team.ensure_loaded()
     members = await _attach_availability(team.all_members())
     return {"plan_id": plan_id, "discipline": discipline, "candidates": _rank_candidates(discipline, members, exclude=member.username)}
+
+
+@app.get("/api/architects")
+async def architects(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Roster ranked as potential STACK deciders — for the architecture step, when the manager wants to
+    redirect the stack choice to a lead instead of picking it themselves. Ranked by tech-lead fit (backend-lane
+    trust + seniority + availability), so the manager sees a %-match dropdown. Available pre-plan."""
+    await team.ensure_loaded()
+    members = await _attach_availability(team.all_members())
+    return {"candidates": _rank_candidates("backend", members)}
 
 
 @app.post("/api/plans/{plan_id}/gates/{discipline}/handoff", response_model=RelayState)

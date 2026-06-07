@@ -216,6 +216,7 @@ class ParsedCV(BaseModel):
 class PlanRequest(BaseModel):
     constraints: Optional[Constraints] = None
     chosen_stack: Optional[TechStack] = None
+    setup_owner: Optional[str] = None       # the manager redirected the stack choice to this lead → a setup gate
 
 
 # ── Intake: clarified spec + ambiguity cards (the manager's first panel) ──
@@ -756,6 +757,7 @@ class RatifyRequest(BaseModel):
     deviated: bool = False
     deviation_reason: str = ""
     chosen_solution: Optional[SolutionCard] = None  # the reuse-or-innovate pick (or write-your-own)
+    tech_stack: Optional[TechStack] = None          # setup gate only: the lead's stack choice (override or confirm)
 
 
 class DispatchRequest(BaseModel):

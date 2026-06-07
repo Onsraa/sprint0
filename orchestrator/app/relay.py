@@ -36,6 +36,13 @@ def is_acceptance_gate(gate: Gate) -> bool:
     return lane_stage(gate.discipline) == "accept"
 
 
+def is_setup_gate(gate: Gate) -> bool:
+    """The special architecture/stack setup gate (only present when the manager redirected the stack choice
+    to a lead). It's gate-0: it gates EVERY discipline gate (nothing starts until the stack is ratified),
+    and it's rendered as the stack comparison, not a discipline slice."""
+    return gate.discipline == "setup"
+
+
 def _issues_by_lane(plan: PlanJSON) -> dict[str, list[Issue]]:
     out: dict[str, list[Issue]] = {}
     for epic in plan.epics:
@@ -73,10 +80,14 @@ def record_integration_signal(state: RelayState, signal: IntegrationSignal) -> N
     _recompute_baton(state)
 
 
-def build_relay(plan: PlanJSON) -> RelayState:
+def build_relay(plan: PlanJSON, *, setup_owner: str | None = None) -> RelayState:
     """Build the gate DAG from the lanes actually present in the plan. Stages run in order; each
     stage's gates depend on the previous NON-EMPTY stage. Every present lane gets a gate (unknown
-    lanes fold into the build wave) — nothing is silently dropped."""
+    lanes fold into the build wave) — nothing is silently dropped.
+
+    `setup_owner` (the manager redirected the stack choice to a lead) prepends a special `setup` gate
+    that gates EVERY discipline gate via _recompute_baton — WITHOUT adding it to any gate's `depends_on`,
+    so the discipline topology (and its tests) stays byte-identical to the no-setup relay."""
     by_lane = _issues_by_lane(plan)
     present = set(by_lane)
     if not any(lane_stage(lane) == "accept" for lane in present):
@@ -90,6 +101,8 @@ def build_relay(plan: PlanJSON) -> RelayState:
             gates.append(Gate(discipline=lane, depends_on=deps, status="locked" if deps else "pending"))
         if lanes:
             prev = lanes  # the next stage converges on this one
+    if setup_owner:  # gate-0: the architecture decision, owned by the redirected lead (delegate)
+        gates.insert(0, Gate(discipline="setup", depends_on=[], status="pending", delegate=setup_owner))
     state = RelayState(gates=gates)
     _recompute_baton(state)
     return state
@@ -100,10 +113,15 @@ def _recompute_baton(state: RelayState) -> None:
     integration failure forces the (terminal) qa gate to `blocked`: it stays on the baton (held),
     so the plan can't clear to dispatch until the failure is marked ok."""
     done = {g.discipline for g in state.gates if g.status in _DONE}
+    setup_open = any(is_setup_gate(g) and g.status not in _DONE for g in state.gates)
     blocked_qa = bool(open_integration_failures(state))
     baton: list[Lane] = []
     for g in state.gates:
         if g.status in _DONE:
+            continue
+        if setup_open and not is_setup_gate(g):  # nothing starts until the architecture setup gate is ratified
+            if g.status not in ("changes_requested", "blocked"):
+                g.status = "locked"
             continue
         if all(dep in done for dep in g.depends_on):
             if is_acceptance_gate(g) and blocked_qa:
