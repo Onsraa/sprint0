@@ -23,8 +23,8 @@ const isDone = (g: any) => g.status === "ratified" || g.status === "auto_passed"
 /* Relay stages mirror relay.py's _LANE_STAGE / _STAGE_ORDER: the build wave runs in parallel,
    then integration (frontend), then acceptance (qa). Gates render per stage, only for disciplines
    actually present in this plan — no hardcoded discipline rows, no "not in this plan" fillers. */
-const STAGE_OF: Record<string, string> = { uiux: "build", backend: "build", devops: "build", frontend: "integrate", qa: "accept" };
-const STAGE_ORDER = ["build", "integrate", "accept"] as const;
+const STAGE_OF: Record<string, string> = { setup: "setup", uiux: "build", backend: "build", devops: "build", frontend: "integrate", qa: "accept" };
+const STAGE_ORDER = ["setup", "build", "integrate", "accept"] as const;
 const STAGE_CLEAR_LABEL: Record<string, string> = { build: "build wave clears", integrate: "frontend ratified" };
 
 export function RelayBoard() {
@@ -122,7 +122,10 @@ export function RelayBoard() {
    them (no full tree, no sibling gates, no other people's contracts). Tickets stay open. Three states:
    waiting · open (their gate's RatifyPanel, which folds only THEIR contracts) · cleared. Ported from Relay.jsx. */
 function OwnContract({ me, gates, setView }: { me: any; gates: any[]; setView: (v: string) => void }) {
-  const myGate = gates.find((g) => g.discipline === me.discipline) ?? gates[0];
+  // gates this member owns: a delegated gate (incl. the architecture setup gate) OR their discipline's gate.
+  // Prefer the first OPEN one — so a redirected lead ratifies the setup gate first, then sees their own gate.
+  const mine = gates.filter((g) => g.delegate === me.username || (!g.delegate && g.discipline === me.discipline));
+  const myGate = mine.find((g) => !isDone(g)) ?? mine[0] ?? gates[0];
   if (!myGate) return <div style={{ flex: 1, display: "grid", placeItems: "center", color: "var(--text-tertiary)", fontSize: 13, background: "var(--bg-base)" }}>No gate is assigned to you on this relay.</div>;
   const done = isDone(myGate);
   const open = myGate.baton && !done;

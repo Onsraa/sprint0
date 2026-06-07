@@ -160,6 +160,7 @@ export function Badge({ children, tone = "neutral", style = {}, mono = false }: 
 }
 
 export const DISC: Record<string, { label: string; color: string }> = {
+  setup: { label: "Architecture", color: "var(--text-primary)" },
   uiux: { label: "UI/UX", color: "var(--disc-uiux)" },
   backend: { label: "Backend", color: "var(--disc-backend)" },
   frontend: { label: "Frontend", color: "var(--disc-frontend)" },

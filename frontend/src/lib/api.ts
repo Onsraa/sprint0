@@ -512,9 +512,13 @@ export const api = {
   },
   plan(
     briefId: string,
-    body?: { constraints?: Constraints | null; chosen_stack?: TechStack | null },
+    body?: { constraints?: Constraints | null; chosen_stack?: TechStack | null; setup_owner?: string | null },
   ): Promise<PlanResponse> {
     return jpost(`/api/briefs/${briefId}/plan`, body ?? {});
+  },
+  /** Roster ranked as stack-deciders — for the architecture step's 'redirect to a lead' dropdown. */
+  architects(): Promise<{ candidates: HandoffCandidate[] }> {
+    return jget(`/api/architects`);
   },
 
   /* Plans / Relay */
@@ -538,6 +542,7 @@ export const api = {
       edits?: Issue[]; note?: string; approve?: boolean; reasoning?: string;
       ai_recommendation?: string; ai_confidence?: number | null; deviated?: boolean; deviation_reason?: string;
       chosen_solution?: SolutionCard;  // reuse-or-innovate: the selected (or write-your-own) solution
+      tech_stack?: TechStack;          // setup gate only: the lead's confirmed/overridden stack
     },
   ): Promise<RelayState> {
     return jpost(`/api/plans/${planId}/ratify/${discipline}`, body);

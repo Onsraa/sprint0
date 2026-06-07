@@ -13,7 +13,7 @@
    (createBrief→clarify→architectures→plan/staffing→dispatchPreview→dispatch). The
    existing SequenceLoader covers each async wait. */
 import { Fragment, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { qk } from "../lib/query";
 import { toast } from "sonner";
 import { useApp } from "../app/useApp";
@@ -84,6 +84,7 @@ export function WizardBrief() {
   const [cards, setCards] = useState<ArchitectureCard[]>([]);
   const [aiPick, setAiPick] = useState<{ name: string; why: string }>({ name: "", why: "" });
   const [chosenStack, setChosenStack] = useState<TechStack | null>(null);
+  const [setupOwner, setSetupOwner] = useState<string | null>(null);  // manager redirected the stack call to a lead → a setup gate
   const [planId, setPlanId] = useState<string | null>(null);
   const [plan, setPlan] = useState<PlanJSON | null>(null);
   const [relay, setRelay] = useState<RelayState | null>(null);
@@ -193,7 +194,7 @@ export function WizardBrief() {
         lines: ["Planning epics and tasks", "Sequencing the discipline relay", "Checking team coverage for each gate"],
       },
       async () => {
-        const res = await api.plan(briefId, { chosen_stack: chosenStack });
+        const res = await api.plan(briefId, { chosen_stack: chosenStack, setup_owner: setupOwner });
         setPlanId(res.plan_id);
         setPlan(res.plan);
         setRelay(res.relay);
@@ -305,7 +306,7 @@ export function WizardBrief() {
                 <>
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
                   {step === 1 && spec && <StepClarify spec={spec} answers={answers} setAnswers={setAnswers} />}
-                  {step === 2 && <StepArch cards={cards} aiPick={aiPick} chosenStack={chosenStack} setChosenStack={setChosenStack} />}
+                  {step === 2 && <StepArch cards={cards} aiPick={aiPick} chosenStack={chosenStack} setChosenStack={setChosenStack} setupOwner={setupOwner} setSetupOwner={setSetupOwner} />}
                   {step === 3 && plan && <StepPlan plan={plan} relay={relay} staffing={staffing} members={members} />}
                   {step === 4 && preview && <StepReview
                     preview={preview} projectName={projectName} setProjectName={setProjectName}
@@ -440,12 +441,14 @@ const TECH_ROWS: { key: keyof TechStack; label: string }[] = [
   { key: "db", label: "Database" }, { key: "infra", label: "Infra" },
 ];
 
-function StepArch({ cards, aiPick, chosenStack, setChosenStack }: {
+function StepArch({ cards, aiPick, chosenStack, setChosenStack, setupOwner, setSetupOwner }: {
   cards: ArchitectureCard[]; aiPick: { name: string; why: string }; chosenStack: TechStack | null; setChosenStack: (s: TechStack) => void;
+  setupOwner: string | null; setSetupOwner: (u: string | null) => void;
 }) {
   const sameStack = (a: TechStack | null, b: TechStack) =>
     !!a && a.frontend === b.frontend && a.backend === b.backend && a.db === b.db && a.infra === b.infra;
   const recCard = cards.find((c) => c.recommended);
+  const archQ = useQuery({ queryKey: ["architects"], queryFn: () => api.architects() });  // %-match leads for the redirect
   const aiCard = cards.find((c) => c.name === aiPick.name);
   const diverge = !!recCard && !!aiCard && recCard.name !== aiCard.name;
   const cols = `96px repeat(${cards.length}, minmax(0, 1fr))`;
@@ -477,9 +480,9 @@ function StepArch({ cards, aiPick, chosenStack, setChosenStack }: {
           {cards.map((c) => {
             const on = sameStack(chosenStack, c.tech_stack);
             return (
-              <button key={c.name} className="s0-press" onClick={() => setChosenStack(c.tech_stack)}
+              <button key={c.name} className="s0-press" onClick={() => { setChosenStack(c.tech_stack); setSetupOwner(null); }}
                 style={{ textAlign: "left", padding: "11px 10px", borderLeft: "0.5px solid var(--border-subtle)", minWidth: 0,
-                  background: on ? "var(--bg-secondary)" : "transparent", boxShadow: on ? "inset 0 0 0 1.5px var(--text-primary)" : "none", cursor: "pointer" }}>
+                  background: on && !setupOwner ? "var(--bg-secondary)" : "transparent", boxShadow: on && !setupOwner ? "inset 0 0 0 1.5px var(--text-primary)" : "none", cursor: "pointer" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
                   <span style={{ width: 15, height: 15, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center", border: `1.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`, background: on ? "var(--ink-fill)" : "transparent" }}>{on && <Icon name="check" size={10} style={{ color: "#fff" }} />}</span>
                   <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
@@ -526,6 +529,23 @@ function StepArch({ cards, aiPick, chosenStack, setChosenStack }: {
           ))}
         </div>
       </div>
+
+      {/* or hand the stack call to a lead → becomes a setup gate the lead ratifies before the build starts */}
+      <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Not sure? Hand the stack call to a lead:</span>
+        <select value={setupOwner ?? ""}
+          onChange={(e) => { const u = e.target.value || null; setSetupOwner(u); if (u && recCard) setChosenStack(recCard.tech_stack); }}
+          style={{ height: 32, padding: "0 10px", fontSize: 12.5, border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)", background: setupOwner ? "var(--bg-secondary)" : "var(--bg-elevated)", color: "var(--text-primary)", fontFamily: "inherit" }}>
+          <option value="">— I'll pick it myself —</option>
+          {(archQ.data?.candidates ?? []).map((c: any) => <option key={c.username} value={c.username}>{c.name} · {c.score}% match</option>)}
+        </select>
+      </div>
+      {setupOwner && (
+        <div style={{ fontSize: 11.5, color: "var(--text-secondary)", marginTop: 7, display: "flex", gap: 7, alignItems: "flex-start" }}>
+          <Icon name="merges" size={13} style={{ color: "var(--text-tertiary)", flexShrink: 0, marginTop: 1 }} />
+          <span>The stack becomes a <b style={{ fontWeight: 600 }}>setup gate</b> — <b style={{ fontWeight: 600 }}>{setupOwner}</b> confirms or overrides it before any discipline gate opens. (The AI's proven pick is the provisional default.)</span>
+        </div>
+      )}
     </div>);
 }
 

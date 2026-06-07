@@ -1206,7 +1206,7 @@ async def ratify_gate(
     except Exception:
         pass
     chosen = req.chosen_solution
-    if req.approve:  # capture the pick + a durable Decision record (reasoning memory) — only on approval
+    if req.approve and discipline != "setup":  # the setup gate has no discipline slice/Decision — it just sets the stack
         sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
         if chosen is not None:  # reuse-or-innovate: record the pick
             CHOSEN[(plan_id, discipline)] = chosen

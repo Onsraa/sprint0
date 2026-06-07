@@ -10,7 +10,7 @@
    conflict, client-side regen preview) collapse onto the real Zod shapes. TierBadge + GATE_META stay
    exported so RelayBoard composes them. */
 import { useState, useMemo, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AgreementCard } from "./AgreementCard";
 import { toast } from "sonner";
 import { Avatar, Badge, DiscDot, DISC, StatusIcon, CapTag, Button } from "../components/ui";
@@ -374,6 +374,61 @@ function GateReview({ set, status }: { set: any; status: string }) {
 }
 
 /* Right sub-panel: the feature frame · the solution choice · the slice · forward-only ratify. */
+/* The architecture setup gate — the redirected lead confirms or OVERRIDES the AI's provisional stack before
+   any discipline gate opens. A bounded inline editor (no issue regeneration; the README/scaffold takes the
+   final stack). */
+function SetupGate({ planId, plan, interactive, done }: { planId: string | null; plan: any; interactive: boolean; done: boolean }) {
+  const qc = useQueryClient();
+  const stack = plan?.tech_stack;
+  const [edit, setEdit] = useState(false);
+  const [draft, setDraft] = useState<any>(null);
+  useEffect(() => { if (stack) setDraft({ ...stack }); }, [JSON.stringify(stack ?? {})]);
+  const ratify = useMutation({
+    mutationFn: (ts: any) => api.ratify(planId as string, "setup" as Discipline, ts ? { tech_stack: ts } : {}),
+    onSuccess: () => {
+      toast.success("Architecture ratified — the build wave opens");
+      qc.invalidateQueries({ queryKey: qk.relay(planId as string) });
+      qc.invalidateQueries({ queryKey: qk.allRelays() });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Ratify failed"),
+  });
+  const rows: [string, string][] = [["frontend", "Frontend"], ["backend", "Backend"], ["db", "Database"], ["infra", "Infra"]];
+  return (
+    <div style={{ padding: "22px 26px", maxWidth: 560 }}>
+      <div className="kicker" style={{ marginBottom: 8 }}>Architecture{done ? " · ratified" : interactive ? " · your call" : " · awaiting the lead"}</div>
+      <h1 style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-0.3px", margin: "0 0 6px" }}>The stack for this project</h1>
+      <p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: "0 0 16px", lineHeight: 1.5 }}>
+        The manager handed you this call. The AI provisionally chose this stack — {interactive ? "confirm it, or override before any discipline gate opens." : "the lead confirms or overrides it before the build starts."}
+      </p>
+      <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", background: "var(--bg-elevated)", marginBottom: 16 }}>
+        {rows.map(([k, label], i) => (
+          <div key={k} style={{ display: "grid", gridTemplateColumns: "110px 1fr", borderTop: i ? "0.5px solid var(--border-subtle)" : "none", alignItems: "center" }}>
+            <div style={{ padding: "10px 12px", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-quaternary)", fontWeight: 600 }}>{label}</div>
+            <div style={{ padding: "7px 12px" }}>
+              {edit
+                ? <input value={draft?.[k] ?? ""} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })}
+                    style={{ width: "100%", height: 30, padding: "0 8px", fontSize: 13, border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-sm)", background: "var(--bg-base)", fontFamily: "inherit", color: "var(--text-primary)" }} />
+                : <span className="mono" style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{stack?.[k] ?? "—"}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+      {interactive && !edit && (
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="primary" size="md" icon="ratify" disabled={ratify.isPending} onClick={() => ratify.mutate(null)}>{ratify.isPending ? "Ratifying…" : "Confirm the stack"}</Button>
+          <Button variant="secondary" size="md" onClick={() => setEdit(true)}>Override</Button>
+        </div>
+      )}
+      {interactive && edit && (
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="primary" size="md" icon="ratify" disabled={ratify.isPending} onClick={() => ratify.mutate(draft)}>Ratify this stack</Button>
+          <Button variant="ghost" size="md" onClick={() => { setEdit(false); setDraft({ ...stack }); }}>Cancel</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" | "page" }) {
   const { me, chrome, members, planId, ratifyWith, personFilter }: any = useApp();
   const byUser = (u: string) => members?.find((m: any) => m.username === u);
@@ -394,6 +449,11 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
   const locked = !done && g.status !== "pending" && g.status !== "changes_requested";
   const interactive = !done && !locked && ownsThisGate;
   const flaggedHere = g.status === "changes_requested";
+
+  // The special architecture SETUP gate (the manager redirected the stack to a lead) — renders the stack
+  // comparison + confirm/override instead of a discipline slice. It gate-0's the whole relay.
+  if (g.discipline === "setup")
+    return <SetupGate planId={planId} plan={plan} interactive={interactive} done={done} />;
 
   const [choice, setChoice] = useState<Choice | null>(null);
   const { data: set } = useGateSolutions(interactive || done ? planId : null, g.discipline);  // done → for the review
