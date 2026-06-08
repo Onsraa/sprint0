@@ -819,6 +819,7 @@ async def get_architectures(brief_id: str) -> ArchitectureOptions:
 
 @app.post("/api/briefs/{brief_id}/clarify", response_model=ClarifiedSpec)
 async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
+                  _: DeveloperProfile = Depends(auth.current_manager),
                   _t: None = Depends(_ai_throttle)) -> ClarifiedSpec:
     """Intake: extract the spec, flag unclear features as ambiguity cards, propose reuse."""
     if brief_id not in BRIEFS:
@@ -830,7 +831,8 @@ async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
 
 
 @app.post("/api/briefs/{brief_id}/clarify/resolve", response_model=ClarifiedSpec)
-async def resolve_clarify(brief_id: str, res: ClarifyResolution) -> ClarifiedSpec:
+async def resolve_clarify(brief_id: str, res: ClarifyResolution,
+                          _: DeveloperProfile = Depends(auth.current_manager)) -> ClarifiedSpec:
     """Manager answers the ambiguity cards (id → resolution); folds into the living spec."""
     spec = SPECS.get(brief_id)
     if spec is None:
@@ -844,6 +846,7 @@ async def resolve_clarify(brief_id: str, res: ClarifyResolution) -> ClarifiedSpe
 
 @app.post("/api/briefs/{brief_id}/architectures", response_model=ArchitectureOptions)
 async def architectures(brief_id: str, constraints: Optional[Constraints] = None,
+                        _: DeveloperProfile = Depends(auth.current_manager),
                         _t: None = Depends(_ai_throttle)) -> ArchitectureOptions:
     """Idea 1: 2-3 grounded Architecture Cards for the manager to pick from."""
     if brief_id not in BRIEFS:
