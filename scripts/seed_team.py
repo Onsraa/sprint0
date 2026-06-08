@@ -33,14 +33,12 @@ VOYAGE_MODEL = os.getenv("VOYAGE_MODEL", "voyage-3.5-lite")
 DIMS = int(os.getenv("EMBEDDING_DIMS", "1024"))
 DB = os.getenv("MONGODB_DB", "sprint0")
 DEV_COLL = os.getenv("DEVELOPER_PROFILES_COLLECTION", "DeveloperProfiles")
-DEV_INDEX = os.getenv("DEVELOPER_VECTOR_INDEX", "dev_vector_index")
 PROJ_COLL = os.getenv("PROJECT_RECORDS_COLLECTION", "ProjectRecords")
 if not MONGODB_URI or not VOYAGE_API_KEY:
     die("MONGODB_URI / VOYAGE_API_KEY missing in .env")
 
 import voyageai  # noqa: E402
 from pymongo import MongoClient  # noqa: E402
-from pymongo.operations import SearchIndexModel  # noqa: E402
 from voyageai.error import RateLimitError  # noqa: E402
 
 from app import gitlab as gl  # noqa: E402
@@ -98,12 +96,9 @@ def main() -> int:
     db[DEV_COLL].delete_many({})
     db[DEV_COLL].insert_many(docs)
     print(f"{GREEN}✅ {DEV_COLL}: {len(docs)} members{RST}")
-    if DEV_INDEX not in {ix["name"] for ix in db[DEV_COLL].list_search_indexes()}:
-        db[DEV_COLL].create_search_index(model=SearchIndexModel(
-            name=DEV_INDEX, type="vectorSearch",
-            definition={"fields": [{"type": "vector", "path": "skill_embedding", "numDimensions": DIMS, "similarity": "cosine"}]},
-        ))
-        print(f"   created {DEV_INDEX}")
+    # No dev vector index on purpose: developer matching fetches the roster once and ranks by LOCAL cosine
+    # (reason.py + rag.cosine_score), so skill_embedding is read but never $vectorSearch'd. Dropping the
+    # unused index keeps Atlas at 3 search indexes (pp_vector · pp_text · code_vector) — fits the M0 free tier.
 
     # The senior engineer's in-progress project → SE genuinely busy + a full dev view.
     se = next((d for d in docs if d["role"] == "developer" and d["load"] >= 100), None)
