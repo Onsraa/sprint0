@@ -8,7 +8,18 @@ def test_merge_request_merged_maps_to_merge_event():
                                      "source_branch": "fix/ttl", "last_commit": {"id": "abc123"}}}
     evs = gh.parse_gitlab_event("merge_request", payload)
     assert evs == [{"kind": "merge", "project_id": 4201, "iid": 7, "title": "rotate token TTL",
-                    "branch": "fix/ttl", "sha": "abc123"}]
+                    "branch": "fix/ttl", "sha": "abc123", "author": ""}]
+
+
+def test_merge_author_prefers_runner_label_then_actor():
+    base = {"project": {"id": 4201}, "object_attributes": {"action": "merge", "iid": 7}}
+    # sprint0's own runner:<user> label wins (the assigned dev) — that's who gets passport credit
+    p = {**base, "labels": [{"title": "status:in-progress"}, {"title": "runner:sprint0-se"}],
+         "user": {"username": "Onsraa"}}
+    assert gh.parse_gitlab_event("merge_request", p)[0]["author"] == "sprint0-se"
+    # no runner label → fall back to the actor who triggered the hook
+    p2 = {**base, "user": {"username": "sprint0-fe"}}
+    assert gh.parse_gitlab_event("merge_request", p2)[0]["author"] == "sprint0-fe"
 
 
 def test_merge_request_open_is_ignored():
