@@ -4,7 +4,8 @@ Wipes demo data, then creates 2 REAL GitLab repos (QuantaPay / TrailLog) by push
 `seed/agency/<repo>/`, and registers them into MongoDB agency memory:
   - PastProjects  — one grounded summary per project (vector + full-text indexed)
   - CodeChunks    — one chunk per repo file, for chunk-level code-RAG ("find a reusable component")
-  - DeveloperProfiles — the roster (re-seeded)
+
+The roster (DeveloperProfiles) is owned by scripts/seed_team.py — run it after this.
 
 The 3 repos live in the `sprint0-demo` group, topic-tagged `sprint0-seed` so the
 selective `reset_demo()` keeps them (it deletes only dispatched, untagged projects).
@@ -39,11 +40,9 @@ VOYAGE_MODEL = os.getenv("VOYAGE_MODEL", "voyage-3.5-lite")
 DIMS = int(os.getenv("EMBEDDING_DIMS", "1024"))
 DB = os.getenv("MONGODB_DB", "sprint0")
 PP_COLL = os.getenv("PAST_PROJECTS_COLLECTION", "PastProjects")
-DEV_COLL = os.getenv("DEVELOPER_PROFILES_COLLECTION", "DeveloperProfiles")
 PROJ_COLL = os.getenv("PROJECT_RECORDS_COLLECTION", "ProjectRecords")
 CODE_COLL = os.getenv("CODE_CHUNKS_COLLECTION", "CodeChunks")
 PP_INDEX = os.getenv("PAST_PROJECTS_VECTOR_INDEX", "pp_vector_index")
-DEV_INDEX = os.getenv("DEVELOPER_VECTOR_INDEX", "dev_vector_index")
 CODE_INDEX = os.getenv("CODE_CHUNKS_VECTOR_INDEX", "code_vector_index")
 PP_TEXT_INDEX = os.getenv("PAST_PROJECTS_TEXT_INDEX", "pp_text_index")  # Atlas Search (hybrid, item H)
 DECISIONS_COLL = os.getenv("DECISIONS_COLLECTION", "Decisions")
@@ -254,7 +253,7 @@ def main() -> int:
         print(f"   reset_demo → {gl.reset_demo()}")
     except Exception as e:
         print(f"{YEL}   reset_demo skipped: {str(e)[:120]}{RST}")
-    for coll in (PP_COLL, DEV_COLL, PROJ_COLL, CODE_COLL, DECISIONS_COLL):
+    for coll in (PP_COLL, PROJ_COLL, CODE_COLL, DECISIONS_COLL):
         n = db[coll].delete_many({}).deleted_count
         print(f"   cleared {coll}: {n}")
 
@@ -316,19 +315,13 @@ def main() -> int:
     db[CODE_COLL].insert_many(chunk_docs)
     print(f"{GREEN}✅ {CODE_COLL}: {len(chunk_docs)} code chunks{RST}")
 
-    devs = json.loads((REPO / "seed" / "developer_profiles.json").read_text())
-    for d, v in zip(devs, embed([d["skills_text"] for d in devs])):
-        d["skill_embedding"] = v
-    db[DEV_COLL].insert_many(devs)
-    print(f"{GREEN}✅ {DEV_COLL}: {len(devs)} docs{RST}")
-
     db[DECISIONS_COLL].insert_many([dict(d) for d in _SEED_DECISIONS])
     print(f"{GREEN}✅ {DECISIONS_COLL}: {len(_SEED_DECISIONS)} graded team decisions (#33 signal seed){RST}")
 
     # Indexes — best-effort. Vector indexes (needed for the run) get priority; the full-text
     # index (for hybrid retrieval, item H) is skipped if the M0 search-index cap is hit.
     print(f"{YEL}-- ensuring search indexes (best-effort on M0) --{RST}")
-    for coll, name, path, filters in [(PP_COLL, PP_INDEX, "brief_embedding", None), (DEV_COLL, DEV_INDEX, "skill_embedding", None),
+    for coll, name, path, filters in [(PP_COLL, PP_INDEX, "brief_embedding", None),
                                       (CODE_COLL, CODE_INDEX, "embedding", ["discipline", "language"])]:
         try:
             ensure_vector_index(db[coll], name, path, filters)
