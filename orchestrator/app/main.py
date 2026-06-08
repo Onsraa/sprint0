@@ -370,6 +370,13 @@ async def _startup() -> None:
                 RELAYS.setdefault(_pid, _st)
         except Exception:
             pass
+        try:  # durability: the orphan-sweep above dropped the prior process's draft tasks (the _plan_pid
+            # placeholder is per-process), so re-materialize drafts for every rehydrated in-flight plan —
+            # the Work hub shows planned work again after a restart (idempotent: clears this plan's prior first).
+            for _pid, _pl in list(PLANS.items()):
+                await _persist_draft_tasks(_pl, _pid)
+        except Exception:
+            pass
     except Exception:
         pass  # Atlas may be momentarily unreachable; lazy-load on first authed request
 
@@ -1724,7 +1731,9 @@ async def _finalize_scaffold(plan_id: str, plan: PlanJSON, *, project_id: int | 
     RELAYS.pop(plan_id, None)
     PLANS.pop(plan_id, None)
     RESERVED.pop(plan_id, None)
-    for _s in ("plans", "relays", "reserved"):  # durable: the finished relay leaves the in-flight snapshot too
+    DELTA_TARGET.pop(plan_id, None)      # a finished delta → drop its target link + priority (no longer in-flight)
+    DELTA_PRIORITY.pop(plan_id, None)
+    for _s in ("plans", "relays", "reserved", "delta_target", "delta_priority"):  # durable: the finished relay leaves the in-flight snapshot too
         await _unpersist(_s, plan_id)
     return result
 
