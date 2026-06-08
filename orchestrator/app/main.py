@@ -2939,7 +2939,7 @@ async def gitlab_webhook(request: Request) -> dict:
     kind = str(payload.get("object_kind", ""))
     events = gitlab_hooks.parse_gitlab_event(kind, payload)
     now = datetime.now(timezone.utc).isoformat()
-    propagated = reembedded = 0
+    propagated = reembedded = credited = 0
     for ev in events:
         await eventlog.emit(f"gitlab_{ev['kind']}", created_at=now, payload=ev)
         if ev["kind"] == "merge" and ev.get("project_id") is not None:
@@ -2950,10 +2950,15 @@ async def gitlab_webhook(request: Request) -> dict:
                 sev = ChangeEvent(id=f"src_{uuid.uuid4().hex[:8]}", kind="source_changed", created_at=now,
                                   payload={"feature_node": f["path"], "summary": ev.get("title") or "merged upstream"})
                 propagated += len(await _project_source_change(sev))
+            if ev.get("author"):  # passport-increment-on-merge: credit the MR author (roster match → record_merge, else queue)
+                _m = team.get(ev["author"])
+                await _credit_merge(ev["author"], f"{(_m.discipline if _m else None) or 'backend'}:merge",
+                                    0.85, project_id=ev["project_id"], issue_iid=ev.get("iid"))
+                credited += 1
         elif ev["kind"] == "push" and ev.get("project_id") is not None:
             reembedded += await reembed_corpus(ev["project_id"], ev.get("ref", ""), ev.get("files", []))
     return {"received": kind, "events": [e["kind"] for e in events],
-            "propagated_sync_tasks": propagated, "reembedded": reembedded}
+            "propagated_sync_tasks": propagated, "reembedded": reembedded, "credited": credited}
 
 
 # Attribution queue — merges sprint0 can't map to a roster member land here (the human
@@ -2972,6 +2977,28 @@ def _suggest_attribution(identity: str | None) -> Optional[str]:
                 keyed[k.lower()] = d.username
     hit = difflib.get_close_matches(identity.lower(), list(keyed), n=1, cutoff=0.6)
     return keyed[hit[0]] if hit else None
+
+
+async def _credit_merge(gitlab_username: str, task_type: str, score: float, *,
+                        project_id: int | None = None, issue_iid: int | None = None) -> dict:
+    """Passport-increment-on-merge with the attribution fallback chain — shared by POST /api/merge and the
+    GitLab webhook's merge branch. Roster match → record_merge (Atlas) / grow_demo_member (demo); no match
+    → the manager's attribution queue (durable, fuzzy-suggested)."""
+    if demo.is_demo():  # record_merge's Atlas read returns nothing in demo → grow the in-mem roster dev
+        grown = team.grow_demo_member(gitlab_username, task_type)
+        if grown:
+            return grown
+    result = await record_merge(gitlab_username, task_type, score)
+    if result:
+        return result
+    aid = f"att_{uuid.uuid4().hex[:8]}"
+    ATTRIBUTIONS.append({
+        "id": aid, "gitlab_username": gitlab_username, "task_type": task_type,
+        "score": score, "project_id": project_id, "issue_iid": issue_iid,
+        "suggested": _suggest_attribution(gitlab_username),
+    })
+    await _persist("attributions", "_all", {"v": ATTRIBUTIONS})  # durable: the manager's attribution queue
+    return {"needs_attribution": True, "attribution_id": aid, "suggested": ATTRIBUTIONS[-1]["suggested"]}
 
 
 class AttributionResolve(BaseModel):
@@ -3030,21 +3057,8 @@ async def merge(req: MergeRequest, _: DeveloperProfile = Depends(auth.current_me
         if contract is not None:
             out["contract"] = contract
         return out
-    if demo.is_demo():  # grow the in-mem roster dev directly (record_merge's Atlas read returns nothing in demo)
-        grown = team.grow_demo_member(req.gitlab_username, req.task_type)
-        if grown:
-            return _with(grown)
-    result = await record_merge(req.gitlab_username, req.task_type, req.score)
-    if result:
-        return _with(result)
-    aid = f"att_{uuid.uuid4().hex[:8]}"
-    ATTRIBUTIONS.append({
-        "id": aid, "gitlab_username": req.gitlab_username, "task_type": req.task_type,
-        "score": req.score, "project_id": req.project_id, "issue_iid": req.issue_iid,
-        "suggested": _suggest_attribution(req.gitlab_username),
-    })
-    await _persist("attributions", "_all", {"v": ATTRIBUTIONS})  # durable: the manager's attribution queue
-    return _with({"needs_attribution": True, "attribution_id": aid, "suggested": ATTRIBUTIONS[-1]["suggested"]})
+    return _with(await _credit_merge(req.gitlab_username, req.task_type, req.score,
+                                     project_id=req.project_id, issue_iid=req.issue_iid))
 
 
 @app.get("/api/attributions")

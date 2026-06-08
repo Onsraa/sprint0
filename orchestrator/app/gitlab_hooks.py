@@ -18,9 +18,14 @@ def parse_gitlab_event(object_kind: str, payload: dict) -> list[dict]:
     out: list[dict] = []
     if object_kind == "merge_request":
         if attrs.get("action") in ("merge", "merged") or attrs.get("state") == "merged":
+            # Who to credit on the passport: sprint0's own `runner:<user>` label (the assigned dev) wins;
+            # else the actor who triggered the hook. The gateway resolves it against the roster.
+            labels = [(l or {}).get("title", "") for l in (payload.get("labels") or [])]
+            runner = next((l.split("runner:", 1)[1] for l in labels if l.startswith("runner:")), "")
             out.append({"kind": "merge", "project_id": proj, "iid": attrs.get("iid"),
                         "title": attrs.get("title", ""), "branch": attrs.get("source_branch", ""),
-                        "sha": (attrs.get("last_commit") or {}).get("id", "")})
+                        "sha": (attrs.get("last_commit") or {}).get("id", ""),
+                        "author": runner or (payload.get("user") or {}).get("username", "")})
     elif object_kind == "issue":
         if attrs.get("action") == "close" or attrs.get("state") == "closed":
             out.append({"kind": "issue_closed", "project_id": proj, "iid": attrs.get("iid")})

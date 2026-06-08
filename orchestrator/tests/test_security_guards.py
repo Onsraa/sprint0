@@ -81,3 +81,21 @@ def test_demo_task_store_namespaced_by_project(monkeypatch):
     assert sorted(t["project_id"] for t in all_tasks) == [9001, 9002]   # both coexist
     assert len(p1) == 1 and p1[0]["title"] == "A"                       # isolated per project
     assert len(p2) == 1 and p2[0]["title"] == "B"
+
+
+# ── webhook→passport: the shared merge-credit fallback queues an unmatched author (commit feat/webhook-passport) ──
+def test_credit_merge_queues_unmatched_author_to_attributions(monkeypatch):
+    """An MR author sprint0 can't map to the roster lands in the manager's attribution queue — the fallback
+    that POST /api/merge and the GitLab webhook's merge branch now share via _credit_merge."""
+    monkeypatch.setattr(demo, "DEMO_MODE", True)
+    demo.set_live(False)
+
+    async def _no_record(*a, **k):     # no roster match → avoid the live Atlas read in the no-match path
+        return {}
+    monkeypatch.setattr(main, "record_merge", _no_record)
+    main.ATTRIBUTIONS.clear()
+
+    out = asyncio.run(main._credit_merge("ghost-9xz", "backend:merge", 0.85, project_id=4201, issue_iid=7))
+    assert out.get("needs_attribution") is True
+    assert any(a["gitlab_username"] == "ghost-9xz" for a in main.ATTRIBUTIONS)
+    main.ATTRIBUTIONS.clear()
