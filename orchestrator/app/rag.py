@@ -603,12 +603,20 @@ def reset_demo_tasks() -> None:
     _DEMO_TASKS.clear()
 
 
+def _demo_key(project_id, task_id: str) -> str:
+    """Namespace the in-mem task store by project. In DEMO_MODE every wizard project is built from the
+    one canned plan, so the issue ids (= task ids) are identical across projects; keying by the bare id
+    alone makes a second project clobber the first's tasks. The composite key lets them coexist while the
+    doc's `id` stays bare, so the issue-id lookups (e.g. gate handoff) keep working unchanged."""
+    return f"{project_id}::{task_id}"
+
+
 async def save_tasks(docs: list[dict]) -> None:
     if not docs:
         return
     if demo.is_demo():
         for d in docs:
-            _DEMO_TASKS[d["id"]] = dict(d)
+            _DEMO_TASKS[_demo_key(d.get("project_id"), d["id"])] = dict(d)
         return
     async with MongoMCP() as m:
         await m.insert_many(TASKS_COLL, docs)
@@ -629,17 +637,19 @@ async def all_tasks() -> list[dict]:
 
 
 async def get_task(task_id: str) -> dict:
-    if demo.is_demo():
-        return dict(_DEMO_TASKS.get(task_id) or {})
+    if demo.is_demo():  # store is project-namespaced; match on the doc's bare id
+        return next((dict(d) for d in _DEMO_TASKS.values() if d.get("id") == task_id), {})
     async with MongoMCP() as m:
         rows = await m.find(TASKS_COLL, query={"id": task_id}, projection={"_id": 0}, limit=1)
     return rows[0] if rows else {}
 
 
 async def update_task(task_id: str, doc: dict) -> None:
-    if demo.is_demo():
-        if task_id in _DEMO_TASKS:
-            _DEMO_TASKS[task_id].update(doc)
+    if demo.is_demo():  # update the first task whose bare id matches (one per project, coexisting)
+        for v in _DEMO_TASKS.values():
+            if v.get("id") == task_id:
+                v.update(doc)
+                break
         return
     async with MongoMCP() as m:
         await m.update_many(TASKS_COLL, {"id": task_id}, {"$set": doc})
