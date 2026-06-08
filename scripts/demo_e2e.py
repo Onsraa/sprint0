@@ -19,7 +19,7 @@ MANAGER = "Onsraa"                                            # the manager driv
 CONSTRAINTS = {"time_to_market": "fast", "scalability": "medium", "reliability": "standard"}
 _BRIEF_FILE = pathlib.Path(__file__).resolve().parents[1] / "seed/sample_briefs/hearthlist.md"
 BRIEF = _BRIEF_FILE.read_text() if _BRIEF_FILE.exists() else "Real-estate marketplace; map search; agent CRM; fuzzy new features."
-c = httpx.Client(base_url=BASE, timeout=180, headers={"X-Sprint0-User": MANAGER})
+c = httpx.Client(base_url=BASE, timeout=600, headers={"X-Sprint0-User": MANAGER})  # live plan-gen + Voyage backoff can exceed 3 min
 
 _DONE = {"ratified", "auto_passed"}
 
