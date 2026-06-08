@@ -318,11 +318,14 @@ async def _match_and_assign(plan: PlanJSON, m: MongoMCP) -> None:
     # Availability overlay — route new work to whoever can start SOONEST (real schedule, not static load).
     # Best-effort: if the task store / roster is unreachable, scoring falls back to the static `load` factor.
     try:
-        from app import scheduler, team
+        from app import demo as _demo, scheduler, team
         from app.contracts import Task
-        from app.rag import all_tasks
+        from app.rag import TASKS_COLL, all_tasks
+        # LIVE: reuse the OPEN m — all_tasks() opens its own MongoMCP(), which nests under the held
+        # _MCP_LOCK and DEADLOCKS (the "never nest MongoMCP() sessions" trap). Demo = the in-mem store.
+        tasks_raw = await all_tasks() if _demo.is_demo() else await m.find(TASKS_COLL, projection={"_id": 0}, limit=10000)
         avail = scheduler.availability(
-            team.all_members(), [Task(**d) for d in await all_tasks()],
+            team.all_members(), [Task(**d) for d in tasks_raw],
             datetime.now(timezone.utc).isoformat())
         for rows in skill_dev.values():
             for c in rows:
