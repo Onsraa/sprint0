@@ -19,9 +19,9 @@ _FOCUS_SH = """#!/usr/bin/env bash
 # Usage: git checkout sprint0/<issue> && bash .sprint0/focus.sh
 set -e
 [ -f .sprint0/focus.json ] || { echo "no .sprint0/focus.json — checkout a sprint0/<issue> branch first"; exit 1; }
-FILES=$(python3 -c "import json;print(' '.join(json.load(open('.sprint0/focus.json'))['files']))")
+FILES=$(python3 -c "import json;print(' '.join('/'+f for f in json.load(open('.sprint0/focus.json'))['files']))")
 git sparse-checkout init --no-cone
-git sparse-checkout set $FILES .sprint0 .vscode
+git sparse-checkout set $FILES /.sprint0 /.vscode
 echo "sprint0: working tree focused on:"; echo "$FILES" | tr ' ' '\\n' | sed 's/^/  - /'
 """
 
