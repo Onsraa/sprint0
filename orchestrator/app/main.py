@@ -2918,10 +2918,12 @@ async def gitlab_webhook(request: Request) -> dict:
     """The INBOUND edge (P6): GitLab calls this on push/merge/issue. Verify the shared secret, emit each event
     on the spine, and route a MERGE on a canonical reused feature (matched by source_project_id) into the
     existing source_changed propagation → dependents get proposed sync tasks. sprint0 finally PERCEIVES GitLab.
-    The 'Simulate source change' button posts the same source_changed event this generates."""
+    The 'Simulate source change' button posts to /api/lineage/simulate-change (manager-auth'd), NOT this."""
+    if demo.is_demo():  # live-only integration: the public demo never gets real GitLab webhooks, so an
+        raise HTTPException(403, "the GitLab webhook is a live-mode integration")  # anon POST must not act here
     secret = os.getenv("GITLAB_WEBHOOK_SECRET", "")
-    if secret and request.headers.get("X-Gitlab-Token") != secret:
-        raise HTTPException(401, "bad webhook token")
+    if not secret or request.headers.get("X-Gitlab-Token") != secret:  # fail CLOSED — unconfigured/bad token = reject
+        raise HTTPException(401, "bad or missing webhook token")
     try:
         payload = await request.json()
     except Exception:
