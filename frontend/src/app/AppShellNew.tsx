@@ -32,10 +32,10 @@ export const DEMO_PERSONAS = [
 ];
 
 /* nav items carry a `roles` allowlist + capability flags — per-role chrome. */
-/* v4 two-plane: the Overview group reads first (Today · Relays) → Work → Explore → System.
+/* v4 two-plane: the Overview group reads first (Relays) → Work → Explore → System.
    Code Graph + Merges + standalone Profiles are CUT (routes stay, unlinked); Projects + Team
    are now universal; capability Profiles fold into Team's "Capabilities" tab. Tester replaces
-   QA gate. Devs/managers reach Contract from the Today "Start here" card, not a standing item. */
+   QA gate. Devs/managers reach Contract from the Relays board, not a standing item. */
 const NAV = [
   { section: "Overview", items: [
     { id: "relays", label: "Relays", icon: "pool", kbd: ["G", "L"], roles: ["manager", "developer", "qa"] },
