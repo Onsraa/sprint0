@@ -2903,11 +2903,16 @@ async def reembed_corpus(project_id: int, ref: str, files: list[str]) -> int:
     chunks_by_path = {c.get("file_path"): c for c in await code_chunks_for_project(project_name)}
     to_embed, _unchanged = corpus.plan_reembed(files, content_by_path, chunks_by_path)
     now = datetime.now(timezone.utc).isoformat()
+    from app.agent import generate_file_summary
     for f in to_embed:
         content = content_by_path[f]
         try:
-            vec = await run_in_threadpool(embed_document, content)
+            lang, disc = corpus.language_of(f), corpus.discipline_of_path(f)
+            summary = await generate_file_summary(f, content)  # best-effort '' on any failure
+            vec = await run_in_threadpool(
+                embed_document, corpus.chunk_embed_text(project_name, f, disc, lang, summary, content))
             await upsert_code_chunk({"project": project_name, "file_path": f, "excerpt": content[:1500],
+                                     "summary": summary, "language": lang, "discipline": disc,
                                      "embedding": vec, "content_hash": graph.normalize_and_hash(content), "updated_at": now})
         except Exception:
             pass

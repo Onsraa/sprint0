@@ -21,6 +21,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from app import demo
+from app.graph import one_hop_neighbors
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -309,7 +310,8 @@ async def reuse_pack(projects: list[str], limit: int = 30) -> list[dict]:
     if not toks:
         return []
     async with MongoMCP() as m:
-        rows = await m.find(CODE_COLL, projection={"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1}, limit=300)
+        rows = await m.find(CODE_COLL, projection={"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1,
+                                                   "summary": 1, "discipline": 1, "language": 1}, limit=300)
     out = [r for r in rows if str(r.get("project", "")).split("-")[0].lower() in toks]
     return out[:limit]
 
@@ -330,6 +332,44 @@ async def upsert_code_chunk(doc: dict) -> None:
     async with MongoMCP() as m:
         await m.delete_many(CODE_COLL, {"project": doc.get("project"), "file_path": doc.get("file_path")})
         await m.insert_many(CODE_COLL, [doc])
+
+
+async def code_search_expanded(m: "MongoMCP", query_vec: list[float], k: int = 5,
+                               discipline: str | None = None) -> list[dict]:
+    """Code-RAG with 1-hop import expansion: top-k chunks, then their direct import neighbors from the
+    seed-time GraphEdges partition (project_id == CodeChunks.project) — multi-file features surface as a
+    cluster, not one island. `discipline` pre-filters per-gate; 0 in-lane hits → unfiltered retry.
+    Expansion reads GRAPH_EDGES_COLL via raw find (NOT graph_edges(), whose demo branch is in-mem-only)
+    so it works in demo too, and is best-effort: any failure degrades to the plain hits."""
+    hits = await m.code_search(query_vec, k=k, discipline=discipline)
+    if discipline and not hits:
+        hits = await m.code_search(query_vec, k=k)  # nothing in-lane → fall back to the global pool
+    by_proj: dict[str, set[str]] = {}
+    for h in hits:
+        if h.get("project") and h.get("file_path"):
+            by_proj.setdefault(h["project"], set()).add(h["file_path"])
+    cap = 5
+    linked: list[dict] = []
+    for proj_name, paths in by_proj.items():
+        if len(linked) >= cap:
+            break
+        try:
+            sp = sorted(paths)
+            edges = await m.find(GRAPH_EDGES_COLL,
+                                 query={"project_id": proj_name,
+                                        "$or": [{"from_path": {"$in": sp}}, {"to_path": {"$in": sp}}]},
+                                 projection={"_id": 0, "from_path": 1, "to_path": 1}, limit=200)
+            nbrs = one_hop_neighbors(paths, edges, cap - len(linked))
+            if not nbrs:
+                continue
+            rows = await m.find(CODE_COLL, query={"project": proj_name, "file_path": {"$in": nbrs}},
+                                projection={"_id": 0, "project": 1, "file_path": 1, "web_url": 1,
+                                            "excerpt": 1, "summary": 1, "discipline": 1, "language": 1},
+                                limit=len(nbrs))
+            linked.extend({**r, "linked": True} for r in rows)
+        except Exception:
+            continue  # expansion is best-effort — never blocks retrieval
+    return (hits + linked)[: k + cap]
 
 
 async def get_agreement(agreement_id: str) -> dict:
@@ -872,14 +912,18 @@ class MongoMCP:
                 {"$project": proj},
             ])
 
-    async def code_search(self, query_vec: list[float], k: int = 5, projection: dict | None = None) -> list[dict]:
-        """Code-RAG: vector search over CodeChunks — reusable code across the agency's past repos."""
-        proj: dict = {"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1}
+    async def code_search(self, query_vec: list[float], k: int = 5, projection: dict | None = None,
+                          discipline: str | None = None) -> list[dict]:
+        """Code-RAG: vector search over CodeChunks — reusable code across the agency's past repos.
+        `discipline` pre-filters server-side (the vector index has a filter field on it)."""
+        proj: dict = {"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1,
+                      "summary": 1, "discipline": 1, "language": 1}
         proj.update(projection or {})
-        return await self._aggregate(CODE_COLL, [
-            {"$vectorSearch": {"index": CODE_INDEX, "path": "embedding", "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k}},
-            {"$project": proj},
-        ])
+        vs: dict = {"index": CODE_INDEX, "path": "embedding", "queryVector": query_vec,
+                    "numCandidates": max(50, k * 10), "limit": k}
+        if discipline:
+            vs["filter"] = {"discipline": discipline}
+        return await self._aggregate(CODE_COLL, [{"$vectorSearch": vs}, {"$project": proj}])
 
     async def find(self, collection: str, projection: dict | None = None, query: dict | None = None, limit: int = 20) -> list[dict]:
         res = await self.session.call_tool(

@@ -8,7 +8,42 @@ Voyage + Atlas, all no-ops in demo).
 """
 from __future__ import annotations
 
-from app.graph import normalize_and_hash
+import posixpath
+
+from app.graph import _domain_of, normalize_and_hash
+
+# Per-file retrieval metadata (code-RAG routing): language from the extension, discipline from the
+# path heuristic — so code_search can filter "backend chunks for the backend gate" server-side.
+_LANG_BY_EXT = {
+    ".py": "python", ".ts": "typescript", ".tsx": "typescript",
+    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".css": "css", ".scss": "css", ".html": "html", ".json": "json",
+    ".md": "markdown", ".sh": "shell", ".yml": "yaml", ".yaml": "yaml", ".sql": "sql",
+}
+
+
+def language_of(path: str) -> str:
+    return _LANG_BY_EXT.get(posixpath.splitext(path.lower())[1], "text")
+
+
+def discipline_of_path(path: str) -> str:
+    """Discipline a file belongs to. css/scss/html → uiux (presentation); everything else inherits the
+    graph's domain heuristic (ts/tsx/jsx → frontend, test → qa, docker/infra → devops, else backend)."""
+    if path.lower().endswith((".css", ".scss", ".html")):
+        return "uiux"
+    return _domain_of(path)
+
+
+def chunk_embed_text(project: str, file_path: str, discipline: str, language: str,
+                     summary: str, excerpt: str) -> str:
+    """The text a CodeChunk's vector is computed from: metadata header + (optional) prose summary +
+    raw-code prefix. Summary first so prose↔prose similarity with the brief dominates; excerpt trimmed
+    so total size stays flat vs the old 1500-char composition."""
+    lines = [f"{project} · {file_path} · {discipline}/{language}"]
+    if summary:
+        lines.append(f"SUMMARY: {summary}")
+    lines.append(excerpt[:1200])
+    return "\n".join(lines)
 
 
 def plan_reembed(changed_files: list[str], content_by_path: dict[str, str],

@@ -19,7 +19,7 @@ from app.assign import assign_developers
 from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
 from app.rag import (
     DEV_COLL, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
-    all_profiles, cosine_score, decisions_for_project, embed_document, embed_queries, embed_query,
+    all_profiles, code_search_expanded, cosine_score, decisions_for_project, embed_document, embed_queries, embed_query,
     record_postmortem, save_profile,
 )
 
@@ -45,8 +45,11 @@ def _format_past(projects: list[dict]) -> str:
 
 
 def _format_code(chunks: list[dict]) -> str:
+    # summary (prose, when seeded) beats a raw-code slice as LLM grounding; "↳ linked" marks chunks
+    # pulled in by 1-hop import expansion, not vector score — the LLM sees the cluster's provenance.
     lines = [
-        f"- {c.get('project')} · {c.get('file_path')} → {c.get('web_url', '')}\n    {(c.get('excerpt', '') or '')[:240].strip()}"
+        f"{'↳ linked: ' if c.get('linked') else '- '}{c.get('project')} · {c.get('file_path')} → {c.get('web_url', '')}\n"
+        f"    {(c.get('summary') or (c.get('excerpt', '') or '')[:240]).strip()}"
         for c in chunks
     ]
     return "\n".join(lines) or "(no reusable code found)"
@@ -98,8 +101,8 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
         qv = embed_query(brief_text)
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)
-        try:  # ground the per-card `reuse` block in real reusable files (code-RAG), not just project names
-            code = await m.code_search(qv, k=5)
+        try:  # ground the per-card `reuse` block in real reusable files (code-RAG + 1-hop import cluster)
+            code = await code_search_expanded(m, qv, k=5)
         except Exception:
             code = []
     prompt = (
@@ -157,8 +160,8 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
     qv = embed_query(query)
     async with MongoMCP() as m:
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, query, k=3, projection=_PP_PROJECTION)
-        try:
-            code = await m.code_search(qv, k=5)
+        try:  # in-lane chunks for THIS gate (discipline pre-filter) + their 1-hop import cluster
+            code = await code_search_expanded(m, qv, k=5, discipline=discipline)
         except Exception:
             code = []
     try:  # #33 — feed past TEAM decisions so the LLM can ground a `conflict` flag (not hallucinate it)
