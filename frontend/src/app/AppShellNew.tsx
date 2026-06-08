@@ -48,12 +48,11 @@ const NAV = [
     { id: "projects", label: "Projects", icon: "projects", kbd: ["G", "P"], roles: ["manager", "developer", "qa"] },
     { id: "team", label: "Team", icon: "team", roles: ["manager", "developer", "qa"] },
     { id: "portfolio", label: "Decisions", icon: "portfolio", roles: ["manager", "developer", "qa"] },
-    { id: "codegraph", label: "Lineage", icon: "merges", roles: ["manager", "developer"] },
+    { id: "codegraph", label: "Lineage", icon: "merges", roles: ["manager"] },
     { id: "passport", label: "Passport", icon: "passport", roles: ["developer", "qa"] },
   ] },
   { section: "System", items: [
     { id: "merges", label: "Attributions", icon: "merges", roles: ["manager"] },
-    { id: "settings", label: "Settings", icon: "settings", roles: ["manager"] },
   ] },
 ] as const;
 

@@ -30,7 +30,7 @@ const VIEW_TO_ROUTE: Record<string, string> = {
   relays: "relays", gatecontract: "gatecontract",
   mywork: "work", projects: "dashboard", relay: "relay", ratify: "queue",
   qagate: "qa", team: "team", profiles: "profiles", codegraph: "codegraph", merges: "attributions",
-  portfolio: "portfolio", passport: "passport", settings: "settings",
+  portfolio: "portfolio", passport: "passport",
 };
 const ROUTE_TO_VIEW: Record<string, string> = Object.fromEntries(Object.entries(VIEW_TO_ROUTE).map(([v, r]) => [r, v]));
 

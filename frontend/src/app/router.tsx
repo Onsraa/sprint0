@@ -14,7 +14,6 @@ import { RelayBoard } from "../views/RelayBoard";
 import { RatifyQueue } from "../views/RatifyQueue";
 import { Portfolio } from "../views/Portfolio";
 import { Profiles } from "../views/Profiles";
-import { Settings } from "../views/Settings";
 import { AttributionQueue } from "../views/AttributionQueue";
 import { QAGate } from "../views/QAGate";
 import { Passport } from "../views/Passport";
@@ -38,7 +37,6 @@ const PANELS: { path: string; component: FC }[] = [
   { path: "/attributions", component: AttributionQueue },
   { path: "/profiles", component: Profiles },
   { path: "/portfolio", component: Portfolio },
-  { path: "/settings", component: Settings },
   { path: "/qa", component: QAGate },
   { path: "/passport", component: Passport },
   { path: "/codegraph", component: CodeGraph },
