@@ -454,6 +454,8 @@ async def onboard_developer(cv_text: str) -> dict:
         "history": [],
     }
     async with MongoMCP() as m:
+        # upsert by username (server-owned key): re-onboarding the same CV replaces, never duplicates
+        await m.delete_many(DEV_COLL, {"username": username})
         await m.insert_many(DEV_COLL, [doc])
     out = {k: v for k, v in doc.items() if k != "skill_embedding"}
     out["gitlab_linked"] = gl_user is not None
