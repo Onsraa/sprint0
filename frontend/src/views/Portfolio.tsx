@@ -177,7 +177,7 @@ function DecisionDetail({ d, onClose, onVisibility, onReasoning, onDeprecate, on
         )}
 
         <div className="kicker" style={{ marginBottom: 8 }}>Context tags</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 16 }}>{d.context_tags.map((t) => <CapTag key={t} tag={t} />)}</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 16 }}>{(d.context_tags ?? []).map((t) => <CapTag key={t} tag={t} />)}</div>
 
         {/* visibility */}
         <div className="kicker" style={{ marginBottom: 8 }}>Visibility</div>
