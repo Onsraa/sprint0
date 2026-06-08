@@ -15,7 +15,6 @@ import { useRelay, useRatifyGate, useDecisionCard } from "../features/relay/useR
 import { useProjects } from "../features/projects/useProjects";
 import { useRoster } from "../features/roster/useRoster";
 import { useWork } from "../features/work/useWork";
-import { rankNext } from "../features/today/rank";
 import { useProfiles, useConfirmProfile } from "../features/profiles/useProfiles";
 import { api } from "../lib/api";
 import { qk } from "../lib/query";
@@ -152,19 +151,9 @@ export function useApp() {
   const tasks = useMemo(() => (tasksRaw ?? []).map(toMockTask), [tasksRaw]);
   const { projects: projectsRaw } = useProjects();
   const projects = useMemo(() => projectsRaw.map(toMockProject), [projectsRaw]);
-  // project_id → human name, so Today task rows show the project name, not the numeric id.
-  const projectNames = useMemo(() => Object.fromEntries(projectsRaw.map((p) => [p.project_id, p.name])), [projectsRaw]);
   const liveProjectId = useUI((s) => s.liveProjectId);
   const { data: queueRaw } = useQuery({ queryKey: qk.myQueue(), queryFn: () => api.myQueue().then((r) => r.items) });
   const queue = useMemo(() => queueRaw ?? [], [queueRaw]);
-  // Today spine — ranked next-actions, composed client-side from existing streams (no new endpoint).
-  const { data: myTasksRaw } = useWork("me");
-  const myTasks = useMemo(() => myTasksRaw ?? [], [myTasksRaw]);
-  const next = useMemo(() => rankNext({
-    role, myDiscipline: member?.discipline ?? null, myUsername: member?.username ?? "",
-    queue, relays: relaySummaries, myTasks, needs: inbox?.needs_action ?? [], projectNames,
-    seatedDisciplines: members.filter((m: any) => m.discipline).map((m: any) => m.discipline),
-  }), [role, member, queue, relaySummaries, myTasks, inbox, projectNames, members]);
   const drafts = useUI((s) => s.drafts);
   const addDraft = useUI((s) => s.addDraft);
 
@@ -237,7 +226,7 @@ export function useApp() {
   };
 
   return {
-    me, role, chrome, view, setView, goTo, navPayload, switchPersona, members, next,
+    me, role, chrome, view, setView, goTo, navPayload, switchPersona, members,
     notifs, unread, dismissNotif, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
     agreements,
     gates, actGate, ratifyWith, cards, staffing, planId, integration, relay,

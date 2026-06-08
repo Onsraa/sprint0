@@ -2,7 +2,7 @@
  * render into the shell's <Outlet/>. Each `View` string maps 1:1 to a path segment (/${view}). State
  * is sourced from TanStack Query / Zustand / the router directly (no AppContext) — see features/nav
  * (useView + useRoleGate), features/auth (useMe), lib/store (useUI). */
-import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, redirect, Navigate } from "@tanstack/react-router";
 import type { FC } from "react";
 import { AppShellNew } from "./AppShellNew";
 
@@ -57,7 +57,13 @@ const panelRoutes = PANELS.map(({ path, component }) =>
 
 const routeTree = rootRoute.addChildren([indexRoute, ...panelRoutes]);
 
-export const router = createRouter({ routeTree, defaultPreload: "intent" });
+export const router = createRouter({
+  routeTree,
+  defaultPreload: "intent",
+  // An unregistered path (a stale deep-link, or a cut view like the old /today) bounces to the universal
+  // home instead of a raw "Not Found" — matches ROLE_HOME (every persona lands on Relays).
+  defaultNotFoundComponent: () => <Navigate to={"/relays" as "/"} />,
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

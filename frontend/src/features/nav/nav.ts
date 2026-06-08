@@ -7,8 +7,8 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { Discipline, Member } from "../../lib/api";
 import type { Mode, Role, View } from "../../app/types";
 
-export const MANAGER_VIEWS: View[] = ["today", "dashboard", "work", "team", "relay", "relays", "gatecontract", "queue", "ratify", "portfolio", "attributions", "codegraph", "profiles", "settings"];
-export const DEV_VIEWS: View[] = ["today", "work", "relays", "relay", "gatecontract", "issue", "passport", "ratify", "qa", "queue", "portfolio", "dashboard", "team"];
+export const MANAGER_VIEWS: View[] = ["dashboard", "work", "team", "relay", "relays", "gatecontract", "queue", "ratify", "portfolio", "attributions", "codegraph", "profiles", "settings"];
+export const DEV_VIEWS: View[] = ["work", "relays", "relay", "gatecontract", "issue", "passport", "ratify", "qa", "queue", "portfolio", "dashboard", "team"];
 
 /** Where each persona lands on a fresh login — the Relays pool (notifications live in the bell). */
 export const ROLE_HOME: Record<Role, View> = {
