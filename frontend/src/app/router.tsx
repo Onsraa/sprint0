@@ -15,8 +15,10 @@ import { RatifyQueue } from "../views/RatifyQueue";
 import { Portfolio } from "../views/Portfolio";
 import { Profiles } from "../views/Profiles";
 import { Settings } from "../views/Settings";
+import { AttributionQueue } from "../views/AttributionQueue";
 import { QAGate } from "../views/QAGate";
 import { Passport } from "../views/Passport";
+import { CodeGraph } from "../views/CodeGraph";
 // Inbox view retired — notifications live in the bell dropdown; Relays is the home.
 import { Relays } from "../views/Relays";
 
@@ -33,11 +35,13 @@ const PANELS: { path: string; component: FC }[] = [
   { path: "/relay", component: RelayBoard },
   { path: "/queue", component: RatifyQueue },
   { path: "/team", component: TeamView },
+  { path: "/attributions", component: AttributionQueue },
   { path: "/profiles", component: Profiles },
   { path: "/portfolio", component: Portfolio },
   { path: "/settings", component: Settings },
   { path: "/qa", component: QAGate },
   { path: "/passport", component: Passport },
+  { path: "/codegraph", component: CodeGraph },
 ];
 
 const indexRoute = createRoute({

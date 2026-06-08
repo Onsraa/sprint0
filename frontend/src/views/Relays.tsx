@@ -17,7 +17,7 @@ import { GATE_META } from "./RatifyPanel";
 import type { RelaySummary, Discipline } from "../lib/api";
 
 type Gate = RelaySummary["gates"][number];
-const STATE_ORDER: Discipline[] = ["uiux", "backend", "devops", "frontend", "qa"];
+const STATE_ORDER = ["setup", "uiux", "backend", "devops", "frontend", "qa"] as Discipline[];  // setup gate-0 first
 const DONE = ["ratified", "auto_passed"];
 const projectKey = (r: RelaySummary) => String(r.target_project_id ?? r.project);
 

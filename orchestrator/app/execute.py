@@ -7,8 +7,6 @@ appends to an existing project instead of scaffolding a new one.
 """
 from __future__ import annotations
 
-import os
-
 from app import gitlab as gl
 from app import demo, handoff, policy, team
 from app.contracts import Issue, PlanJSON
@@ -136,19 +134,33 @@ def _invite_assignees(project_id: int, plan: PlanJSON) -> None:
             pass  # already a member
 
 
-def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: bool = True, reuse_seeds: dict[str, list[dict]] | None = None) -> dict:
-    if demo.is_demo():  # public demo: no real GitLab writes — point at a pre-made showcase project
-        n = sum(len(e.issues) for e in plan.epics)
-        return {
-            "web_url": os.getenv("DEMO_SHOWCASE_URL", "https://gitlab.com/sprint0-demo"),
-            "clone_url": "", "project_id": int(os.getenv("DEMO_SHOWCASE_PID", "0")),
-            "default_branch": "main", "issues_created": n, "context_branches": n,
-            "qa_issue_iid": None, "demo_stub": True,
-        }
-    project_name = project_name or plan.project_name
-    scaf = gl.create_project_scaffold(project_name, labels=_plan_labels(plan))
-    pid = scaf["project_id"]
+_DEMO_PID_SEQ = 9000  # module counter — each demo dispatch gets a UNIQUE fake project_id (so created projects don't collide at 0 and can be listed)
 
+
+def reserve_project(plan: PlanJSON, project_name: str | None = None) -> dict:
+    """Phase 1 of two-phase create: RESERVE the GitLab project — an empty repo, name only. No issues, branches,
+    focus files, labels, or members yet (those land at scaffold_project once the relay closes)."""
+    if demo.is_demo():  # public demo: no real GitLab — a unique stub pid so the reserved project is browsable
+        global _DEMO_PID_SEQ
+        _DEMO_PID_SEQ += 1
+        name = project_name or plan.project_name or "project"
+        slug = "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-") or "project"
+        return {"web_url": f"https://gitlab.com/sprint0-demo/{slug}", "clone_url": "",
+                "project_id": _DEMO_PID_SEQ, "default_branch": "main", "demo_stub": True}
+    scaf = gl.create_project_scaffold(project_name or plan.project_name, labels={})  # empty repo, no labels yet
+    return {"web_url": scaf["web_url"], "clone_url": scaf.get("clone_url", ""),
+            "project_id": scaf["project_id"], "default_branch": scaf["default_branch"]}
+
+
+def scaffold_project(plan: PlanJSON, project_id: int, *, web_url: str = "", clone_url: str = "",
+                     default_branch: str = "main", with_handoff: bool = True,
+                     reuse_seeds: dict[str, list[dict]] | None = None) -> dict:
+    """Phase 2 (the relay has closed): commit the README/focus/CI with the FINAL stack + labels + members +
+    issues + focus branches + QA onto the already-reserved project. Writing the README here (not at reserve)
+    means a setup-gate stack override is reflected in the repo."""
+    if demo.is_demo():  # public demo: no real GitLab writes
+        n = sum(len(e.issues) for e in plan.epics)
+        return {"issues_created": n, "context_branches": n, "qa_issue_iid": None, "demo_stub": True}
     ts = plan.tech_stack
     readme = (
         f"# {plan.project_name}\n\n{plan.client_summary}\n\n"
@@ -157,30 +169,34 @@ def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: 
         f"_Scaffolded by sprint0 — {plan.timeline_weeks}-week plan, "
         f"{sum(len(e.issues) for e in plan.epics)} issues._\n"
     )
-    # README.md already exists (repo init) → update; add the sprint0 focus helper + a CI gate.
     gl.commit_files(
-        pid,
+        project_id,
         [
             {"path": "README.md", "action": "update", "content": readme},
             {"path": ".sprint0/focus.sh", "content": _FOCUS_SH},
             {"path": ".gitlab-ci.yml", "content": _CI_YML},
         ],
-        branch=scaf["default_branch"],
+        branch=default_branch,
     )
-
-    _invite_assignees(pid, plan)  # native assignees must be project members first
-    created = gl.create_issues(pid, _issue_dicts(plan, scaf.get("clone_url", "")))
+    gl.create_labels(project_id, _plan_labels(plan))
+    _invite_assignees(project_id, plan)  # native assignees must be project members first
+    created = gl.create_issues(project_id, _issue_dicts(plan, clone_url))
 
     extra: dict = {}
     if with_handoff:  # per-kind focus branches + a QA-only issue (the relay's tail)
-        branches = handoff.commit_context_branches(pid, plan, default_branch=scaf["default_branch"], reuse_seeds=reuse_seeds)
-        qa = handoff.create_qa_issue(pid, plan, staging_url=scaf["web_url"])
+        branches = handoff.commit_context_branches(project_id, plan, default_branch=default_branch, reuse_seeds=reuse_seeds)
+        qa = handoff.create_qa_issue(project_id, plan, staging_url=web_url)
         extra = {"context_branches": len(branches), "qa_issue_iid": qa.get("iid")}
+    return {"issues_created": len(created), **extra}
 
-    return {
-        "web_url": scaf["web_url"], "clone_url": scaf.get("clone_url", ""), "project_id": pid,
-        "default_branch": scaf["default_branch"], "issues_created": len(created), **extra,
-    }
+
+def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: bool = True, reuse_seeds: dict[str, list[dict]] | None = None) -> dict:
+    """Legacy single-shot create = reserve + scaffold. The two-phase flow calls the halves directly
+    (reserve at Create, scaffold when the relay closes)."""
+    res = reserve_project(plan, project_name)
+    scaf = scaffold_project(plan, res["project_id"], web_url=res["web_url"], clone_url=res.get("clone_url", ""),
+                            default_branch=res["default_branch"], with_handoff=with_handoff, reuse_seeds=reuse_seeds)
+    return {**res, **scaf}
 
 
 def extend_project(plan: PlanJSON, project_id: int, default_branch: str = "main", reuse_seeds: dict[str, list[dict]] | None = None) -> dict:

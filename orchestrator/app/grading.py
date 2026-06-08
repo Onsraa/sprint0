@@ -71,3 +71,25 @@ def signal_for(card) -> str:
     if card.confidence < GREY_CONFIDENCE or (card.source == "ai" and not grounded):
         return "grey"
     return "orange"
+
+
+def recommend_architecture(cards: list) -> int | None:
+    """Deterministic stack pick (the server's badge, not the LLM's vote): the card that REUSES the most proven
+    memory — sprint0's thesis is reuse > rebuild. Score = reusable features (action reuse|adapt, weighted) +
+    grounded-on projects. Returns the top card's index, or None. The AI's OWN pick (ArchitectureOptions.ai_pick_*)
+    is surfaced alongside as the alternative view — it may favor a fresh/modern stack this score would penalize."""
+    if not cards:
+        return None
+
+    def score(c) -> int:
+        reuse = getattr(c, "reuse", None) or []
+        reused = sum(1 for r in reuse if getattr(r, "action", "reuse") in ("reuse", "adapt"))
+        grounded = len(getattr(c, "grounded_on", None) or [])
+        return reused * 2 + grounded
+
+    best_i, best_s = 0, -1
+    for i, c in enumerate(cards):
+        s = score(c)
+        if s > best_s:
+            best_i, best_s = i, s
+    return best_i

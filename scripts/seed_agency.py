@@ -81,7 +81,9 @@ from pymongo import MongoClient  # noqa: E402
 from pymongo.operations import SearchIndexModel  # noqa: E402
 from voyageai.error import RateLimitError  # noqa: E402
 
+from app import corpus  # noqa: E402
 from app import gitlab as gl  # noqa: E402
+from app import graph as graph_mod  # noqa: E402
 
 vo = voyageai.Client(api_key=VOYAGE_API_KEY)
 
@@ -99,17 +101,32 @@ def embed(texts: list[str], input_type: str = "document") -> list[list[float]]:
     return []
 
 
-def ensure_vector_index(coll, name: str, path: str) -> None:
-    if name in {ix["name"] for ix in coll.list_search_indexes()}:
-        print(f"   vector index '{name}' exists")
-        return
+def ensure_vector_index(coll, name: str, path: str, filters: list[str] | None = None) -> None:
+    """Idempotent, filter-aware: if the index exists but lacks a required `filter` field (needed for
+    $vectorSearch pre-filtering, e.g. per-discipline code_search), drop + recreate it."""
+    existing = next((ix for ix in coll.list_search_indexes() if ix["name"] == name), None)
+    if existing:
+        defn = existing.get("latestDefinition") or existing.get("definition") or {}
+        have = {f.get("path") for f in defn.get("fields", []) if f.get("type") == "filter"}
+        if set(filters or []) <= have:
+            print(f"   vector index '{name}' exists")
+            return
+        print(f"{YEL}   vector index '{name}' missing filter fields → drop + recreate (~1 min; code_search degrades to [] meanwhile){RST}")
+        coll.drop_search_index(name)
+        for _ in range(30):  # drop is async on Atlas — wait until gone before recreating
+            if name not in {ix["name"] for ix in coll.list_search_indexes()}:
+                break
+            time.sleep(2)
     coll.create_search_index(
         model=SearchIndexModel(
             name=name, type="vectorSearch",
-            definition={"fields": [{"type": "vector", "path": path, "numDimensions": DIMS, "similarity": "cosine"}]},
+            definition={"fields": [
+                {"type": "vector", "path": path, "numDimensions": DIMS, "similarity": "cosine"},
+                *({"type": "filter", "path": f} for f in filters or []),
+            ]},
         )
     )
-    print(f"   created vector index '{name}'")
+    print(f"   created vector index '{name}'" + (f" (filters: {', '.join(filters)})" if filters else ""))
 
 
 def ensure_search_index(coll, name: str) -> None:
@@ -133,7 +150,7 @@ _FIELD_INDEXES = {
     "AccessGrants": ["id", "subject_id", "requester_id"],
     "RescheduleProposals": ["id", "status"],
     "GraphNodes": ["project_id"],
-    "GraphEdges": ["project_id"],
+    "GraphEdges": ["project_id", "from_path", "to_path"],
     "Profiles": ["id"],
     "DeveloperProfiles": ["gitlab_username", "username"],
 }
@@ -143,6 +160,45 @@ def ensure_field_indexes(db) -> None:
     """Provision the runtime collections' field indexes. create_index is idempotent (same spec = no-op)."""
     n = sum(1 for coll, fields in _FIELD_INDEXES.items() for f in fields if db[coll].create_index(f))
     print(f"{GREEN}✅ field indexes ensured ({n} across {len(_FIELD_INDEXES)} collections){RST}")
+
+
+_SUMMARY_LANGS = {"python", "typescript", "javascript"}
+
+
+def summarize_chunks(chunks: list[dict]) -> list[str]:
+    """Per-file Gemini summaries (prose embeds better against prose briefs than raw code). Best-effort:
+    missing creds / import / call failure → blanks, and the seed falls back to excerpt-only embeddings."""
+    blanks = [""] * len(chunks)
+    if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("1", "true", "yes")):
+        print(f"{YEL}   no Gemini creds — seeding with excerpt-only embeddings{RST}")
+        return blanks
+    try:
+        import asyncio
+
+        from app.agent import generate_file_summary
+    except Exception as e:
+        print(f"{YEL}   agent unavailable ({str(e)[:80]}) — excerpt-only embeddings{RST}")
+        return blanks
+
+    async def run() -> list[str]:
+        sem = asyncio.Semaphore(4)
+
+        async def one(c: dict) -> str:
+            if c["language"] not in _SUMMARY_LANGS:
+                return ""
+            async with sem:
+                return await generate_file_summary(c["file_path"], c["_content"])
+
+        return list(await asyncio.gather(*(one(c) for c in chunks)))
+
+    try:
+        out = asyncio.run(run())
+        print(f"{GREEN}   ✅ {sum(1 for s in out if s)} file summaries via Gemini{RST}")
+        return out
+    except Exception as e:
+        print(f"{YEL}   summaries failed ({str(e)[:80]}) — excerpt-only embeddings{RST}")
+        return blanks
 
 
 def create_repo(name: str) -> dict:
@@ -223,7 +279,23 @@ def main() -> int:
                 "web_url": f"{created['web_url']}/-/blob/{created['default_branch']}/{fobj['path']}",
                 "excerpt": fobj["content"][:1500],
                 "tags": proj.get("tags", []),
+                "language": corpus.language_of(fobj["path"]),
+                "discipline": corpus.discipline_of_path(fobj["path"]),
+                "content_hash": graph_mod.normalize_and_hash(fobj["content"]),  # living-corpus reembed gate
+                "_content": fobj["content"],  # full text for the summary pass; stripped before insert
             })
+        # Import graph for this repo (project_id = repo name = CodeChunks.project, the retrieval-expansion
+        # join key). Built from push_dir's in-memory file list — paths byte-identical to file_path, and
+        # never re-walks disk (seed dirs can contain a venv/). Delete+insert = idempotent re-seed,
+        # touching ONLY this partition (the app's 'local'/'lineage' graphs stay).
+        nodes, edges = graph_mod.build_import_graph({f["path"]: f["content"] for f in files}, proj["name"])
+        db["GraphNodes"].delete_many({"project_id": proj["name"]})
+        db["GraphEdges"].delete_many({"project_id": proj["name"]})
+        if nodes:
+            db["GraphNodes"].insert_many([n.model_dump() for n in nodes])
+        if edges:
+            db["GraphEdges"].insert_many([e.model_dump() for e in edges])
+        print(f"      import graph: {len(nodes)} nodes, {len(edges)} edges")
 
     # Insert ALL data first — an Atlas index cap (M0) must never abort the data seed.
     print(f"{YEL}-- embedding + inserting memory --{RST}")
@@ -232,9 +304,15 @@ def main() -> int:
     db[PP_COLL].insert_many(projects)
     print(f"{GREEN}✅ {PP_COLL}: {len(projects)} docs{RST}")
 
-    chunk_texts = [f"{c['project']} · {c['file_path']}\n{c['excerpt']}" for c in chunk_docs]
-    for c, v in zip(chunk_docs, embed(chunk_texts)):
+    summaries = summarize_chunks(chunk_docs)  # best-effort; blanks → excerpt-only embeddings
+    chunk_texts = [
+        corpus.chunk_embed_text(c["project"], c["file_path"], c["discipline"], c["language"], s, c["excerpt"])
+        for c, s in zip(chunk_docs, summaries)
+    ]
+    for c, v, s in zip(chunk_docs, embed(chunk_texts), summaries):  # still ONE batched Voyage call
         c["embedding"] = v
+        c["summary"] = s
+        c.pop("_content", None)
     db[CODE_COLL].insert_many(chunk_docs)
     print(f"{GREEN}✅ {CODE_COLL}: {len(chunk_docs)} code chunks{RST}")
 
@@ -250,9 +328,10 @@ def main() -> int:
     # Indexes — best-effort. Vector indexes (needed for the run) get priority; the full-text
     # index (for hybrid retrieval, item H) is skipped if the M0 search-index cap is hit.
     print(f"{YEL}-- ensuring search indexes (best-effort on M0) --{RST}")
-    for coll, name, path in [(PP_COLL, PP_INDEX, "brief_embedding"), (DEV_COLL, DEV_INDEX, "skill_embedding"), (CODE_COLL, CODE_INDEX, "embedding")]:
+    for coll, name, path, filters in [(PP_COLL, PP_INDEX, "brief_embedding", None), (DEV_COLL, DEV_INDEX, "skill_embedding", None),
+                                      (CODE_COLL, CODE_INDEX, "embedding", ["discipline", "language"])]:
         try:
-            ensure_vector_index(db[coll], name, path)
+            ensure_vector_index(db[coll], name, path, filters)
         except Exception as e:
             print(f"{YEL}   ⚠ vector index '{name}' skipped: {str(e)[:90]}{RST}")
     try:

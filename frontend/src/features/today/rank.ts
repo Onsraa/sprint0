@@ -53,14 +53,14 @@ const chip = (kind: ChipKind, n?: number): NextChip => ({ kind, n });
 /** downstream gates (in THIS relay) still waiting on `disc`, + 1 for the qa gate (it gates "ship"). */
 export function blocksForGate(disc: Discipline, relay: RelaySummary): number {
   const statusOf = (d: Discipline) => relay.gates.find((g) => g.discipline === d)?.status;
-  const waiting = DOWNSTREAM[disc].filter((d) => !isDone(statusOf(d))).length;
+  const waiting = (DOWNSTREAM[disc] ?? []).filter((d) => !isDone(statusOf(d))).length;  // ?? [] — the setup gate has no DOWNSTREAM entry
   return waiting + (disc === "qa" ? 1 : 0);
 }
 
 function whyGate(disc: Discipline, blocks: number, relay?: RelaySummary): string {
   if (disc === "qa") return blocks ? "Last gate before ship — acceptance pending." : "Acceptance pending.";
   const down = relay
-    ? DOWNSTREAM[disc].filter((d) => !isDone(relay.gates.find((g) => g.discipline === d)?.status)).map(labelOf)
+    ? (DOWNSTREAM[disc] ?? []).filter((d) => !isDone(relay.gates.find((g) => g.discipline === d)?.status)).map(labelOf)
     : [];
   if (down.length) return `${down.join(" & ")} wait on it · ${blocks} leg${blocks === 1 ? "" : "s"} blocked.`;
   return "Your slice is ready to ratify.";
@@ -118,7 +118,7 @@ export function rankNext(input: RankInput): { startHere: NextItem | null; next: 
         });
       }
       for (const g of r.gates) {
-        const ownerless = !seated.has(g.discipline);  // orphan = NO dev seated for this lane (not merely "not on the baton yet")
+        const ownerless = !seated.has(g.discipline) && !g.delegate;  // a delegated/setup gate HAS an owner → not an orphan gap
         if (!isDone(g.status) && ownerless && !queuedKeys.has(`${r.plan_id}:${g.discipline}`)) {
           const blocks = blocksForGate(g.discipline, r);
           items.push({

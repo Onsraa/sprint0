@@ -10,9 +10,20 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import hashlib
 import os
+import posixpath
+import re
 
 from app.contracts import DriftReport, GovernanceRule, GraphEdge, GraphNode
+
+
+def normalize_and_hash(content: str) -> str:
+    """Content-addressed identity (Living Project Graph, pillar 2): collapse whitespace, sha256 → a stable id.
+    EXACT-match only — identical normalized content yields the SAME hash → one node, N reuse edges, no
+    duplication. Near-duplicate / semantically-equal-but-different code is explicitly out of scope."""
+    norm = " ".join(content.split())
+    return f"sha256:{hashlib.sha256(norm.encode('utf-8')).hexdigest()[:16]}"
 
 
 def _domain_of(path: str) -> str:
@@ -97,6 +108,128 @@ def build_python_graph(root_dir: str, project_id: str = "local") -> tuple[list[G
     edges = [GraphEdge(from_path=r, to_path=t, edge_type="import", project_id=project_id)
              for r, ts in targets_by_file.items() for t in sorted(ts)]
     return nodes, edges
+
+
+# ── Multi-language import graph from an in-memory file set (seed agency repos) ──────────────
+# Built from the {path: content} dict push_dir already produced — never re-walks disk (seed dirs can
+# contain a venv/), and guarantees edge paths are byte-identical to CodeChunks.file_path.
+_JS_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+_JS_IMPORT_RES = [
+    re.compile(r"""(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]"""),  # import x from / export {x} from
+    re.compile(r"""import\s*['"]([^'"]+)['"]"""),                          # side-effect import './x'
+    re.compile(r"""require\(\s*['"]([^'"]+)['"]\s*\)"""),                  # CommonJS require('./x')
+]
+
+
+def js_import_specifiers(src: str) -> list[str]:
+    """All import specifiers in a JS/TS source (order-preserving, deduped)."""
+    out: list[str] = []
+    for rx in _JS_IMPORT_RES:
+        for m in rx.finditer(src):
+            if m.group(1) not in out:
+                out.append(m.group(1))
+    return out
+
+
+def resolve_js_specifier(spec: str, from_path: str, known: set[str]) -> str | None:
+    """Resolve a JS/TS import specifier to a repo-relative file path. Only './', '../' and the
+    '@/' root alias resolve; bare specifiers (react, express) are external → None."""
+    if spec.startswith("@/"):
+        stem = spec[2:]
+    elif spec.startswith(("./", "../")):
+        stem = posixpath.normpath(posixpath.join(posixpath.dirname(from_path), spec))
+    else:
+        return None
+    if stem in known:
+        return stem
+    for ext in _JS_EXTS:
+        if f"{stem}{ext}" in known:
+            return f"{stem}{ext}"
+    for ext in _JS_EXTS:
+        if f"{stem}/index{ext}" in known:
+            return f"{stem}/index{ext}"
+    return None
+
+
+def _py_targets(src: str, r: str, known: set[str]) -> set[str]:
+    """Python import targets for one file, resolved against the repo-root-relative `known` set.
+    Absolute modules map directly (`from app.db import x` → app/db.py — paths ARE repo-relative, no
+    package-prefix stripping); relative imports walk up from the file's dir (same as build_python_graph)."""
+    def module_to_rel(mod: str) -> str | None:
+        stem = mod.replace(".", "/")
+        for cand in (f"{stem}.py", f"{stem}/__init__.py"):
+            if cand in known:
+                return cand
+        return None
+
+    targets: set[str] = set()
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return targets
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                t = module_to_rel(a.name)
+                if t and t != r:
+                    targets.add(t)
+        elif isinstance(n, ast.ImportFrom):
+            if n.level and n.level > 0:  # relative import: resolve against this file's dir
+                base = posixpath.dirname(r)
+                for _ in range(n.level - 1):
+                    base = posixpath.dirname(base)
+                mod_parts = n.module.split(".") if n.module else []
+                stem = "/".join([x for x in [base, *mod_parts] if x])
+                for cand in (f"{stem}.py", f"{stem}/__init__.py"):
+                    if cand in known and cand != r:
+                        targets.add(cand)
+                for a in n.names:  # `from . import sibling`
+                    c = "/".join([x for x in [base, *mod_parts, a.name] if x]) + ".py"
+                    if c in known and c != r:
+                        targets.add(c)
+            elif n.module:
+                t = module_to_rel(n.module)
+                if t and t != r:
+                    targets.add(t)
+                for a in n.names:  # `from app.pkg import submodule`
+                    t2 = module_to_rel(f"{n.module}.{a.name}")
+                    if t2 and t2 != r:
+                        targets.add(t2)
+    return targets
+
+
+def build_import_graph(files: dict[str, str], project_id: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+    """Nodes + import edges from an in-memory {repo-relative path: content} file set.
+    .py via AST, JS/TS via regex specifiers; unparseable/unresolvable imports yield a node, no edge."""
+    known = set(files)
+    nodes: list[GraphNode] = []
+    edges: list[GraphEdge] = []
+    for r in sorted(files):
+        src = files[r]
+        nodes.append(GraphNode(path=r, domain=_domain_of(r), loc=src.count("\n") + 1, project_id=project_id))
+        if r.endswith(".py"):
+            targets = _py_targets(src, r, known)
+        elif r.endswith(_JS_EXTS):
+            targets = {t for s in js_import_specifiers(src)
+                       if (t := resolve_js_specifier(s, r, known)) and t != r}
+        else:
+            continue
+        edges.extend(GraphEdge(from_path=r, to_path=t, edge_type="import", project_id=project_id)
+                     for t in sorted(targets))
+    return nodes, edges
+
+
+def one_hop_neighbors(paths: set[str], edges: list[dict], cap: int) -> list[str]:
+    """1-hop import neighbors (both directions) of `paths` over raw edge dicts — the retrieval-expansion
+    primitive (deliberately NOT the transitive dependents_of/dependencies_of BFS)."""
+    nbrs: set[str] = set()
+    for e in edges:
+        a, b = e.get("from_path"), e.get("to_path")
+        if a in paths and b and b not in paths:
+            nbrs.add(b)
+        if b in paths and a and a not in paths:
+            nbrs.add(a)
+    return sorted(nbrs)[: max(cap, 0)]
 
 
 def _adjacency(edges: list[GraphEdge], reverse: bool = False) -> dict[str, set[str]]:

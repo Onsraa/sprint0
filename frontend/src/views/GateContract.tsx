@@ -44,7 +44,8 @@ export function GateContract() {
   useEffect(() => { if ((!disc || !lanes.includes(disc)) && lanes.length) setDisc(lanes[0]); }, [lanes, disc]);
 
   const gate = (gates as any[]).find((g) => g.discipline === disc);
-  const contracts = (agreements as any[]).filter((a) => lanesOf(a).includes(disc as string));
+  // live only — a regenerate (a changed gate choice) supersedes the old contract; never show both (no dup)
+  const contracts = (agreements as any[]).filter((a) => lanesOf(a).includes(disc as string) && a.state !== "superseded" && a.state !== "rejected");
   const pending = contracts.filter((a) => a.state === "proposed").length;
   const ratifiedN = (gates as any[]).filter((g) => g.status === "ratified" || g.status === "auto_passed").length;
   const title = relaySummaries.find((r: any) => r.plan_id === planId)?.project ?? "This relay";
@@ -142,7 +143,7 @@ function EmptyContracts({ disc }: { disc: string }) {
     <div style={{ border: "0.5px dashed var(--border-strong)", borderRadius: "var(--r-lg)", padding: "26px 18px", textAlign: "center", background: "var(--bg-elevated)" }}>
       <Icon name="relay" size={20} style={{ color: "var(--border-strong)" }} />
       <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 9, lineHeight: 1.5, textWrap: "pretty" }}>
-        The <b style={{ color: "var(--text-secondary)" }}>{DISC[disc]?.label ?? disc}</b> slice neither produces nor consumes an API this plan — no Contract to sign.
+        No contract here yet. A contract is <b style={{ color: "var(--text-secondary)" }}>drafted from your gate choice</b> — ratify the <b style={{ color: "var(--text-secondary)" }}>{DISC[disc]?.label ?? disc}</b> gate to generate the API the consumer builds against. If this slice produces no API for another discipline, none is needed.
       </div>
     </div>);
 }

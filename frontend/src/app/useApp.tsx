@@ -11,7 +11,7 @@ import { useMe, useLogin } from "../features/auth/useAuth";
 import { useView, memberToRole } from "../features/nav/nav";
 import { useUI } from "../lib/store";
 import { useInbox, useMarkAllRead } from "../features/notify/useNotifications";
-import { useRelay, useRelayAuto, useRatifyGate, useDecisionCard } from "../features/relay/useRelay";
+import { useRelay, useRatifyGate, useDecisionCard } from "../features/relay/useRelay";
 import { useProjects } from "../features/projects/useProjects";
 import { useRoster } from "../features/roster/useRoster";
 import { useWork } from "../features/work/useWork";
@@ -74,15 +74,7 @@ const toMockAttribution = (a: Attribution): any => ({
 });
 const toMockGate = (g: Gate, relay?: RelayState): any => ({ ...g, baton: !!relay?.baton?.includes(g.discipline as never), depends: g.depends_on ?? [], stretched: false, owner: null });
 
-/* §10 Autonomy — a named risk posture (Cautious/Balanced/Fast) over the backend dial (~30/60/85).
-   Frees the word "trust" to mean only the passport. Manager-only (enforced server-side). */
-export const AUTONOMY_MODES = [
-  { id: "cautious", label: "Cautious", hint: "A human reviews most gates" },
-  { id: "balanced", label: "Balanced", hint: "Auto-pass clearly low-risk gates" },
-  { id: "fast", label: "Fast", hint: "Auto-pass low + medium-risk gates" },
-] as const;
-const AUTONOMY_MAP: Record<string, number> = { cautious: 30, balanced: 60, fast: 85 };
-const dialToMode = (d: number) => (d <= 45 ? "cautious" : d <= 72 ? "balanced" : "fast");
+/* (Removed: the Autonomy posture. NO auto-approval — every gate is ratified by its owner; the AI only recommends.) */
 
 export function useApp() {
   const qc = useQueryClient();
@@ -143,12 +135,6 @@ export function useApp() {
   const { data: relay } = useRelay(planId);
   const gates = useMemo(() => (relay?.gates ?? []).map((g) => toMockGate(g, relay)), [relay]);
   const integration = useMemo(() => relay?.integration_signals ?? [], [relay]);
-  const dial = useUI((s) => s.dial);
-  const setDial = useUI((s) => s.setDial);
-  const relayAuto = useRelayAuto(planId ?? "");
-  const applyDial = (d: number) => { setDial(d); if (planId) relayAuto.mutate(d); };
-  const autonomy = dialToMode(dial);
-  const setAutonomy = (m: string) => applyDial(AUTONOMY_MAP[m] ?? 60);
   const ratifyGate = useRatifyGate(planId ?? "");
   const actGate = (disc: string, status: string) => ratifyGate.mutate({ discipline: disc as never, body: { edits: [], note: "", approve: status === "ratified", reasoning: "", ai_recommendation: "", ai_confidence: null, deviated: false, deviation_reason: "" } as never });
   // reuse-or-innovate: ratify a gate by SELECTING a solution (or a write-your-own). The backend records
@@ -254,7 +240,7 @@ export function useApp() {
     me, role, chrome, view, setView, goTo, navPayload, switchPersona, members, next,
     notifs, unread, dismissNotif, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
     agreements,
-    gates, dial, applyDial, autonomy, setAutonomy, actGate, ratifyWith, cards, staffing, planId, integration, relay,
+    gates, actGate, ratifyWith, cards, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,
     profiles, confirmProfile,

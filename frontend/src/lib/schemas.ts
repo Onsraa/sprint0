@@ -87,8 +87,15 @@ export type ClarifiedSpec = z.infer<typeof ClarifiedSpec>;
 export const ArchitectureCard = z.object({
   name: z.string(), tech_stack: TechStack, summary: z.string(), rationale: z.string(),
   grounded_on: z.array(z.string()), fit_to_constraints: z.string(),
+  pros: z.array(z.string()).optional(), cons: z.array(z.string()).optional(),
+  reuse: z.array(ReuseItem).optional(),          // features from memory + the project each came from (block 3)
+  recommended: z.boolean().optional(),           // server-set: the deterministic "most proven reuse" pick
 });
-export const ArchitectureOptions = z.object({ cards: z.array(ArchitectureCard) });
+export const ArchitectureOptions = z.object({
+  cards: z.array(ArchitectureCard),
+  ai_pick_name: z.string().optional(),           // the option the AI itself would pick (may favor a fresh stack)
+  ai_pick_why: z.string().optional(),
+});
 export type ArchitectureOptions = z.infer<typeof ArchitectureOptions>;
 
 /* ── relay ───────────────────────────────────────────────────────────── */
@@ -175,6 +182,7 @@ export const UserSubscription = z.object({
 export type UserSubscription = z.infer<typeof UserSubscription>;
 export const GraphNode = z.object({
   path: z.string(), domain: z.string(), node_type: z.string(), loc: z.number(), project_id: z.string(),
+  content_hash: z.string().optional(), title: z.string().optional(), ref_project_id: z.number().nullish(),
 });
 export type GraphNode = z.infer<typeof GraphNode>;
 export const GraphEdge = z.object({ from_path: z.string(), to_path: z.string(), edge_type: z.string() });
@@ -328,7 +336,6 @@ export const InterfaceProposal = z.object({
   id: z.string(), source: z.string(), interface: InterfaceDraft,
   why: z.string().optional(), pros: z.array(z.string()).optional(), cons: z.array(z.string()).optional(),
   grounded_on: z.array(z.string()).optional(), confidence: z.number().optional(),
-  file_changes: z.array(FileChange).optional(),   // producer-side files this shape implies
 });
 export type InterfaceProposal = z.infer<typeof InterfaceProposal>;
 export const SubteamDraft = z.object({
@@ -370,6 +377,7 @@ export const Member = z.object({
   joined: z.string().nullish(),   // ISO month joined the agency (YYYY-MM) — shown on the Passport
   history: z.array(unknownRecord), promoted: z.boolean().optional(),
   availability: Availability.nullish(),   // server-computed; when they can start new work
+  needs_link: z.boolean().optional(),     // server-derived (roster): a repo-needing dev with no GitLab link
 });
 export type Member = z.infer<typeof Member>;
 /** Back-compat alias — onboarding/merge endpoints call it a profile. */

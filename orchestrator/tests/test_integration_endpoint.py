@@ -317,13 +317,14 @@ def test_jit_skips_when_not_needed(monkeypatch):
 
 
 def test_jit_compounds_on_precedent(monkeypatch):
-    # a past plan already ratified this exact shape → auto-pass + seed the producer mock now, no routing
+    # a past plan ratified this exact shape → a RECOMMENDATION (precedent_id badge), NOT auto-pass. No auto-approval:
+    # the producer still signs, so state stays proposed + no mock is seeded until they do.
     precedent = _iface_old("agPAST", "x", "y", "ratified", path="/api/v2/auth", fields=("token",))
     saved, updated, pings, applied = _genlane(monkeypatch, _opts(path="/api/v2/auth", fields=("token",)),
                                               pool=[precedent])
-    assert len(saved) == 1 and saved[0]["state"] == "auto_passed" and saved[0]["precedent_id"] == "agPAST"
-    assert len(applied) == 1 and applied[0][1] == "b1" and "token" in applied[0][2]  # the FE mock was seeded
-    assert pings == []                                                   # compounded → no one signs
+    assert len(saved) == 1 and saved[0]["state"] == "proposed" and saved[0]["precedent_id"] == "agPAST"
+    assert applied == []                                                 # no mock until the human signs
+    assert pings == ["sprint0-se"]                                       # the producer is still asked to sign
 
 
 def test_jit_leaves_superseded_contracts_alone(monkeypatch):
@@ -351,7 +352,8 @@ def test_demo_contract_options_canned_and_necessity_aware():
     from app import canned
     co = canned.contract_options_for("backend")
     assert co.needed and {p.id for p in co.proposals} == {"p-reuse", "p-fresh"}
-    assert co.proposals[0].interface.path == "/api/auth/login" and co.proposals[0].file_changes
+    assert co.proposals[0].interface.path == "/api/auth/login"             # the contract is the API shape (no files)
+    assert co.proposals[0].interface.response_fields                       # response schema is what the consumer builds against
     assert canned.contract_options_for("frontend").needed is False        # no cross-discipline API → no contract
 
 
@@ -395,3 +397,33 @@ def test_jit_consumer_completes_finalizes_mock(monkeypatch):
     assert res["state"] == "ratified"
     assert len(applied) == 1 and applied[0][1] == "b1"                   # the mock is finalized
     assert pings == []                                                   # both signed — no further ping
+
+
+def test_producer_signs_a_write_your_own_shape(monkeypatch):
+    # the producer authors the interface (no proposal id) → their shape becomes the agreed contract
+    raw = _iface_agreement()
+    async def _get(_id): return dict(raw)
+    monkeypatch.setattr(main, "get_agreement", _get)
+    monkeypatch.setattr(main, "update_agreement", lambda *a, **k: None)
+    async def _noop(*a, **k): pass
+    monkeypatch.setattr(main, "update_agreement", _noop)
+    monkeypatch.setattr(main, "notify", _noop)
+    monkeypatch.setattr(main, "_apply_api_contract", lambda *a, **k: None)
+    custom = InterfaceDraft(method="POST", path="/api/auth/custom",
+                            response_fields=[SchemaField(name="token", type="string", required=True)])
+    body = main.RatifyAgreementBody(decision="ratified", interface=custom)
+    res = asyncio.run(main.ratify_agreement("agI", body, member=_by("sprint0-se")))  # backend = producer
+    assert res["state"] == "active"
+    assert res["interface"]["path"] == "/api/auth/custom"               # the written shape is the agreed interface
+    assert res["chosen_proposal_id"] == "user"
+
+
+def test_draft_shape_seeds_the_editor(monkeypatch):
+    # the author-assist endpoint returns a draft shape to seed the write-own / counter editor (demo = a stub)
+    raw = _iface_agreement()
+    async def _get(_id): return dict(raw)
+    monkeypatch.setattr(main, "get_agreement", _get)
+    monkeypatch.setattr(main.demo, "is_demo", lambda: True)            # shared app.demo → generate_shape returns the canned stub
+    body = main.DraftShapeBody(description="login returns a jwt + refresh")
+    res = asyncio.run(main.draft_agreement_shape("agI", body, member=_by("sprint0-se")))
+    assert res["method"] and "path" in res and "response_fields" in res  # a usable draft came back

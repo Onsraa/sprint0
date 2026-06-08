@@ -25,17 +25,18 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import agreements, auth, canned, demo, gitlab, grading, graph, handoff, policy, relay, routing, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
+from app import agreements, auth, canned, corpus, dedup, demo, eventlog, gitlab, gitlab_hooks, grading, graph, handoff, lineage, policy, relay, routing, runtime, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
-    AccessGrant, Agreement, FileChange, InterfaceDraft, InterfaceProposal, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
+    AccessGrant, Agreement, InterfaceDraft, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
-from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card
-from app.execute import execute_plan, extend_project
+from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card, generate_shape
+from app.execute import execute_plan, extend_project, reserve_project, scaffold_project
+from app.graphstore import store
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
     all_decisions, decisions_for_project, delete_decision, get_decision, update_decision,
@@ -51,7 +52,9 @@ from app.rag import (
     save_reschedule_proposal, open_reschedule_proposals,
     get_reschedule_proposal, update_reschedule_proposal,
     save_agreement, agreements_for_plan, agreements_for_ratifier, get_agreement, update_agreement, all_agreements, reuse_pack,
-    reset_demo_agreements,
+    reset_demo_agreements, reset_demo_tasks, reset_demo_projects, reset_demo_graph, reset_demo_notifications,
+    reset_demo_events, embed_queries, embed_document, code_chunks_for_project, upsert_code_chunk,
+    save_state, delete_state, load_states, reset_demo_session,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
@@ -135,11 +138,87 @@ PLANS: dict[str, PlanJSON] = {}
 RELAYS: dict[str, RelayState] = {}
 RESULTS: dict[str, dict] = {}
 DELTA_TARGET: dict[str, int] = {}  # plan_id → existing project_id (mid-prod delta plans extend, not create)
+RESERVED: dict[str, dict] = {}  # plan_id → reserve result (project_id/web_url/clone_url/default_branch) — two-phase create
 DELTA_PRIORITY: dict[str, str] = {}  # plan_id → feature priority (urgent → its tasks preempt planned work)
 PROJECTS: dict[int, PlanJSON] = {}  # project_id → live plan (for QA review + mid-prod, this session)
 REQA: dict[int, set] = {}  # project_id → reopened issue iids awaiting re-QA (the reject→fix→re-QA loop)
 SOLUTIONS: dict[tuple[str, str], SolutionSet] = {}  # (plan_id, discipline) → cached reuse-or-innovate set (lazy)
 CHOSEN: dict[tuple[str, str], SolutionCard] = {}    # (plan_id, discipline) → the ratified solution pick
+
+
+# ── Durability: the workflow dicts above stay the fast read cache (hot paths never hit Mongo), but every
+# WRITE also persists THROUGH to the SessionState collection so a restart loses nothing. Rehydrated on
+# startup. Best-effort — a snapshot write never fails the request. ──
+async def _persist(store: str, key, value: dict) -> None:
+    try:
+        await save_state(store, str(key), value)
+    except Exception:
+        pass
+
+
+async def _unpersist(store: str, key) -> None:
+    try:
+        await delete_state(store, str(key))
+    except Exception:
+        pass
+
+
+async def _persist_relay(plan_id: str) -> None:
+    """Snapshot the in-flight plan + relay after an in-place mutation (ratify/handoff/integration-flag)."""
+    if plan_id in PLANS:
+        await _persist("plans", plan_id, PLANS[plan_id].model_dump())
+    if plan_id in RELAYS:
+        await _persist("relays", plan_id, RELAYS[plan_id].model_dump())
+
+
+async def _rehydrate_session() -> None:
+    """LIVE startup: rebuild the in-memory workflow dicts from their durable SessionState snapshots, so an
+    in-flight wizard / open relay / reserved project / re-QA queue / attribution queue survives a restart."""
+    async def _load(store: str) -> dict:
+        try:
+            return await load_states(store)
+        except Exception:
+            return {}
+
+    for bid, v in (await _load("briefs")).items():
+        BRIEFS[bid] = v.get("v", "")
+    for bid, v in (await _load("specs")).items():
+        try: SPECS[bid] = ClarifiedSpec(**v)
+        except Exception: pass
+    for bid, v in (await _load("archs")).items():
+        try: ARCHS[bid] = ArchitectureOptions(**v)
+        except Exception: pass
+    for pid, v in (await _load("plans")).items():
+        try: PLANS[pid] = PlanJSON(**v)
+        except Exception: pass
+    for pid, v in (await _load("relays")).items():
+        try: RELAYS[pid] = RelayState(**v)
+        except Exception: pass
+    for pid, v in (await _load("results")).items():
+        RESULTS[pid] = v
+    for pid, v in (await _load("reserved")).items():
+        RESERVED[pid] = v
+    for pid, v in (await _load("delta_target")).items():
+        try: DELTA_TARGET[pid] = int(v["v"])
+        except Exception: pass
+    for pid, v in (await _load("delta_priority")).items():
+        DELTA_PRIORITY[pid] = v.get("v", "normal")
+    for k, v in (await _load("chosen")).items():
+        try:
+            _pid, _disc = k.split("|", 1)
+            CHOSEN[(_pid, _disc)] = SolutionCard(**v)
+        except Exception: pass
+    for k, v in (await _load("solutions")).items():
+        try:
+            _pid, _disc = k.split("|", 1)
+            SOLUTIONS[(_pid, _disc)] = SolutionSet(**v)
+        except Exception: pass
+    for pid, v in (await _load("reqa")).items():
+        try: REQA[int(pid)] = set(v.get("v", []))
+        except Exception: pass
+    _att = (await _load("attributions")).get("_all")
+    if _att and isinstance(_att.get("v"), list):
+        ATTRIBUTIONS[:] = _att["v"]
 
 
 def _dev_trust() -> dict[str, dict]:
@@ -201,62 +280,39 @@ async def _seed_demo() -> None:
     pid, plan_id = canned.DEMO_PROJECT_ID, canned.DEMO_PLAN_ID
     PLANS[plan_id] = plan
     PROJECTS[pid] = plan
-    RELAYS[plan_id] = relay.build_relay(plan)
-    relay.auto_pass(RELAYS[plan_id], plan, _dev_trust(), 65, edges=None)  # posture clears low-risk gates → a mid-flight board, not all-grey
-    # Seed the backend↔frontend auth Contract so the Gate × Contract page shows its "× Contract" half
-    # (E1-2 frontend consumes E1-1's auth API). Producer (backend) has signed; the consumer's sign is pending.
+    RELAYS[plan_id] = relay.build_relay(plan)  # gates start pending (stage-0) / locked (downstream) — NO auto-pass; the human ratifies each
+    # Contracts are JIT — generated when the producer ratifies its gate (_generate_contracts_for_lane runs in
+    # demo too, via canned options). No pre-seed → the Gate × Contract "× Contract" half is empty until the
+    # backend ratifies its gate, which is the point: the contract follows the choice.
     reset_demo_agreements()
-    _auth_jwt = InterfaceDraft(
-        method="POST", path="/api/auth/login",
-        request_fields=[{"name": "email"}, {"name": "password"}],  # type: ignore[list-item]
-        response_fields=[{"name": "access_token"}, {"name": "refresh_token"}, {"name": "expires_in", "type": "integer"}],  # type: ignore[list-item]
-        errors=["401 invalid_credentials", "429 rate_limited"],
-        note="Token in the body — the frontend stores + refreshes it.",
-    )
-    _auth_session = InterfaceDraft(
-        method="POST", path="/api/auth/session",
-        request_fields=[{"name": "email"}, {"name": "password"}],  # type: ignore[list-item]
-        response_fields=[{"name": "user_id"}, {"name": "expires_in", "type": "integer"}],  # type: ignore[list-item]
-        errors=["401 invalid_credentials"],
-        note="Cookie session — no token handling in the frontend.",
-    )
-    await save_agreement(Agreement(
-        id="agr-demo-auth", type="interface", plan_id=plan_id, subject="Auth API — login",
-        # PROPOSED + unsigned → the backend producer lands on the picker (choose a shape, then sign). Ratifying the
-        # backend gate regenerates this from the choice (_generate_contracts_for_lane runs in demo too).
-        interface=_auth_jwt, chosen_proposal_id=None, state="proposed",
-        proposals=[
-            InterfaceProposal(id="p-reuse", source="memory", interface=_auth_jwt,
-                why="Reuse QuantaPay's proven login response", pros=["Battle-tested", "Fields the FE already knows"],
-                cons=["Token handling on the FE"], grounded_on=["QuantaPay (2024)"], confidence=84,
-                file_changes=[FileChange(path="services/auth/jwt.py", change="modify"), FileChange(path="api/routes/auth.py", change="add")]),
-            InterfaceProposal(id="p-fresh", source="ai", interface=_auth_session,
-                why="Cookie session instead of a token in the body", pros=["No token handling on the FE"],
-                cons=["Needs CSRF protection"], confidence=62,
-                file_changes=[FileChange(path="services/auth/session.py", change="add"), FileChange(path="api/routes/auth.py", change="add")]),
-        ],
-        ratifiers=["sprint0-se", "sprint0-fe"], ratifications=[],
-        producer_issue_id="E1-1", consumer_issue_id="E1-2",
-        producer_discipline="backend", consumer_discipline="frontend", created_at=now,
-    ).model_dump())
     objs = tasklib.materialize_tasks(plan, pid, now)
     for t, st in zip(objs, ["done", "done", "in_review", "in_progress", "in_progress"]):
         t.status = st  # a lively board; the rest stay planned
     scheduler.schedule_tasks(objs, team.all_members(), now)
     await save_tasks([o.model_dump() for o in objs])
+    reset_demo_graph()  # Living Project Graph: rebuild the reuse-lineage graph from canned (1 feature, 3 derived_from)
+    await save_graph(canned.LINEAGE_NODES, canned.LINEAGE_EDGES, canned.LINEAGE_PID)
 
 
 @app.post("/api/demo/reset")
 async def demo_reset(_: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    """DEMO-only: wipe this session's mutations (handoffs, ratifies, reassignments) back to the clean
-    canned mid-flight board. Re-runs the same _seed_demo() used at startup + drops cached gate picks."""
+    """DEMO-only: a FULL wipe back to the clean canned board — drops EVERYTHING this session created
+    (briefs, plans, dispatched projects + their tasks + contracts, attributions, gate picks), then re-seeds.
+    Anything you made from a brief is gone; only the seeded board remains."""
     if not demo.is_demo():
         raise HTTPException(403, "reset is demo-mode only")
-    plan_id = canned.DEMO_PLAN_ID
-    for d in ("uiux", "backend", "devops", "frontend", "qa"):
-        CHOSEN.pop((plan_id, d), None)
-        SOLUTIONS.pop((plan_id, d), None)
-    await _seed_demo()  # rebuilds PLANS/PROJECTS/RELAYS (fresh gates, no delegate) + re-materializes tasks
+    for store in (BRIEFS, SPECS, ARCHS, PLANS, RELAYS, RESULTS, DELTA_TARGET, DELTA_PRIORITY,
+                  PROJECTS, REQA, SOLUTIONS, CHOSEN):
+        store.clear()
+    ATTRIBUTIONS.clear()
+    reset_demo_tasks()        # drop session-created tasks (dispatched + drafts)
+    reset_demo_agreements()   # drop session-created interface contracts
+    reset_demo_projects()     # drop session-dispatched project records
+    reset_demo_notifications()  # drop session-generated bell pings (canned feed re-adds itself)
+    reset_demo_events()       # drop the session event log (the LPG spine)
+    reset_demo_session()      # drop the persisted session snapshot (briefs/plans/relays/… write-through)
+    reset_demo_graph()        # drop any session-built graph (the lineage graph is re-seeded below)
+    await _seed_demo()        # rebuild the clean seeded board (fresh gates, tasks, lineage graph) — the only thing left
     return {"ok": True}
 
 
@@ -300,6 +356,25 @@ async def _startup() -> None:
             pass
         try:
             await dedup_notifications()  # collapse any historical duplicate notifications (one-shot cleanup)
+        except Exception:
+            pass
+        try:  # durability: rehydrate ALL workflow dicts from their SessionState snapshots (authoritative)
+            await _rehydrate_session()
+        except Exception:
+            pass
+        try:  # durable runtime (P8): event-spine rebuild fills any gap NOT covered by a snapshot (setdefault)
+            _plans, _relays = runtime.rebuild_runtime(await all_events(limit=100_000))
+            for _pid, _pl in _plans.items():
+                PLANS.setdefault(_pid, _pl)
+            for _pid, _st in _relays.items():
+                RELAYS.setdefault(_pid, _st)
+        except Exception:
+            pass
+        try:  # durability: the orphan-sweep above dropped the prior process's draft tasks (the _plan_pid
+            # placeholder is per-process), so re-materialize drafts for every rehydrated in-flight plan —
+            # the Work hub shows planned work again after a restart (idempotent: clears this plan's prior first).
+            for _pid, _pl in list(PLANS.items()):
+                await _persist_draft_tasks(_pl, _pid)
         except Exception:
             pass
     except Exception:
@@ -480,8 +555,8 @@ async def inbox(member: DeveloperProfile = Depends(auth.current_member)) -> dict
         notes = await notifications_for_user(member.username)
     except Exception:
         notes = []
-    if demo.is_demo():
-        notes = [dict(n) for n in canned.CANNED_INBOX]
+    if demo.is_demo():  # canned feed + this session's runtime pings (notifications_for_user already filtered to me)
+        notes = [dict(n) for n in canned.CANNED_INBOX] + notes
     notes.sort(key=lambda n: n.get("created_at", ""), reverse=True)
     unread = len(needs_action) + sum(1 for n in notes if not n.get("read"))
     return {"needs_action": needs_action, "notifications": notes, "unread": unread}
@@ -632,8 +707,16 @@ async def list_projects(_: DeveloperProfile = Depends(auth.current_member)) -> d
     """All repos in the demo group (real source of truth). A repo with a ProjectRecord is
     sprint0-managed → kind=active (full plan/status/counts); the rest (agency seed repos) are
     kind=reference, enriched from PastProjects memory. Falls back to ProjectRecords if GitLab is down."""
-    if demo.is_demo():  # no GitLab/Atlas on the public tier → serve the canned workspace
-        return {"count": len(canned.CANNED_PROJECTS), "projects": [dict(p) for p in canned.CANNED_PROJECTS]}
+    if demo.is_demo():  # no GitLab/Atlas on the public tier → canned workspace + THIS session's dispatched projects
+        out = [dict(p) for p in canned.CANNED_PROJECTS]
+        seen = {p["project_id"] for p in out}
+        try:
+            for rec in await all_project_records():  # _DEMO_PROJECTS — wizard-created, newest on top
+                if rec.get("project_id") not in seen:
+                    out.insert(0, {**rec, "kind": "active"})
+        except Exception:
+            pass
+        return {"count": len(out), "projects": out}
     try:
         repos = await run_in_threadpool(gitlab.list_group_projects)
     except Exception:
@@ -704,6 +787,7 @@ async def create_brief(text: Optional[str] = Form(None), file: Optional[UploadFi
         raise HTTPException(400, "empty brief")
     bid = f"brief_{uuid.uuid4().hex[:8]}"
     BRIEFS[bid] = content
+    await _persist("briefs", bid, {"v": content})
     return {"brief_id": bid}
 
 
@@ -735,17 +819,20 @@ async def get_architectures(brief_id: str) -> ArchitectureOptions:
 
 @app.post("/api/briefs/{brief_id}/clarify", response_model=ClarifiedSpec)
 async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
+                  _: DeveloperProfile = Depends(auth.current_manager),
                   _t: None = Depends(_ai_throttle)) -> ClarifiedSpec:
     """Intake: extract the spec, flag unclear features as ambiguity cards, propose reuse."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
     spec = await clarify_brief(BRIEFS[brief_id], constraints or Constraints())
     SPECS[brief_id] = spec
+    await _persist("specs", brief_id, spec.model_dump())
     return spec
 
 
 @app.post("/api/briefs/{brief_id}/clarify/resolve", response_model=ClarifiedSpec)
-async def resolve_clarify(brief_id: str, res: ClarifyResolution) -> ClarifiedSpec:
+async def resolve_clarify(brief_id: str, res: ClarifyResolution,
+                          _: DeveloperProfile = Depends(auth.current_manager)) -> ClarifiedSpec:
     """Manager answers the ambiguity cards (id → resolution); folds into the living spec."""
     spec = SPECS.get(brief_id)
     if spec is None:
@@ -753,17 +840,20 @@ async def resolve_clarify(brief_id: str, res: ClarifyResolution) -> ClarifiedSpe
     for amb in spec.ambiguities:
         if amb.id in res.answers:
             amb.resolution = res.answers[amb.id]
+    await _persist("specs", brief_id, spec.model_dump())
     return spec
 
 
 @app.post("/api/briefs/{brief_id}/architectures", response_model=ArchitectureOptions)
 async def architectures(brief_id: str, constraints: Optional[Constraints] = None,
+                        _: DeveloperProfile = Depends(auth.current_manager),
                         _t: None = Depends(_ai_throttle)) -> ArchitectureOptions:
     """Idea 1: 2-3 grounded Architecture Cards for the manager to pick from."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
     opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints())
     ARCHS[brief_id] = opts  # cache for wizard resume
+    await _persist("archs", brief_id, opts.model_dump())
     return opts
 
 
@@ -796,6 +886,20 @@ async def _persist_draft_tasks(plan: PlanJSON, plan_id: str) -> None:
         pass  # mirrors save_project_record — never fail planning over persistence
 
 
+def _reflow_change_events(rows: list[dict]) -> list[ChangeEvent]:
+    """The event spine now also carries Living-Project-Graph events (plan_created, gitlab_*, reuse_recorded,
+    corpus_reembedded, node_retired …) whose `kind` isn't a ChangeEvent kind. The reflow engine only consumes
+    calendar/work/assignment ChangeEvents, so skip anything that doesn't parse — never let a spine event break
+    scheduling."""
+    out: list[ChangeEvent] = []
+    for e in rows:
+        try:
+            out.append(ChangeEvent(**e))
+        except Exception:
+            pass
+    return out
+
+
 @app.post("/api/briefs/{brief_id}/plan")
 async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
     if brief_id not in BRIEFS:
@@ -805,7 +909,13 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
     plan = await run_brief(BRIEFS[brief_id], chosen_stack=req.chosen_stack, constraints=req.constraints)
     plan_id = f"plan_{brief_id}"
     PLANS[plan_id] = plan
-    RELAYS[plan_id] = relay.build_relay(plan)  # the one-shot output is now a DRAFT entering the relay
+    RELAYS[plan_id] = relay.build_relay(plan, setup_owner=req.setup_owner)  # +setup gate if the stack was redirected to a lead
+    await _persist_relay(plan_id)  # durable: snapshot the plan + open relay so they survive a restart
+    try:  # durable runtime (P8): the spine records the plan so an in-flight relay survives a restart
+        await eventlog.emit("plan_created", created_at=datetime.now(timezone.utc).isoformat(),
+                            payload={"plan_id": plan_id, "plan": plan.model_dump()})
+    except Exception:
+        pass
     await _persist_draft_tasks(plan, plan_id)
     await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
     return {"plan_id": plan_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
@@ -890,9 +1000,8 @@ async def _generate_contracts_for_lane(plan_id: str, plan: PlanJSON, discipline:
                 state="proposed", created_at=now, updated_at=now)
             a.ratifiers = agreements.ratifiers_for(a, members)
             precedent = agreements.find_precedent(a.model_dump(), pool)
-            if precedent:                                     # COMPOUND: this exact shape already ratified → auto-pass + seed the mock
-                a.state, a.precedent_id = "auto_passed", precedent
-                _apply_api_contract(plan_id, prod_id, json.dumps(agreements.mock_from_schema(top.response_fields)))
+            if precedent:                                     # COMPOUND → a RECOMMENDATION (not auto-pass): badge it; the producer still signs
+                a.precedent_id = precedent                    # state stays "proposed"; no mock seeded until the human signs
             for old in prior:
                 await update_agreement(old["id"], {"state": "superseded", "superseded_by": a.id, "updated_at": now})
             await save_agreement(a.model_dump())
@@ -919,7 +1028,8 @@ async def my_agreements(member: DeveloperProfile = Depends(auth.current_member))
 class RatifyAgreementBody(BaseModel):
     decision: Literal["ratified", "rejected"] = "ratified"
     note: str = ""
-    chosen_proposal_id: Optional[str] = None   # producer: which reuse/fresh/write-own shape they sign
+    chosen_proposal_id: Optional[str] = None   # producer: which reuse/fresh shape they sign…
+    interface: Optional[InterfaceDraft] = None # …or a written-from-scratch shape (write-your-own)
 
 
 class CounterAgreementBody(BaseModel):
@@ -943,10 +1053,13 @@ async def ratify_agreement(agreement_id: str, body: RatifyAgreementBody,
     now = datetime.now(timezone.utc).isoformat()
     is_producer = member.discipline is not None and member.discipline == a.producer_discipline
     # the producer picks WHICH shape they're signing (reuse / fresh / write-your-own) → becomes the agreed interface
-    if is_producer and body.decision == "ratified" and body.chosen_proposal_id:
-        chosen = next((p for p in a.proposals if p.id == body.chosen_proposal_id), None)
-        if chosen:
-            a.interface, a.chosen_proposal_id = chosen.interface, chosen.id
+    if is_producer and body.decision == "ratified":
+        if body.interface is not None:                       # write-your-own → the producer authored the shape
+            a.interface, a.chosen_proposal_id = body.interface, "user"
+        elif body.chosen_proposal_id:
+            chosen = next((p for p in a.proposals if p.id == body.chosen_proposal_id), None)
+            if chosen:
+                a.interface, a.chosen_proposal_id = chosen.interface, chosen.id
     agreements.apply_ratification(a, member.username, body.decision, body.note, now, is_producer=is_producer)
     if a.type == "interface" and a.interface and a.producer_issue_id:
         mock = json.dumps(agreements.mock_from_schema(a.interface.response_fields))
@@ -992,6 +1105,27 @@ async def counter_agreement(agreement_id: str, body: CounterAgreementBody,
     return a.model_dump()
 
 
+class DraftShapeBody(BaseModel):
+    description: str = ""
+
+
+@app.post("/api/agreements/{agreement_id}/draft-shape")
+async def draft_agreement_shape(agreement_id: str, body: DraftShapeBody,
+                                member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Author-assist: draft an interface shape from a one-line description, to SEED the write-your-own / counter
+    editor. The human always edits + signs — this is a starting point, not an auto-decision (demo returns a stub)."""
+    raw = await get_agreement(agreement_id)
+    if not raw:
+        raise HTTPException(404, "agreement not found")
+    a = Agreement(**raw)
+    prompt = (f"SUBJECT: {a.subject}\n"
+              f"PRODUCER: {a.producer_discipline}  CONSUMER: {a.consumer_discipline}\n"
+              f"DESCRIPTION: {(body.description or '').strip()[:200]}\n"
+              f"Draft the interface the consumer needs from the producer.")
+    draft = await generate_shape(prompt)
+    return draft.model_dump()
+
+
 @app.post("/api/plans/{plan_id}/agreements/verify")
 async def verify_agreements(plan_id: str, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """The VERIFY beat (memory→ratify→verify→compound): shape-check each ratified interface contract's
@@ -1022,6 +1156,7 @@ async def verify_agreements(plan_id: str, member: DeveloperProfile = Depends(aut
             if prod.assignee:
                 await notify(prod.assignee, "qa_failed", f"Contract violation · {raw.get('subject')}",
                              body="; ".join(viol), ref={"plan_id": plan_id, "issue_id": prod.id}, actionable=True)
+    await _persist_relay(plan_id)  # durable: a contract-violation integration signal survives a restart
     return {"checked": len(results), "violations": len([r for r in results if not r["ok"]]), "results": results}
 
 
@@ -1048,19 +1183,8 @@ async def get_relay(plan_id: str) -> RelayState:
     return RELAYS[plan_id]
 
 
-class DialRequest(BaseModel):
-    dial: int = 70
-
-
-@app.post("/api/plans/{plan_id}/relay/auto", response_model=RelayState)
-async def apply_dial(plan_id: str, req: DialRequest,
-                     _: DeveloperProfile = Depends(auth.current_manager)) -> RelayState:
-    """Manager-only: set the AI-autonomy posture → auto-pass every gate whose slice clears trust×risk."""
-    state, plan = RELAYS.get(plan_id), PLANS.get(plan_id)
-    if state is None or plan is None:
-        raise HTTPException(404, "plan not found")
-    relay.auto_pass(state, plan, _dev_trust(), req.dial, edges=await _routing_edges())
-    return state
+# (Removed: the Autonomy dial / auto-pass endpoint. NO auto-approval — the human ratifies every gate, the AI only
+#  recommends. A manager can't sensibly pre-approve a plan they haven't read.)
 
 
 @app.post("/api/plans/{plan_id}/ratify/{discipline}", response_model=RelayState)
@@ -1082,12 +1206,21 @@ async def ratify_gate(
         raise HTTPException(403, f"only this gate's owner ({_gate.delegate or discipline + ' lead'}) or the manager can ratify it")
     if next(g.status for g in state.gates if g.discipline == discipline) == "blocked":
         raise HTTPException(409, "gate is blocked by an open integration failure — mark it api-ok first")
+    if discipline == "setup" and req.tech_stack is not None:  # the redirected lead confirms or OVERRIDES the stack
+        plan.tech_stack = req.tech_stack                      # propagates to the scaffold (README/focus) at relay-close
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
+    try:  # durable runtime (P8): record the ratification so the relay's progress survives a restart
+        await eventlog.emit("gate_ratified", created_at=datetime.now(timezone.utc).isoformat(),
+                            payload={"plan_id": plan_id, "discipline": discipline,
+                                     "approve": req.approve, "note": req.note})
+    except Exception:
+        pass
     chosen = req.chosen_solution
-    if req.approve:  # capture the pick + a durable Decision record (reasoning memory) — only on approval
+    if req.approve and discipline != "setup":  # the setup gate has no discipline slice/Decision — it just sets the stack
         sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
         if chosen is not None:  # reuse-or-innovate: record the pick
             CHOSEN[(plan_id, discipline)] = chosen
+            await _persist("chosen", f"{plan_id}|{discipline}", chosen.model_dump())  # durable
             pre_files = soln.gate_slice_files(plan, discipline)  # footprint before the choice
             if chosen.source == "user":  # write-your-own → the AI rewrites THIS gate's issues to match
                 try:
@@ -1104,6 +1237,7 @@ async def ratify_gate(
                 except Exception:
                     pass  # best-effort; the choice is still recorded
                 SOLUTIONS.pop((plan_id, discipline), None)  # cached set is stale after a rewrite
+                await _unpersist("solutions", f"{plan_id}|{discipline}")
             # Cross-gate impact: ONLY when the choice ADDED files (a user rewrite) that touch another gate.
             # A memory/ai pick changes no files → never bounces another discipline's already-ratified gate.
             added = sorted(soln.gate_slice_files(plan, discipline) - pre_files)
@@ -1151,6 +1285,13 @@ async def ratify_gate(
         for a in sorted({i.assignee for e in plan.epics for i in e.issues if i.assignee}):
             await notify(a, "task_completed", f"{plan.project_name}: all relay gates ratified", ref={"plan_id": plan_id})
             await notify_watchers(a, "completed", f"{plan.project_name} cleared the relay", ref={"plan_id": plan_id})
+        if plan_id in RESERVED or plan_id in DELTA_TARGET:  # two-phase: the relay just CLOSED → auto-scaffold to GitLab
+            try:
+                pid = (RESERVED.get(plan_id) or {}).get("project_id") or DELTA_TARGET.get(plan_id)
+                await _finalize_scaffold(plan_id, plan, project_id=pid)  # issues/branches/focus/QA + real tasks + pop relay
+            except Exception:
+                pass  # a scaffold failure must never 500 the lead's ratify — surfaced via notifications
+    await _persist_relay(plan_id)  # durable: snapshot the plan + relay after this ratify (no-op if a scaffold just popped it)
     return state
 
 
@@ -1261,6 +1402,7 @@ async def flag_integration(
         await notify_watchers(target_issue.assignee, "qa_failed",
                               f"@{target_issue.assignee}'s API flagged failing: {target_issue.title}",
                               ref={"plan_id": plan_id, "issue_id": target_issue.id})
+    await _persist_relay(plan_id)  # durable: the integration signal (qa blocked) survives a restart
     return state.model_dump()
 
 
@@ -1297,6 +1439,16 @@ async def gate_candidates(plan_id: str, discipline: str, member: DeveloperProfil
     await team.ensure_loaded()
     members = await _attach_availability(team.all_members())
     return {"plan_id": plan_id, "discipline": discipline, "candidates": _rank_candidates(discipline, members, exclude=member.username)}
+
+
+@app.get("/api/architects")
+async def architects(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Roster ranked as potential STACK deciders — for the architecture step, when the manager wants to
+    redirect the stack choice to a lead instead of picking it themselves. Ranked by tech-lead fit (backend-lane
+    trust + seniority + availability), so the manager sees a %-match dropdown. Available pre-plan."""
+    await team.ensure_loaded()
+    members = await _attach_availability(team.all_members())
+    return {"candidates": _rank_candidates("backend", members)}
 
 
 @app.post("/api/plans/{plan_id}/gates/{discipline}/handoff", response_model=RelayState)
@@ -1339,6 +1491,7 @@ async def handoff_gate(plan_id: str, discipline: str, assignee: str = "", member
                      ref={"plan_id": plan_id, "discipline": discipline}, actionable=True)
         await notify_watchers(new, "assigned", f"@{new} took the {discipline} gate on {plan.project_name}",
                               ref={"plan_id": plan_id, "discipline": discipline})
+    await _persist_relay(plan_id)  # durable: the delegate + slice reassignment survive a restart
     return state
 
 
@@ -1392,6 +1545,7 @@ async def gate_solutions(
         c.signal = grading.signal_for(c)
     sset.chosen = CHOSEN.get(key)   # the ratified pick → the done-gate review shows it (None when auto-passed)
     SOLUTIONS[key] = sset
+    await _persist("solutions", f"{key[0]}|{key[1]}", sset.model_dump())  # durable cache
     return sset
 
 
@@ -1451,6 +1605,7 @@ async def approve_plan(plan_id: str, req: ApproveRequest, _: DeveloperProfile = 
     seeds = await _build_reuse_seeds(plan_id, plan)
     result = await run_in_threadpool(lambda: execute_plan(plan, reuse_seeds=seeds))
     RESULTS[plan_id] = result
+    await _persist("results", plan_id, result)
     return {"plan_id": plan_id, "mode": req.mode, **result}
 
 
@@ -1480,17 +1635,13 @@ async def dispatch_preview(plan_id: str) -> dict:
     }
 
 
-@app.post("/api/plans/{plan_id}/dispatch")
-async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
-    """Scaffold (or, for a delta plan, extend) once the relay clears. Persists a ProjectRecord."""
-    plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
-    if plan is None or state is None:
-        raise HTTPException(404, "plan not found")
-    if req.mode == "autonomous":
-        relay.auto_pass(state, plan, _dev_trust(), 100, edges=await _routing_edges())
-    if not relay.all_ratified(state):
-        pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
-        raise HTTPException(409, f"Sign the Contract for {len(pending)} open gate(s) first: {', '.join(pending)}.")
+async def _finalize_scaffold(plan_id: str, plan: PlanJSON, *, project_id: int | None = None) -> dict:
+    """Phase 2 (the relay has CLOSED): scaffold the real GitLab infra — issues, branches, focus files, QA —
+    onto a project, re-key the draft tasks → real (in_progress), persist the record, then drop the relay from
+    the in-flight board. Called by the dispatch endpoint AND the ratify-close hook. `project_id`: a delta
+    target / a reserved pid; None = create fresh (reserve+scaffold in one). Idempotent (RELAYS-absent guard)."""
+    if plan_id not in RELAYS:  # already finalized (a re-ratify after the relay was popped) → no double-scaffold
+        return RESULTS.get(plan_id, {})
     seeds = await _build_reuse_seeds(plan_id, plan)  # reuse layer-2: adapted reference code → focus branches
     if plan_id in DELTA_TARGET:  # mid-prod: append to the existing project
         pid = DELTA_TARGET[plan_id]
@@ -1498,7 +1649,7 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
         result["project_id"] = pid
         if pid in PROJECTS:  # grow the live plan so QA + later deltas see the new issues
             PROJECTS[pid].epics.extend(plan.epics)
-        try:  # refresh the durable record so the NEXT feature-add grounds on current titles + files, not the dispatch-day snapshot
+        try:  # refresh the durable record so the NEXT feature-add grounds on current titles + files
             rec = await get_project_record(pid)
             if rec and rec.get("plan"):
                 merged = PlanJSON(**rec["plan"])
@@ -1506,23 +1657,42 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
                 await update_project_record(pid, {"plan": merged.model_dump(), "module_manifest": _manifest_of(merged)})
         except Exception as e:
             result["persist_warning"] = str(e)[:200]
-    else:
+    elif project_id is not None:  # RESERVED project (two-phase): scaffold the heavy infra onto the empty repo
+        reserved = RESERVED.get(plan_id) or {}
+        result = await run_in_threadpool(lambda: scaffold_project(
+            plan, project_id, web_url=reserved.get("web_url", ""), clone_url=reserved.get("clone_url", ""),
+            default_branch=reserved.get("default_branch", "main"), reuse_seeds=seeds))
+        result["project_id"] = project_id
+        result.setdefault("web_url", reserved.get("web_url", ""))
+        PROJECTS[project_id] = plan
+        try:  # flip reserved → in_progress + refresh plan/stack/manifest (the stack may have changed at the setup gate)
+            await update_project_record(project_id, {"status": "in_progress", "plan": plan.model_dump(),
+                                                     "tech_stack": plan.tech_stack.model_dump(),
+                                                     "module_manifest": _manifest_of(plan)})
+        except Exception as e:
+            result["persist_warning"] = str(e)[:200]
+        try:
+            await record_reuse_lineage(plan_id, plan, project_id)
+        except Exception:
+            pass
+    else:  # legacy single-shot: reserve + scaffold now (no prior reservation)
         result = await run_in_threadpool(lambda: execute_plan(plan, reuse_seeds=seeds))
         PROJECTS[result["project_id"]] = plan
-        manifest = _manifest_of(plan)
         record = ProjectRecord(
             project_id=result["project_id"], name=plan.project_name, web_url=result.get("web_url", ""),
-            tech_stack=plan.tech_stack, grounded_on=plan.grounded_on, plan=plan, module_manifest=manifest,
+            tech_stack=plan.tech_stack, grounded_on=plan.grounded_on, plan=plan, module_manifest=_manifest_of(plan),
         )
         rec = record.model_dump()
         rec["created_at"] = datetime.now(timezone.utc).isoformat()
         try:
             await save_project_record(rec)
-        except Exception as e:  # persistence is best-effort; never fail the scaffold over it
+        except Exception as e:
             result["persist_warning"] = str(e)[:200]
-    # Re-key the plan's Tasks from the pre-dispatch placeholder to the real GitLab project_id and
-    # flip to in_progress. Delta plans APPEND to the existing project's tasks (don't wipe them).
-    # iid linking is best-effort: execute_plan returns counts, not an issue list → Phase D reconciles.
+        try:  # Living Project Graph: record content-addressed reuse lineage (derived_from)
+            await record_reuse_lineage(plan_id, plan, result["project_id"])
+        except Exception:
+            pass
+    # Re-key the plan's Tasks from the placeholder to the real project_id + flip to in_progress.
     try:
         real_pid = result["project_id"]
         now = datetime.now(timezone.utc).isoformat()
@@ -1536,11 +1706,9 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
             if feat_pri:
                 o.priority = feat_pri
         await team.ensure_loaded()
-        avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+        avail = scheduler.blocked_days(_reflow_change_events(await all_events()))
         scheduler.schedule_tasks(objs, team.all_members(), now, availability=avail)  # availability-aware
         await save_tasks([o.model_dump() for o in objs])
-        # Tier A: re-pack the whole project (existing + new) around REAL availability — new work now
-        # respects the team's calendar + roadmap instead of being scheduled in isolation.
         prior = {d["id"]: (d.get("scheduled_start"), d.get("scheduled_end")) for d in await tasks_for_project(real_pid)}
         await _reschedule_project(real_pid)
         if plan_id in DELTA_TARGET:  # a feature shifted the existing roadmap → propose the impact to the manager
@@ -1554,11 +1722,77 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
                 pass
             await _maybe_strategize(ev, moved, prior)
     except Exception:
-        pass  # never block dispatch on task persistence
+        pass  # never block the scaffold on task persistence
     RESULTS[plan_id] = result
+    await _persist("results", plan_id, result)
+    try:  # durable runtime: scaffolded → leaves the in-flight pool on replay (PROJECTS owns it now)
+        await eventlog.emit("plan_scaffolded", created_at=datetime.now(timezone.utc).isoformat(),
+                            payload={"plan_id": plan_id, "project_id": result.get("project_id")})
+    except Exception:
+        pass
     # The relay is FINISHED → drop it from the in-flight board (the project now lives in Projects + Tester).
     RELAYS.pop(plan_id, None)
     PLANS.pop(plan_id, None)
+    RESERVED.pop(plan_id, None)
+    DELTA_TARGET.pop(plan_id, None)      # a finished delta → drop its target link + priority (no longer in-flight)
+    DELTA_PRIORITY.pop(plan_id, None)
+    for _s in ("plans", "relays", "reserved", "delta_target", "delta_priority"):  # durable: the finished relay leaves the in-flight snapshot too
+        await _unpersist(_s, plan_id)
+    return result
+
+
+@app.post("/api/plans/{plan_id}/reserve")
+async def reserve_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """Phase 1 of two-phase create (the wizard 'Create'): RESERVE the GitLab project — an empty repo, name
+    only — and KEEP the relay OPEN so the leads ratify their gates live. The real scaffold (issues, branches,
+    focus files, QA + the work tasks) fires AUTOMATICALLY when the relay closes (the last gate's ratify).
+    No GitLab work here beyond the empty repo; nothing is auto-approved."""
+    plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
+    if plan is None or state is None:
+        raise HTTPException(404, "plan not found")
+    if plan_id in RESERVED:  # idempotent — already reserved
+        r = RESERVED[plan_id]
+        return {"project_id": r["project_id"], "web_url": r.get("web_url", ""), "relay_open": True}
+    if req.project_name and req.project_name.strip():  # the manager validated/edited the AI-filled name
+        plan.project_name = req.project_name.strip()[:80]
+    res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))
+    RESERVED[plan_id] = res
+    await _persist("reserved", plan_id, res)          # durable: survive a restart between reserve and close
+    await _persist_relay(plan_id)                     # the (possibly edited) name lives on the plan snapshot
+    PROJECTS[res["project_id"]] = plan
+    record = ProjectRecord(
+        project_id=res["project_id"], name=plan.project_name, web_url=res.get("web_url", ""),
+        tech_stack=plan.tech_stack, grounded_on=plan.grounded_on, plan=plan,
+        module_manifest=_manifest_of(plan), status="reserved",
+    )
+    rec = record.model_dump()
+    rec["created_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        await save_project_record(rec)
+    except Exception:
+        pass
+    try:  # durable runtime: re-fold RESERVED on a restart from this event
+        await eventlog.emit("project_reserved", created_at=datetime.now(timezone.utc).isoformat(),
+                            payload={"plan_id": plan_id, "reserved": res})
+    except Exception:
+        pass
+    return {"project_id": res["project_id"], "web_url": res.get("web_url", ""), "relay_open": True}
+
+
+@app.post("/api/plans/{plan_id}/dispatch")
+async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """Manual scaffold (delta/add-feature, or a legacy single-shot). Requires the relay CLEARED — the normal
+    two-phase path auto-scaffolds when the last gate ratifies, so this is the delta + fallback door."""
+    plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
+    if plan is None or state is None:
+        raise HTTPException(404, "plan not found")
+    if not relay.all_ratified(state):  # never scaffold an un-ratified relay
+        pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
+        raise HTTPException(409, f"relay not cleared — {len(pending)} open gate(s): {', '.join(pending)}")
+    if req.project_name and req.project_name.strip():  # manager validated/edited the AI-filled name
+        plan.project_name = req.project_name.strip()[:80]
+    pid = DELTA_TARGET.get(plan_id) or (RESERVED.get(plan_id) or {}).get("project_id")
+    result = await _finalize_scaffold(plan_id, plan, project_id=pid)
     return {"plan_id": plan_id, "mode": req.mode, **result}
 
 
@@ -1591,6 +1825,7 @@ async def reject_issue(
         raise HTTPException(403, "only the acceptance/qa owner or the manager can reject an item")
     res = await run_in_threadpool(handoff.reroute, project_id, iid, req.comment, req.to_runner)
     REQA.setdefault(project_id, set()).add(iid)
+    await _persist("reqa", project_id, {"v": sorted(REQA[project_id])})  # durable re-QA queue
     if req.to_runner:  # surface the bounce as an actionable ticket on the runner's Inbox + watchers
         await notify(req.to_runner, "qa_failed", f"Tester bounced an item back to you (#{iid})",
                      body=(req.comment or "An acceptance check failed — reopened for a fix.")[:300],
@@ -1613,6 +1848,9 @@ async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile 
     RELAYS[plan_id] = relay.build_relay(plan)
     DELTA_TARGET[plan_id] = project_id
     DELTA_PRIORITY[plan_id] = req.priority
+    await _persist_relay(plan_id)  # durable: the delta plan + relay survive a restart
+    await _persist("delta_target", plan_id, {"v": project_id})
+    await _persist("delta_priority", plan_id, {"v": req.priority})
     await _persist_draft_tasks(plan, plan_id)
     await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
     return {"plan_id": plan_id, "project_id": project_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
@@ -1633,7 +1871,7 @@ async def reschedule_preview(plan_id: str, _: DeveloperProfile = Depends(auth.cu
     prior = {t.id: t.scheduled_end for t in existing}
     await team.ensure_loaded()
     members = team.all_members()
-    avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+    avail = scheduler.blocked_days(_reflow_change_events(await all_events()))
     scheduler.schedule_tasks(existing + drafts, members, datetime.now(timezone.utc).isoformat(), availability=avail)
     moved = [{"task_id": t.id, "title": t.title, "assignee": t.assignee, "old_end": prior.get(t.id), "new_end": t.scheduled_end}
              for t in existing if t.scheduled_end != prior.get(t.id)]
@@ -1931,7 +2169,7 @@ async def _reschedule_project(project_id: int) -> int:
             return 0
         objs = [Task(**d) for d in docs]
         await team.ensure_loaded()
-        avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+        avail = scheduler.blocked_days(_reflow_change_events(await all_events()))
         # Full re-solve is intentional here (a reassignment must reclaim the old owner's freed capacity —
         # reflow's minimal-perturbation floor would not), but only persist the tasks whose dates moved.
         prior = {o.id: (o.scheduled_start, o.scheduled_end) for o in objs}
@@ -1975,7 +2213,7 @@ async def _reflow_for_event(ev: ChangeEvent) -> tuple[list[dict], dict]:
         if not changed:
             return [], {}
         await team.ensure_loaded()
-        avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+        avail = scheduler.blocked_days(_reflow_change_events(await all_events()))
         prior = {o.id: (o.scheduled_start, o.scheduled_end) for o in objs}
         scheduler.reflow(objs, team.all_members(), datetime.now(timezone.utc).isoformat(),
                          changed, availability=avail)
@@ -2086,7 +2324,7 @@ async def _apply_strategy(prop: dict) -> list[dict]:
         return []
     objs = [Task(**d) for d in await all_tasks()]
     await team.ensure_loaded()
-    avail = scheduler.blocked_days([ChangeEvent(**e) for e in await all_events()])
+    avail = scheduler.blocked_days(_reflow_change_events(await all_events()))
     prior = {o.id: (o.scheduled_start, o.scheduled_end) for o in objs}
     scheduler.reflow(objs, team.all_members(), now, changed, availability=avail)
     moved = [o for o in objs if (o.scheduled_start, o.scheduled_end) != prior[o.id]]
@@ -2389,8 +2627,13 @@ async def graph_build(req: GraphBuildRequest, member: DeveloperProfile = Depends
 
 
 @app.get("/api/graph")
-async def graph_get(project_id: str = "local", member: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    return {"project_id": project_id, "nodes": await graph_nodes(project_id), "edges": await graph_edges(project_id)}
+async def graph_get(project_id: str = "local", as_of: Optional[str] = None,
+                    member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Bitemporal read: as_of=<ISO> returns the graph as it was at that time (vf<=T<vt); omit for the current
+    view (open versions). Routes through the GraphStore seam — legacy file graphs (no bitemporal fields) read
+    as current, unchanged."""
+    return {"project_id": project_id, "as_of": as_of,
+            "nodes": await store.nodes(project_id, as_of=as_of), "edges": await store.edges(project_id, as_of=as_of)}
 
 
 @app.get("/api/graph/dependents")
@@ -2483,6 +2726,236 @@ async def graph_refactor(req: RefactorRequest, member: DeveloperProfile = Depend
     return await get_task(task.id) or task.model_dump()
 
 
+# ── Living Project Graph (reuse lineage): a reused source feature changes → PROPOSE a sync task in every
+# project that derived from it. The event the simulate endpoint posts is exactly what a GitLab merge webhook
+# would send — this is the demo seam for the missing GitLab→sprint0 inbound edge. NO-AUTO-APPROVAL throughout.
+class SourceChangeRequest(BaseModel):
+    feature_node: str               # the content-addressed source feature node (e.g. "feat:qpauth0001")
+    new_hash: str = ""              # the post-fix content hash (a fix = a new identity)
+    summary: str = ""               # what changed upstream
+
+
+async def _project_source_change(ev: ChangeEvent) -> list[dict]:
+    """Projection of a `source_changed` event: traverse inbound `derived_from` → one PROPOSED sync Task +
+    `drift_flagged` ping per dependent project. Tasks are `planned` (the dependent's owner ratifies)."""
+    try:
+        await eventlog.emit("source_changed", created_at=ev.created_at, payload=ev.payload)  # the spine — append first
+    except Exception:
+        pass
+    nodes = [GraphNode(**n) for n in await graph_nodes("lineage")]
+    edges = [GraphEdge(**e) for e in await graph_edges("lineage")]
+    proposals = lineage.propagate_source_change(ev, nodes, edges)
+    await team.ensure_loaded()
+    now = datetime.now(timezone.utc).isoformat()
+    feat_title = next((n.title for n in nodes if n.path == ev.payload.get("feature_node")),
+                      ev.payload.get("feature_node", "a reused feature"))
+    created: list[dict] = []
+    by_lead: dict[str, list[dict]] = {}    # owner → their dependents (one summary ping each; notify dedups same user+type)
+    for p in proposals:
+        disc = p["domain"] if p["domain"] in ("uiux", "backend", "frontend", "qa", "devops") else "backend"
+        lead = _lead_for_discipline(disc)
+        pid = p["project_id"] or 0
+        task = Task(
+            id=f"sync_{uuid.uuid4().hex[:8]}", project_id=pid,
+            title=f"Sync: {feat_title} changed upstream"[:120],
+            description=(f"The reused source **{feat_title}** changed upstream.\n\nWhat changed: "
+                         f"{p['summary']}\n\nReview {p['title']} and decide whether to adopt the change."),
+            discipline=disc, assignee=lead, assigned_by="ai", risk="medium", priority="high", status="planned",
+            context_scope=ContextScope(files=[], note=f"reuse sync (Living Project Graph · derived_from {ev.payload.get('feature_node')})"),
+            created_at=now, updated_at=now)
+        try:
+            await save_tasks([task.model_dump()])
+            if pid:
+                await _reschedule_project(pid)               # date the sync task into the lead's calendar
+        except Exception:
+            pass
+        created.append(await get_task(task.id) or task.model_dump())
+        if lead:
+            by_lead.setdefault(lead, []).append({"title": p["title"], "task_id": task.id})
+    for lead, items in by_lead.items():                       # one honest summary ping per affected owner (System 5)
+        n, first = len(items), items[0]["task_id"]
+        await notify(lead, "drift_flagged",
+                     f"{feat_title} changed upstream — {n} sync task{'s' if n != 1 else ''}"[:120],
+                     body="Review & adopt: " + ", ".join(i["title"] for i in items),
+                     ref={"task_id": first}, actionable=True)
+        await notify_watchers(lead, "drift_flagged", f"Reuse sync flagged for @{lead} ({n})", ref={"task_id": first})
+    return created
+
+
+async def record_reuse_lineage(plan_id: str, plan: PlanJSON, project_id: int) -> int:
+    """LIVE reuse ingest (Living Project Graph P3): for each gate whose ratified pick is memory-grounded,
+    content-hash the cited source and record a `derived_from` edge from THIS project to the (shared, deduped)
+    source feature node. Identical reused code across projects collapses to ONE feature node. Best-effort;
+    self-skips in demo (reuse_pack is empty there)."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        existing = await store.nodes("lineage")
+    except Exception:
+        existing = []
+    recorded = 0
+    for (pid_key, disc), chosen in list(CHOSEN.items()):
+        if pid_key != plan_id or not chosen.grounded_on:   # only memory-grounded (reuse) picks record lineage
+            continue
+        try:
+            rows = await reuse_pack(chosen.grounded_on, limit=6)
+        except Exception:
+            continue
+        source_text = "\n".join(str(r.get("excerpt", "")) for r in rows).strip()
+        if not source_text:
+            continue
+        src = chosen.grounded_on[0]
+        new_nodes, new_edges = lineage.build_reuse_lineage(
+            project_id=project_id, project_name=plan.project_name, discipline=disc,
+            source_project=src, source_text=source_text, now=now, existing_features=existing)
+        try:
+            await store.add_nodes(new_nodes)
+            await store.add_edges(new_edges)
+            existing.extend(new_nodes)   # a later gate in this loop dedups against what we just added
+            await eventlog.emit("reuse_recorded", created_at=now,
+                                payload={"project_id": project_id, "discipline": disc, "source": src})
+            recorded += 1
+        except Exception:
+            pass
+    return recorded
+
+
+@app.post("/api/lineage/simulate-change")
+async def lineage_simulate_change(req: SourceChangeRequest,
+                                  member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Simulate what a GitLab merge webhook WOULD post when a reused source feature changes: append a
+    `source_changed` event → propose a sync Task in every dependent project (human ratifies)."""
+    if member.role != "manager":
+        raise HTTPException(403, "only the manager can simulate a source change")
+    now = datetime.now(timezone.utc).isoformat()
+    ev = ChangeEvent(id=f"src_{uuid.uuid4().hex[:8]}", kind="source_changed", created_at=now,
+                     payload={"feature_node": req.feature_node, "new_hash": req.new_hash,
+                              "summary": req.summary or "upstream change"})
+    proposed = await _project_source_change(ev)
+    return {"event": ev.model_dump(), "dependents": len(proposed), "proposed": proposed}
+
+
+class RetireNodeRequest(BaseModel):
+    path: str
+    project_id: str = "lineage"
+
+
+@app.post("/api/lineage/retire")
+async def lineage_retire(req: RetireNodeRequest,
+                         member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Tombstone a feature/node: CLOSE the current version (valid_to=now, deleted=True) instead of deleting —
+    it drops from the current view but stays queryable via `?as_of=`. Code deletion that never loses history."""
+    if member.role != "manager":
+        raise HTTPException(403, "only the manager can retire a node")
+    now = datetime.now(timezone.utc).isoformat()
+    await store.close_node(req.path, req.project_id, {"valid_to": now, "deleted": True})
+    await eventlog.emit("node_retired", created_at=now, payload={"path": req.path, "project_id": req.project_id})
+    return {"retired": req.path, "at": now}
+
+
+@app.get("/api/lineage/duplicates")
+async def lineage_duplicates(threshold: float = 0.82,
+                             member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Semantic near-dup detection (P5): exact-hash dups are already collapsed by content-addressing; this
+    embeds each DISTINCT canonical feature's title (Voyage, live) and flags same-intent / different-code pairs
+    above `threshold` for a human to merge. Never auto-merges. Best-effort — empty if embeddings are down."""
+    if demo.is_demo():  # the hosted demo stubs the Voyage query vector (free-tier protection) → no real similarity
+        return {"threshold": threshold, "pairs": [], "engine": "voyage-live-only",
+                "note": "Semantic dedup runs live with Voyage embeddings — unlock the live demo to compute it. "
+                        "(The hosted demo stubs the query vector to protect the free-tier rate limit.)"}
+    feats = [n for n in await store.nodes("lineage")
+             if n.get("node_type") == "feature" and n.get("ref_project_id") in (None, 0)]
+    seen: set = set()
+    units: list[dict] = []
+    for f in feats:                                     # one canonical unit per distinct content_hash
+        h = f.get("content_hash")
+        if h in seen:
+            continue
+        seen.add(h)
+        units.append(f)
+    if len(units) < 2:
+        return {"threshold": threshold, "pairs": [], "units": len(units)}
+    try:
+        vecs = await run_in_threadpool(lambda: embed_queries([u.get("title") or u["path"] for u in units]))
+    except Exception as e:  # no Voyage key / rate-limited → honest empty
+        return {"threshold": threshold, "pairs": [], "note": f"semantic dedup runs live (Voyage): {str(e)[:80]}"}
+    items = [{**u, "vector": v} for u, v in zip(units, vecs)]
+    return {"threshold": threshold, "pairs": dedup.near_duplicate_pairs(items, threshold)}
+
+
+async def reembed_corpus(project_id: int, ref: str, files: list[str]) -> int:
+    """Living corpus (P7): a push changed `files` → re-embed ONLY the chunks whose content actually changed
+    (content-hash gated) so recall grounds on current code, not the seed snapshot. Live-only (GitLab+Voyage)."""
+    if not files:
+        return 0
+    try:
+        rec = await get_project_record(project_id)
+    except Exception:
+        rec = {}
+    project_name = (rec or {}).get("name") or ""
+    if not project_name:
+        return 0
+    content_by_path: dict[str, str] = {}
+    for f in files:
+        try:
+            content_by_path[f] = await run_in_threadpool(gitlab.get_file_raw, project_id, f, ref or "main")
+        except Exception:
+            pass
+    chunks_by_path = {c.get("file_path"): c for c in await code_chunks_for_project(project_name)}
+    to_embed, _unchanged = corpus.plan_reembed(files, content_by_path, chunks_by_path)
+    now = datetime.now(timezone.utc).isoformat()
+    from app.agent import generate_file_summary
+    for f in to_embed:
+        content = content_by_path[f]
+        try:
+            lang, disc = corpus.language_of(f), corpus.discipline_of_path(f)
+            summary = await generate_file_summary(f, content)  # best-effort '' on any failure
+            vec = await run_in_threadpool(
+                embed_document, corpus.chunk_embed_text(project_name, f, disc, lang, summary, content))
+            await upsert_code_chunk({"project": project_name, "file_path": f, "excerpt": content[:1500],
+                                     "summary": summary, "language": lang, "discipline": disc,
+                                     "embedding": vec, "content_hash": graph.normalize_and_hash(content), "updated_at": now})
+        except Exception:
+            pass
+    if to_embed:
+        await eventlog.emit("corpus_reembedded", created_at=now, payload={"project_id": project_id, "files": to_embed})
+    return len(to_embed)
+
+
+@app.post("/api/webhooks/gitlab")
+async def gitlab_webhook(request: Request) -> dict:
+    """The INBOUND edge (P6): GitLab calls this on push/merge/issue. Verify the shared secret, emit each event
+    on the spine, and route a MERGE on a canonical reused feature (matched by source_project_id) into the
+    existing source_changed propagation → dependents get proposed sync tasks. sprint0 finally PERCEIVES GitLab.
+    The 'Simulate source change' button posts to /api/lineage/simulate-change (manager-auth'd), NOT this."""
+    if demo.is_demo():  # live-only integration: the public demo never gets real GitLab webhooks, so an
+        raise HTTPException(403, "the GitLab webhook is a live-mode integration")  # anon POST must not act here
+    secret = os.getenv("GITLAB_WEBHOOK_SECRET", "")
+    if not secret or request.headers.get("X-Gitlab-Token") != secret:  # fail CLOSED — unconfigured/bad token = reject
+        raise HTTPException(401, "bad or missing webhook token")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON body")
+    kind = str(payload.get("object_kind", ""))
+    events = gitlab_hooks.parse_gitlab_event(kind, payload)
+    now = datetime.now(timezone.utc).isoformat()
+    propagated = reembedded = 0
+    for ev in events:
+        await eventlog.emit(f"gitlab_{ev['kind']}", created_at=now, payload=ev)
+        if ev["kind"] == "merge" and ev.get("project_id") is not None:
+            # a canonical feature whose SOURCE lives in this repo changed → propagate to everyone who derived from it
+            feats = [n for n in await store.nodes("lineage")
+                     if n.get("node_type") == "feature" and n.get("source_project_id") == ev["project_id"]]
+            for f in feats:
+                sev = ChangeEvent(id=f"src_{uuid.uuid4().hex[:8]}", kind="source_changed", created_at=now,
+                                  payload={"feature_node": f["path"], "summary": ev.get("title") or "merged upstream"})
+                propagated += len(await _project_source_change(sev))
+        elif ev["kind"] == "push" and ev.get("project_id") is not None:
+            reembedded += await reembed_corpus(ev["project_id"], ev.get("ref", ""), ev.get("files", []))
+    return {"received": kind, "events": [e["kind"] for e in events],
+            "propagated_sync_tasks": propagated, "reembedded": reembedded}
+
+
 # Attribution queue — merges sprint0 can't map to a roster member land here (the human
 # fallback in the attribution chain) for the manager to assign. In-memory (demo-grade).
 ATTRIBUTIONS: list[dict] = []
@@ -2535,6 +3008,7 @@ async def _verify_on_merge(req: MergeRequest) -> Optional[dict]:
             if prod and prod.assignee:
                 await notify(prod.assignee, "qa_failed", f"Contract violation · {raw.get('subject')}",
                              body="; ".join(viol), ref={"plan_id": req.plan_id, "issue_id": req.issue_id}, actionable=True)
+    await _persist_relay(req.plan_id)  # durable: a merge-time contract-violation signal survives a restart
     if not results:
         return None
     return {"ok": all(r["ok"] for r in results),
@@ -2549,6 +3023,7 @@ async def merge(req: MergeRequest, _: DeveloperProfile = Depends(auth.current_me
     Merge is the verify beat: if the slice carries an output sample, shape-check it vs its contract."""
     if req.project_id is not None and req.issue_iid is not None:
         REQA.get(req.project_id, set()).discard(req.issue_iid)
+        await _persist("reqa", req.project_id, {"v": sorted(REQA.get(req.project_id, set()))})  # durable
     contract = await _verify_on_merge(req)  # the verify beat (None when the merge carries no sample to check)
 
     def _with(out: dict) -> dict:
@@ -2568,6 +3043,7 @@ async def merge(req: MergeRequest, _: DeveloperProfile = Depends(auth.current_me
         "score": req.score, "project_id": req.project_id, "issue_iid": req.issue_iid,
         "suggested": _suggest_attribution(req.gitlab_username),
     })
+    await _persist("attributions", "_all", {"v": ATTRIBUTIONS})  # durable: the manager's attribution queue
     return _with({"needs_attribution": True, "attribution_id": aid, "suggested": ATTRIBUTIONS[-1]["suggested"]})
 
 
@@ -2589,6 +3065,7 @@ async def resolve_attribution(
         raise HTTPException(404, f"no member '{req.username}'")
     grown = await record_merge(member.gitlab_username, req.task_type or ev["task_type"], ev.get("score", 0.85))
     ATTRIBUTIONS.remove(ev)
+    await _persist("attributions", "_all", {"v": ATTRIBUTIONS})  # durable: queue shrinks on resolve
     await team.refresh()
     return {"resolved": aid, "attributed_to": member.username, "profile": grown}
 
@@ -2632,7 +3109,9 @@ async def list_developers() -> list[DeveloperProfile]:
     # The roster the frontend shows is the WHOLE team incl. the manager (Team view). Internal staffing
     # still uses team.developers() directly; pickers filter by role/discipline, so the manager never
     # surfaces as an assignable candidate.
-    return await _attach_availability(team.all_members() or CANNED_DEVELOPERS)
+    members = await _attach_availability(team.all_members() or CANNED_DEVELOPERS)
+    # flag repo-needing devs with no GitLab link → the Team view shows "link this dev" (the manager + a uiux dev never need one)
+    return [m.model_copy(update={"needs_link": m.role != "manager" and policy.needs_repo(m.discipline) and not m.gitlab_user_id}) for m in members]
 
 
 @app.post("/api/developers")

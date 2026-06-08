@@ -71,15 +71,6 @@ export function useRatifyGate(planId: string) {
   });
 }
 
-/** Trust Dial → auto-pass eligible gates (the confidence×blast router). */
-export function useRelayAuto(planId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (dial: number) => api.relayAuto(planId, dial),
-    onSuccess: (next) => qc.setQueryData(qk.relay(planId), next),
-  });
-}
-
 /** Integration flag. Returns a RelayState (applied) or {need_target, candidates} (ambiguous producer). */
 export function useFlagIntegration(planId: string) {
   const qc = useQueryClient();
