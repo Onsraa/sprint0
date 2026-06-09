@@ -74,6 +74,8 @@ interface UIState {
   drafts: any[];
   addDraft: (d: any) => any;
   removeDraftByName: (name: string) => void;
+  resumeDraft: any | null;                   // a draft being reopened in the wizard (rehydrated from the server)
+  setResumeDraft: (d: any | null) => void;
 
   /** Clear all session-scoped UI on logout. */
   resetSession: () => void;
@@ -148,6 +150,8 @@ export const useUI = create<UIState>()(persist((set) => ({
     return draft;
   },
   removeDraftByName: (name) => set((s) => ({ drafts: s.drafts.filter((d: any) => d.name !== name) })),
+  resumeDraft: null,
+  setResumeDraft: (resumeDraft) => set({ resumeDraft }),
 
   resetSession: () => set(SESSION_DEFAULTS),
-}), { name: "sprint0-ui", partialize: (s) => ({ navCollapsed: s.navCollapsed }) }));
+}), { name: "sprint0-ui", partialize: (s) => ({ navCollapsed: s.navCollapsed, drafts: s.drafts }) }));

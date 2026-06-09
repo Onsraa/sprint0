@@ -12,7 +12,7 @@
    spec/architectures/plan/preview constants are now real async state from the API
    (createBrief→clarify→architectures→plan/staffing→dispatchPreview→dispatch). The
    existing SequenceLoader covers each async wait. */
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { qk } from "../lib/query";
 import { toast } from "sonner";
@@ -71,6 +71,8 @@ export function WizardBrief() {
   const { setView, members, addDraft } = useApp();
   const setWizardOpen = useUI((s) => s.setWizardOpen);
   const removeDraftByName = useUI((s) => s.removeDraftByName);
+  const resumeDraft = useUI((s) => s.resumeDraft);
+  const setResumeDraft = useUI((s) => s.setResumeDraft);
   const qc = useQueryClient();
 
   const [step, setStep] = useState(0);
@@ -240,6 +242,50 @@ export function WizardBrief() {
     if (step === 3) return goReview();
   };
 
+  // Resume a saved draft: rehydrate per-step state from the server (by briefId/planId) and jump to the saved step.
+  useEffect(() => {
+    if (!resumeDraft) return;
+    const d = resumeDraft;
+    setResumeDraft(null);  // consume once
+    (async () => {
+      try {
+        if (d.briefId) {
+          setBriefId(d.briefId);
+          const b = await api.getBrief(d.briefId).catch(() => null);
+          if (b?.text) setBrief(b.text);
+          const s = await api.getSpec(d.briefId).catch(() => null);
+          if (s) setSpec(s);
+          if (d.answers) setAnswers(d.answers);
+          if ((d.step ?? 0) >= 2) {
+            const opts = await api.getArchitectures(d.briefId).catch(() => null);
+            if (opts) {
+              setCards(opts.cards);
+              setAiPick({ name: opts.ai_pick_name ?? "", why: opts.ai_pick_why ?? "" });
+              const pick = (d.selectedCardName && opts.cards.find((c) => c.name === d.selectedCardName))
+                || opts.cards.find((c) => c.recommended) || opts.cards[0];
+              setSelectedCardName(pick?.name ?? null);
+              setChosenStack(pick?.tech_stack ?? null);
+            }
+          }
+        }
+        if (d.planId && (d.step ?? 0) >= 3) {
+          setPlanId(d.planId);
+          const p = await api.getPlan(d.planId).catch(() => null);
+          if (p) setPlan(p);
+          const r = await api.relay(d.planId).catch(() => null);
+          if (r) setRelay(r);
+          setStaffing(await api.staffing(d.planId).catch(() => ({ coverage: [] })));
+          if ((d.step ?? 0) >= 4) {
+            const pv = await api.dispatchPreview(d.planId).catch(() => null);
+            if (pv) { setPreview(pv); setProjectName(pv.project_name ?? ""); }
+          }
+        }
+        setStep(Math.min(d.step ?? 0, STEPS.length - 1));
+      } catch { /* best-effort restore */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeDraft]);
+
   const closeToProjects = () => { setView("projects"); setWizardOpen(false); };
   const closeToRelays = () => { setView("relays"); setWizardOpen(false); };  // after reserve → the leads ratify here
 
@@ -251,7 +297,8 @@ export function WizardBrief() {
       stack: archStack, issues: 0, devs: 0,
       grounded: (spec?.reuse ?? []).map((r) => r.feature),
       summary: "Draft from brief — clarified spec, not yet dispatched.",
-      savedAt: STEPS[step].label });
+      savedAt: STEPS[step].label,
+      step, briefId, planId, answers, selectedCardName });   // resume context — the wizard rehydrates the rest from the server on reopen
     setConfirmDraft(false);
     toast("Saved as draft", { description: previewName + " · in Projects ▸ Drafts" });
     closeToProjects();

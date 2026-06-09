@@ -13,6 +13,7 @@ import { useUI } from "../lib/store";
 export function Dashboard() {
   const { setView, projects, members, drafts, relaySummaries } = useApp();
   const setProjectFilter = useUI((s) => s.setProjectFilter);
+  const setResumeDraft = useUI((s) => s.setResumeDraft);
   const [filter, setFilter] = useState("all"); // all | drafts | active | shipped | reference
   const [sel, setSel] = useState<any>(null);
 
@@ -89,7 +90,7 @@ export function Dashboard() {
         </div>
         {selP && <ProjectPanel p={selP}
           hasRelays={(relaySummaries as any[]).some((r) => r.target_project_id === selP.project_id || r.project === selP.name)}
-          onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => setView("wizard")} />}
+          onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => { if (selP?.kind === "draft") setResumeDraft(selP); setView("wizard"); }} />}
       </div>
     </div>
   );
