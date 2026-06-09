@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -843,12 +843,14 @@ async def resolve_clarify(brief_id: str, res: ClarifyResolution,
 
 @app.post("/api/briefs/{brief_id}/architectures", response_model=ArchitectureOptions)
 async def architectures(brief_id: str, constraints: Optional[Constraints] = None,
+                        grounded: Optional[list[str]] = Query(None),
                         _: DeveloperProfile = Depends(auth.current_manager),
                         _t: None = Depends(_ai_throttle)) -> ArchitectureOptions:
-    """Idea 1: 2-3 grounded Architecture Cards for the manager to pick from."""
+    """Idea 1: 2-3 grounded Architecture Cards. `grounded` = the human's ratified memory-candidate refs
+    (Use/Skip from the Clarify Memory panel); None → the AI judges all retrieved candidates inline."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
-    opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints())
+    opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints(), grounded=grounded)
     ARCHS[brief_id] = opts  # cache for wizard resume
     await _persist("archs", brief_id, opts.model_dump())
     return opts

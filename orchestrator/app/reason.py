@@ -100,7 +100,19 @@ def _safe_username(raw: str) -> str:
     return slug or "dev"
 
 
-async def propose_architectures(brief_text: str, constraints: Constraints | None = None) -> ArchitectureOptions:
+def select_grounded(past: list[dict], code: list[dict], grounded: list[str] | None) -> tuple[list[dict], list[dict]]:
+    """Keep only the memory candidates the human ratified (Use/Skip → `grounded` refs); None = keep all. A
+    past project matches by `name`, a code chunk by `file_path` (or "project · file_path")."""
+    if grounded is None:
+        return past, code
+    sel = set(grounded)
+    kept_past = [p for p in past if p.get("name") in sel]
+    kept_code = [c for c in code if c.get("file_path") in sel or f"{c.get('project')} · {c.get('file_path')}" in sel]
+    return kept_past, kept_code
+
+
+async def propose_architectures(brief_text: str, constraints: Constraints | None = None,
+                                grounded: list[str] | None = None) -> ArchitectureOptions:
     async with MongoMCP() as m:
         qv = embed_query(brief_text)
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION)
@@ -109,6 +121,7 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
             code = await code_search_expanded(m, qv, k=5)
         except Exception:
             code = []
+    past, code = select_grounded(past, code, grounded)  # the human ratified WHICH candidates to ground on (Use/Skip)
     prompt = (
         f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"

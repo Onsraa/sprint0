@@ -77,10 +77,19 @@ export const AmbiguityCard = z.object({
 });
 export const ReuseItem = z.object({
   from_project: z.string(), feature: z.string(), action: z.enum(["reuse", "adapt", "drop"]),
+  reason: z.string().optional(),                   // why this is worth reusing for THIS brief
 });
+export const MemoryCandidate = z.object({          // CRAG: a retrieved candidate the AI judged for reuse-fit
+  ref: z.string(), kind: z.enum(["project", "code"]).optional(), project: z.string().optional(),
+  verdict: z.enum(["reuse", "maybe", "skip"]),     // the AI's relevance call (abstain = skip) — replaces the cosine score
+  reason: z.string().optional(),                   // WHY it does/doesn't fit (shown to the human)
+  used: z.boolean().optional(),                    // the human's pick (reuse pre-selected; the Memory panel toggles)
+});
+export type MemoryCandidate = z.infer<typeof MemoryCandidate>;
 export const ClarifiedSpec = z.object({
   goal: z.string(), users: z.array(z.string()), must_haves: z.array(z.string()),
   constraints: z.array(z.string()), ambiguities: z.array(AmbiguityCard), reuse: z.array(ReuseItem),
+  memory_candidates: z.array(MemoryCandidate).optional(),  // CRAG-judged reuse candidates (verdict + why)
 });
 export type ClarifiedSpec = z.infer<typeof ClarifiedSpec>;
 

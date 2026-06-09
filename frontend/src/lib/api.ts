@@ -507,8 +507,10 @@ export const api = {
   resolveClarify(briefId: string, answers: Record<string, string>): Promise<ClarifiedSpec> {
     return jpost(`/api/briefs/${briefId}/clarify/resolve`, { answers });
   },
-  architectures(briefId: string, constraints?: Constraints | null): Promise<ArchitectureOptions> {
-    return jpost(`/api/briefs/${briefId}/architectures`, constraints ?? null);
+  architectures(briefId: string, constraints?: Constraints | null, grounded?: string[]): Promise<ArchitectureOptions> {
+    // grounded = the human-ratified memory-candidate refs (Use/Skip); omit → the AI judges all candidates
+    const qs = grounded ? "?" + grounded.map((r) => `grounded=${encodeURIComponent(r)}`).join("&") : "";
+    return jpost(`/api/briefs/${briefId}/architectures${qs}`, constraints ?? null);
   },
   plan(
     briefId: string,
