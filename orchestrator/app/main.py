@@ -842,7 +842,7 @@ async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
     from app import trace
-    trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for this brief; later phases accumulate onto it
+    trace.clear(f"{brief_id}:clarify"); trace.begin(f"{brief_id}:clarify")   # phase-scoped run (no cross-phase bleed)
     spec = await clarify_brief(BRIEFS[brief_id], constraints or Constraints())
     SPECS[brief_id] = spec
     await _persist("specs", brief_id, spec.model_dump())
@@ -862,7 +862,7 @@ async def resolve_clarify(brief_id: str, res: ClarifyResolution,
         if amb.id in res.answers:
             amb.resolution = res.answers[amb.id]
     from app import trace
-    trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for the memory-judge phase
+    trace.clear(f"{brief_id}:memory"); trace.begin(f"{brief_id}:memory")   # phase-scoped run
     spec.memory_candidates = await judge_memory(spec)   # reuse judged on the RESOLVED spec, not the raw brief
     SPECS[brief_id] = spec
     await _persist("specs", brief_id, spec.model_dump())
@@ -881,7 +881,7 @@ async def architectures(brief_id: str, constraints: Optional[Constraints] = None
         raise HTTPException(404, "brief not found")
     eff_grounded = grounded if grounded is not None else ([] if decided else None)
     from app import trace
-    trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for the architecture phase
+    trace.clear(f"{brief_id}:arch"); trace.begin(f"{brief_id}:arch")   # phase-scoped run
     opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints(), grounded=eff_grounded)
     ARCHS[brief_id] = opts  # cache for wizard resume
     await _persist("archs", brief_id, opts.model_dump())
@@ -889,11 +889,14 @@ async def architectures(brief_id: str, constraints: Optional[Constraints] = None
 
 
 @app.get("/api/briefs/{brief_id}/trace")
-async def brief_trace(brief_id: str, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
-    """The ReAct trace for a brief's run — the agent's REAL Reason→Action steps (Gemini · MongoDB · GitLab)
-    accumulated across the wizard phases — for the UI to replay as a live loop instead of a fake spinner."""
+async def brief_trace(brief_id: str, phase: Optional[str] = Query(None),
+                      _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """The ReAct trace for a brief's run — the agent's REAL Reason→Action steps (Gemini · MongoDB · GitLab).
+    Trace runs are PHASE-scoped (`{brief_id}:{phase}`) so each wizard phase polls only its own steps (no
+    cross-phase bleed / clear-flicker). `phase` omitted = the legacy brief-keyed run."""
     from app import trace
-    return {"brief_id": brief_id, "steps": trace.get(brief_id)}
+    key = f"{brief_id}:{phase}" if phase else brief_id
+    return {"brief_id": brief_id, "phase": phase, "steps": trace.get(key)}
 
 
 def _manifest_of(plan: PlanJSON) -> list[str]:
@@ -928,7 +931,7 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
         raise HTTPException(404, "brief not found")
     req = req or PlanRequest()
     from app import trace
-    trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for the plan phase
+    trace.clear(f"{brief_id}:plan"); trace.begin(f"{brief_id}:plan")   # phase-scoped run
     # REASON: RAG (MongoDB MCP) → Gemini → assign. chosen_stack locks the stack (Idea 1).
     plan = await run_brief(BRIEFS[brief_id], chosen_stack=req.chosen_stack, constraints=req.constraints)
     plan_id = f"plan_{brief_id}"
@@ -1646,7 +1649,7 @@ async def dispatch_preview(plan_id: str) -> dict:
         raise HTTPException(404, "plan not found")
     from app import trace
     bid = plan_id.removeprefix("plan_")  # the wizard polls /trace by brief_id
-    trace.clear(bid); trace.begin(bid)
+    trace.clear(f"{bid}:review"); trace.begin(f"{bid}:review")   # phase-scoped run
     await team.ensure_loaded()
     trace.step("server", "action", "Resolve the project name", plan.project_name)
     issues = [i for e in plan.epics for i in e.issues]
@@ -1802,7 +1805,7 @@ async def _reserve_locked(plan_id: str, req: DispatchRequest) -> dict:
     if req.project_name and req.project_name.strip():  # the manager validated/edited the AI-filled name
         plan.project_name = req.project_name.strip()[:80]
     from app import trace
-    bid = plan_id.removeprefix("plan_"); trace.clear(bid); trace.begin(bid)  # the wizard polls /trace by brief_id
+    bid = plan_id.removeprefix("plan_"); trace.clear(f"{bid}:create"); trace.begin(f"{bid}:create")  # phase-scoped run
     trace.step("gitlab", "action", "Create the GitLab project", plan.project_name)
     try:
         res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))  # contextvar can't cross the threadpool — bracket the real op here

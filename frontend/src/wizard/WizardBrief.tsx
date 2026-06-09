@@ -115,12 +115,6 @@ export function WizardBrief() {
         toast.error(e instanceof Error ? e.message : errMsg);
       });
   };
-  // escape hatch while a wait runs: stay on the current step, ignore the in-flight call when it lands
-  const cancelLoader = () => {
-    cancelledRef.current = true;
-    commitRef.current = null;
-    setLoader(null);
-  };
   // the loader's onDone: if the call already committed its `next`, run it + close; else mark done so the
   // resolved call closes the loader (keeps the loader up for the *entire* async wait, never flickering).
   const onLoaderDone = () => {
@@ -375,12 +369,7 @@ export function WizardBrief() {
           <div style={{ flex: 1, overflow: "auto", padding: "32px 0" }}>
             <div style={{ maxWidth: 660, margin: "0 auto", padding: "0 32px" }}>
               {loader ? (
-                <>
-                  <ReActTrace runId={briefId} phase={loader.phase ?? "plan"} onDone={onLoaderDone} />
-                  <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
-                    <Button variant="ghost" size="sm" icon="close" onClick={cancelLoader}>Cancel</Button>
-                  </div>
-                </>
+                <ReActTrace key={loader.phase ?? "plan"} runId={briefId} phase={loader.phase ?? "plan"} onDone={onLoaderDone} />
               ) : (
                 <>
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
@@ -747,7 +736,7 @@ function StepReview({ preview, projectName, setProjectName, briefId, dispatching
 
   // the real create — the gateway streams the actual GitLab ops (create project · push tasks · open relay)
   if (dispatching)
-    return <ReActTrace runId={briefId} phase="create" onDone={onDone} />;
+    return <ReActTrace key="create" runId={briefId} phase="create" onDone={onDone} />;
 
   if (dispatched)
     return (

@@ -517,8 +517,9 @@ export const api = {
     return jget(`/api/briefs/${briefId}/architectures`);
   },
   /* The live Reason→Action trace the gateway emits during a phase; polled by the wizard loader. */
-  trace(briefId: string): Promise<{ steps: TraceStep[] }> {
-    return jget(`/api/briefs/${briefId}/trace`);
+  trace(briefId: string, phase?: string): Promise<{ steps: TraceStep[] }> {
+    // phase-scoped run ({brief_id}:{phase}) so each wizard phase polls only its own steps
+    return jget(`/api/briefs/${briefId}/trace${phase ? `?phase=${encodeURIComponent(phase)}` : ""}`);
   },
   resolveClarify(briefId: string, answers: Record<string, string>): Promise<ClarifiedSpec> {
     return jpost(`/api/briefs/${briefId}/clarify/resolve`, { answers });

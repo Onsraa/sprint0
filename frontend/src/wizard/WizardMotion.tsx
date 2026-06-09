@@ -127,9 +127,10 @@ export function ReActTrace({ runId, phase, onDone, minDwellMs = 1500 }: {
   runId: string | null; phase: string; onDone: () => void; minDwellMs?: number;
 }) {
   const [steps, setSteps] = useState<TraceStep[]>([]);
+  const [revealed, setRevealed] = useState(0);
 
-  // poll the live trace while the phase runs (runId = briefId; set early for clarify, already set for arch/plan).
-  // `inFlight` keeps a slow gateway from stacking overlapping polls on the 800ms tick.
+  // poll the PHASE-SCOPED trace (runId = briefId). Append-only — never let the rendered list shrink, so a
+  // re-begin / slow poll can't cause the flicker. `inFlight` stops overlapping polls on the tick.
   useEffect(() => {
     if (!runId) return;
     let alive = true;
@@ -137,13 +138,23 @@ export function ReActTrace({ runId, phase, onDone, minDwellMs = 1500 }: {
     const poll = async () => {
       if (inFlight) return;
       inFlight = true;
-      try { const r = await api.trace(runId); if (alive && r.steps?.length) setSteps(r.steps); } catch { /* trace is best-effort */ }
+      try {
+        const r = await api.trace(runId, phase);
+        if (alive && r.steps?.length) setSteps((prev) => (r.steps.length >= prev.length ? r.steps : prev));
+      } catch { /* trace is best-effort */ }
       finally { inFlight = false; }
     };
     poll();
-    const id = setInterval(poll, 800);
+    const id = setInterval(poll, 700);
     return () => { alive = false; clearInterval(id); };
-  }, [runId]);
+  }, [runId, phase]);
+
+  // reveal rows ONE AT A TIME (top→bottom spawn) toward the polled count — the row-by-row animation
+  useEffect(() => {
+    if (revealed >= steps.length) return;
+    const t = setTimeout(() => setRevealed((n) => n + 1), 450);
+    return () => clearTimeout(t);
+  }, [revealed, steps.length]);
 
   // fire onDone after a minimum dwell — runLoader holds the loader until the real call also resolves
   useEffect(() => {
@@ -153,8 +164,8 @@ export function ReActTrace({ runId, phase, onDone, minDwellMs = 1500 }: {
   }, []);
 
   // ONLY real steps the gateway emitted — no canned/fake lines. Before the first step lands the pane is just
-  // the pulsing header (honest "thinking"); the real Gemini/MongoDB/GitLab steps stream in row by row.
-  const shown = steps;
+  // the pulsing header (honest "thinking"); the real steps then spawn one row at a time (revealed counter).
+  const shown = steps.slice(0, revealed);
   const lastIdx = shown.length - 1;
 
   return (
