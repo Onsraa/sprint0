@@ -18,7 +18,7 @@ import { AgreementCard } from "./AgreementCard";
 const lanesOf = (a: any): string[] => [a.producer_discipline, a.consumer_discipline].filter(Boolean);
 
 export function GateContract() {
-  const { gates, navPayload, agreements, me, chrome, personFilter, members, planId, relaySummaries, goTo }: any = useApp();
+  const { gates, navPayload, agreements, me, chrome, personFilter, members, planId, relaySummaries, goTo, ratifyPending }: any = useApp();
   // the disciplines that actually have a gate in this relay, in relay order
   const present = useMemo(() => (gates as any[]).map((g) => g.discipline), [gates]);
   // Scope the lanes to the viewer: the manager sees every lane (oversight); a dev/lead sees only the gate(s)
@@ -92,11 +92,20 @@ export function GateContract() {
               <SideLabel icon="relay" title="Its Contracts"
                 hint={contracts.length ? `${contracts.length} this slice produces / consumes` : "none on this slice"}
                 badge={pending > 0 ? `${pending} to sign` : null} />
+              {ratifyPending && (
+                <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "11px 13px", marginBottom: 12,
+                  border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", background: "var(--bg-secondary)", animation: "s0-fade-in var(--t-reg) both" }}>
+                  <span style={{ display: "inline-flex", gap: 4 }}>
+                    {[0, 1, 2].map((i) => <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-primary)", animation: `s0-dot-pulse 1.1s ${i * 0.16}s infinite` }} />)}
+                  </span>
+                  <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>Gemini is drafting this slice's contracts…</span>
+                </div>
+              )}
               {contracts.length
                 ? <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     {contracts.map((a) => <AgreementCard key={a.id} a={a} me={me} compact />)}
                   </div>
-                : <EmptyContracts disc={disc as string} />}
+                : !ratifyPending && <EmptyContracts disc={disc as string} />}
             </div>
           </div>
         </div>

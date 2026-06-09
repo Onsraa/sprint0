@@ -234,7 +234,7 @@ export function useApp() {
   return {
     me, role, chrome, view, setView, goTo, navPayload, switchPersona, members,
     notifs, unread, dismissNotif, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
-    agreements,
+    agreements, ratifyPending: ratifyGate.isPending,
     gates, actGate, ratifyWith, cards, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,

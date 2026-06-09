@@ -40,7 +40,9 @@ def stretched_relay(monkeypatch):
     return state
 
 
-def test_queue_routes_to_the_gate_owner_not_the_discipline(stretched_relay):
+def test_queue_routes_to_the_gate_owner_not_the_discipline(stretched_relay, monkeypatch):
+    # gates are READY (choices cached) — the strict pipeline (P2) would otherwise keep them out of queues
+    monkeypatch.setattr(appmain, "SOLUTIONS", {("plan_x", "backend"): object(), ("plan_x", "devops"): object()})
     jean = _member("jean", "backend")   # the discipline lead — but NOT the owner (he was busy)
     tony = _member("tony", "devops")    # the assigned owner (stretched)
     members = [jean, tony]
@@ -56,6 +58,7 @@ def test_queue_unowned_gate_falls_back_to_discipline_then_tech_lead(monkeypatch)
     monkeypatch.setattr(appmain, "PLANS", {"plan_y": plan})
     monkeypatch.setattr(appmain, "RELAYS", {"plan_y": state})
     monkeypatch.setattr(appmain, "DELTA_TARGET", {})
+    monkeypatch.setattr(appmain, "SOLUTIONS", {("plan_y", "uiux"): object()})  # ready (P2)
     lead = _member("uma", "uiux")
     boss = _member("teddy", None, role="manager")
     assert any(i["discipline"] == "uiux" for i in appmain._my_gates(lead, [lead]))   # discipline fallback
@@ -87,6 +90,80 @@ def test_handoff_denies_a_non_ratifier(stretched_relay, monkeypatch):
     with pytest.raises(Exception) as e:
         asyncio.run(appmain.handoff_gate("plan_x", "backend", assignee="sam", member=sam))
     assert getattr(e.value, "status_code", None) == 403
+
+
+def test_gate_ready_strict_pipeline(monkeypatch, stretched_relay):
+    # P2: a pending gate is ready only once its choices are cached; no-slice gates (qa) are always ready.
+    monkeypatch.setattr(appmain, "SOLUTIONS", {})
+    backend = next(g for g in stretched_relay.gates if g.discipline == "backend")
+    qa = next(g for g in stretched_relay.gates if g.discipline == "qa")
+    assert appmain._gate_ready("plan_x", backend) is False     # pending + uncached + has a slice → preparing
+    assert appmain._gate_ready("plan_x", qa) is True           # the acceptance gate has no slice → always ready
+    appmain.SOLUTIONS[("plan_x", "backend")] = object()
+    assert appmain._gate_ready("plan_x", backend) is True      # choices cached → open
+    backend.status = "ratified"
+    assert appmain._gate_ready("plan_x", backend) is True      # done gates are always ready
+
+
+def test_pregenerate_fires_for_uncached_pending_gates(monkeypatch, stretched_relay):
+    # P2: reserve/ratify kick a background generation for every pending gate without cached choices.
+    monkeypatch.setattr(appmain, "SOLUTIONS", {})
+    generated: list[str] = []
+
+    async def _fake_gen(plan_id, plan, disc):
+        generated.append(disc)
+        appmain.SOLUTIONS[(plan_id, disc)] = object()
+    monkeypatch.setattr(appmain, "_generate_gate_solutions", _fake_gen)
+
+    async def _drive():
+        appmain._pregenerate_open_gates("plan_x")   # create_task needs a running loop
+        await asyncio.sleep(0)                       # let the fire-and-forget tasks run
+        await asyncio.sleep(0)
+    asyncio.run(_drive())
+    assert "backend" in generated and "devops" in generated   # the pending first wave
+    assert "qa" not in generated                               # no slice → nothing to generate
+
+
+def test_gate_solutions_prompt_carries_the_feature_context(monkeypatch):
+    # P7: a gate must generate with the WHOLE feature context — product, stack, upstream ratified
+    # choices, inbound signed contracts — never just its own slice.
+    from types import SimpleNamespace
+    from app import demo, rag, reason
+
+    monkeypatch.setattr(demo, "DEMO_MODE", False)          # exercise the real prompt path (LLM stubbed)
+    captured: dict = {}
+
+    async def _capture(prompt):
+        captured["prompt"] = prompt
+        return SolutionSetStub()
+
+    class SolutionSetStub:
+        discipline = ""
+        solutions = []
+
+    class _M:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def hybrid_search(self, *a, **k): return []
+    async def _no_code(*a, **k): return []
+    async def _no_decisions(*a, **k): return []
+    monkeypatch.setattr(reason, "MongoMCP", _M)
+    monkeypatch.setattr(reason, "embed_query", lambda q: [])
+    monkeypatch.setattr(reason, "code_search_expanded", _no_code)
+    monkeypatch.setattr(rag, "all_decisions", _no_decisions)
+    monkeypatch.setattr(reason, "generate_solutions", _capture)
+
+    plan = _plan(_iss("f1", "frontend"))
+    plan.client_summary = "A freight tenant portal with live maps"
+    upstream = {"backend": SimpleNamespace(title="FastAPI CRUD with PostGIS", summary="REST endpoints over PostGIS")}
+    inbound = [{"subject": "backend→frontend · /shipments", "interface": {"method": "GET", "path": "/shipments"}}]
+    asyncio.run(reason.propose_solutions(plan, "frontend", upstream_choices=upstream, inbound_contracts=inbound))
+
+    p = captured["prompt"]
+    assert "freight tenant portal" in p                     # product summary
+    assert "CHOSEN STACK" in p and "Py" in p                # the locked stack
+    assert "FastAPI CRUD with PostGIS" in p                 # the upstream gate's ratified choice
+    assert "GET /shipments" in p                            # the signed inbound contract shape
 
 
 def test_contract_visibility_follows_the_ratifier(stretched_relay, monkeypatch):

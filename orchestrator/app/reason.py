@@ -256,9 +256,14 @@ def _sanitize(s: str) -> str:
     return re.sub(r"\s{2,}", " ", s).strip()
 
 
-async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None) -> SolutionSet:
+async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None,
+                            upstream_choices: dict[str, "SolutionCard"] | None = None,
+                            inbound_contracts: list[dict] | None = None) -> SolutionSet:
     """Reuse-or-innovate for ONE gate: a memory-grounded option + 1-2 fresh (dedup-checked) options, in a
-    SINGLE LLM call. The server adds ids, impacted files, and the user write-your-own slot."""
+    SINGLE LLM call. The server adds ids, impacted files, and the user write-your-own slot.
+    `upstream_choices` (discipline → the CHOSEN solution of an already-ratified gate) + `inbound_contracts`
+    (signed interface shapes this gate consumes) keep the proposals consistent with the decisions already
+    made — the gate never generates blind to its feature context."""
     slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
     if not slice_issues:
         return SolutionSet(discipline=discipline, solutions=[])
@@ -283,10 +288,24 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
                           if d.get("visibility") == "team" and d.get("domain") == discipline]
     except Exception:
         team_decisions = []
+    ts = plan.tech_stack
+    upstream_text = "\n".join(
+        f"- {d} gate chose: {c.title} — {(c.summary or '')[:140]}" for d, c in (upstream_choices or {}).items()
+    ) or "(none ratified yet — this is a first-wave gate)"
+    contracts_text = "\n".join(
+        f"- {c.get('subject', '')}: {((c.get('interface') or {}).get('method', '') or '')} "
+        f"{((c.get('interface') or {}).get('path', '') or '')}"
+        for c in (inbound_contracts or [])
+    ) or "(no signed contracts into this gate yet)"
     prompt = (
         f"FEATURE: {plan.project_name}\n"
+        f"PRODUCT: {plan.client_summary}\n"
+        f"CHOSEN STACK (build on EXACTLY this): frontend {ts.frontend} · backend {ts.backend} · db {ts.db} · infra {ts.infra}\n"
         f"GATE DISCIPLINE: {discipline}\n\n"
         f"THE SLICE (issues this gate delivers):\n{slice_text}\n\n"
+        f"UPSTREAM RATIFIED CHOICES (decisions already made on this feature — every option you propose MUST "
+        f"stay consistent with them):\n{upstream_text}\n\n"
+        f"SIGNED CONTRACTS INTO THIS GATE (interfaces this slice consumes — build against these shapes):\n{contracts_text}\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
         f"CANDIDATE PAST PROJECTS (agency memory — JUDGE each; reuse ONLY a project that genuinely fits this gate; none fit = build fresh):\n{_format_past(past)}\n\n"
         f"REUSABLE CODE (chunk-level — only if listed):\n{_format_code(code)}\n\n"

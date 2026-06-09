@@ -29,11 +29,13 @@ type RelayClass = { status: RelayStatus; disc?: Discipline; action: "gate" | "di
    relay). manager: a ready relay is open-to-dispatch; an orphan gate (no seated dev) is the manager's to
    ratify (open if on baton, else pending); otherwise the relay is fully staffed → "in progress". */
 function classify(r: RelaySummary, scopeDisc: Discipline | undefined, isManager: boolean, seated: Set<string>, meUser?: string): RelayClass | null {
+  // strict pipeline: a baton gate is only OPEN once its choices are generated (ready); else it's preparing.
+  const isOpen = (g: Gate) => r.baton.includes(g.discipline) && g.ready !== false;
   if (isManager) {
     if (r.all_ratified) return { status: "open", action: "dispatch" };
     const orphans = r.gates.filter((g) => !seated.has(g.discipline) && !DONE.includes(g.status));
     if (!orphans.length) return { status: "inprogress", action: "gate" };
-    const batonOrphan = orphans.find((g) => r.baton.includes(g.discipline));
+    const batonOrphan = orphans.find(isOpen);
     return { status: batonOrphan ? "open" : "pending", disc: (batonOrphan ?? orphans[0]).discipline, action: "gate" };
   }
   // dev/qa: a gate belongs to its RATIFIER — delegate ?? owner (the assigned lead, who may be
@@ -43,7 +45,7 @@ function classify(r: RelaySummary, scopeDisc: Discipline | undefined, isManager:
   if (!mineGates.length) return null;                       // not on this relay at all
   const notDone = mineGates.filter((g) => !DONE.includes(g.status));
   if (!notDone.length) return { status: "shipping", disc: mineGates[0].discipline, action: "none" };  // your part shipped — relay still in flight
-  const batonMine = notDone.find((g) => r.baton.includes(g.discipline));
+  const batonMine = notDone.find(isOpen);
   return { status: batonMine ? "open" : "pending", disc: (batonMine ?? notDone[0]).discipline, action: "gate" };
 }
 

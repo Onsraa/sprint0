@@ -375,7 +375,7 @@ export function WizardBrief() {
         {/* main pane */}
         <div className="pane" style={{ flex: 1, minWidth: 0 }}>
           <div style={{ flex: 1, overflow: "auto", padding: "32px 0" }}>
-            <div style={{ maxWidth: 660, margin: "0 auto", padding: "0 32px" }}>
+            <div style={{ maxWidth: step === 2 && cards.length && !loader ? 1020 : 660, margin: "0 auto", padding: "0 32px", transition: "max-width var(--t-reg)" }}>
               {loader ? (
                 <ReActTrace key={loader.phase ?? "plan"} runId={briefId} phase={loader.phase ?? "plan"} onDone={onLoaderDone} />
               ) : (
@@ -627,9 +627,9 @@ const splitTechs = (value: string): string[] =>
 function TechPill({ tech }: { tech: string }) {
   const Logo = techIcon(tech);
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 10px",
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 23, padding: "0 9px",
       borderRadius: "var(--r-md)", background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)",
-      fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", maxWidth: "100%", boxShadow: "var(--shadow-1)" }}>
+      fontSize: 11.5, fontWeight: 500, color: "var(--text-secondary)", maxWidth: "100%", boxShadow: "var(--shadow-1)" }}>
       {Logo ? <Logo size={13} color="var(--text-tertiary)" /> : <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-quaternary)", flexShrink: 0 }} />}
       <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{tech}</span>
     </span>
@@ -648,7 +648,7 @@ function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setCho
   cards: ArchitectureCard[]; aiPick: { name: string; why: string }; selectedCardName: string | null; setSelectedCardName: (n: string) => void; setChosenStack: (s: TechStack) => void;
 }) {
   const cols = `104px repeat(${cards.length}, minmax(0, 1fr))`;
-  const cell: React.CSSProperties = { padding: "13px 13px", borderTop: "0.5px solid var(--border-subtle)", minWidth: 0 };
+  const cell: React.CSSProperties = { padding: "10px 12px", borderTop: "0.5px solid var(--border-subtle)", minWidth: 0 };
   const rowLabel: React.CSSProperties = { ...cell, fontSize: 10.5, color: "var(--text-quaternary)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 };
   const pick = (c: ArchitectureCard) => { setSelectedCardName(c.name); setChosenStack(c.tech_stack); };
 
@@ -669,7 +669,7 @@ function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setCho
             const on = selectedCardName === c.name;
             return (
               <button key={c.name} className="s0-press" onClick={() => pick(c)}
-                style={{ textAlign: "left", padding: "15px 14px", borderLeft: "0.5px solid var(--border-subtle)", minWidth: 0,
+                style={{ textAlign: "left", padding: "12px 12px", borderLeft: "0.5px solid var(--border-subtle)", minWidth: 0,
                   cursor: "pointer", ...colSel(on, "head") }}>
                 <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 7 }}>{c.name}</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -778,7 +778,7 @@ function StepPlan({ plan, relay, staffing, members }: {
 
   return (
     <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
-      <WizHead title="The relay" sub={`${taskCount} task${taskCount === 1 ? "" : "s"} across ${order.length} discipline gate${order.length === 1 ? "" : "s"}. Each gate is ratified by its owner. Nothing auto-passes.`} />
+      <WizHead title="The relay" sub={`~${taskCount} tasks across ${order.length} discipline gate${order.length === 1 ? "" : "s"}, refined as the gates validate. Each gate is ratified by its owner. Nothing auto-passes.`} />
 
       <div className="kicker" style={{ marginBottom: 12 }}>Who runs each gate, in order{gapCount > 0 ? ` · ${gapCount} gap${gapCount === 1 ? "" : "s"}` : ""}</div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, flexWrap: "wrap", rowGap: 16, padding: "52px 0" }}>
@@ -819,7 +819,7 @@ function StepReview({ preview, projectName, setProjectName, briefId, dispatching
         </span>
         <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 8px" }}>Project reserved</h1>
         <p style={{ fontSize: 14, color: "var(--text-tertiary)", lineHeight: 1.55, margin: "0 0 22px" }}>
-          <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{name}</b> is reserved and the relay is <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>open for your leads to ratify</b>. The {taskN} task{taskN === 1 ? "" : "s"} + branches scaffold to GitLab automatically once every gate is signed.
+          <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{name}</b> is reserved and the relay is <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>open for your leads to ratify</b>. The ~{taskN} tasks + branches scaffold to GitLab automatically once every gate is signed.
         </p>
         <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
           <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onGoRelays}>Go to the relay</Button>
@@ -846,7 +846,7 @@ function StepReview({ preview, projectName, setProjectName, briefId, dispatching
         </div>
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: "var(--r-lg)", border: "0.5px solid var(--border)", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)" }}>
           <Icon name="list" size={18} style={{ color: "var(--text-tertiary)" }} />
-          <div><div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>{taskN}</div><div style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>task{taskN === 1 ? "" : "s"} scaffolded</div></div>
+          <div><div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>~{taskN}</div><div style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>tasks scaffolded</div></div>
         </div>
       </div>
 
@@ -854,7 +854,7 @@ function StepReview({ preview, projectName, setProjectName, briefId, dispatching
         {`Create ${name}`}
       </Button>
       <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", textAlign: "center", margin: "10px 0 0", lineHeight: 1.5 }}>
-        Reserves the GitLab project + opens the relay. The {taskN} task{taskN === 1 ? "" : "s"} + branches scaffold automatically once every lead ratifies their gate.
+        Reserves the GitLab project + opens the relay. The ~{taskN} tasks + branches scaffold automatically once every lead ratifies their gate.
       </p>
     </div>);
 }

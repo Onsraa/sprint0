@@ -470,6 +470,8 @@ def _my_gates(member: DeveloperProfile, members: list[DeveloperProfile]) -> list
                 continue
             if g.status not in ("pending", "changes_requested"):
                 continue
+            if not _gate_ready(plan_id, g):      # strict pipeline: never queue a gate whose choices aren't ready yet
+                continue
             # the gate queues for its RATIFIER: delegate ?? owner (the assigned lead, WS1) ?? the discipline
             # lead; an unowned/orphan gate falls to the Tech Lead. Mirrors the ratify permission.
             _ratifier = g.delegate or g.owner
@@ -689,7 +691,7 @@ async def list_relays(member: DeveloperProfile = Depends(auth.current_member)) -
             continue
         out.append({
             "plan_id": plan_id, "project": plan.project_name, "baton": list(state.baton),
-            "gates": [{"discipline": g.discipline, "status": g.status, "note": g.note, "owner": g.owner, "delegate": g.delegate} for g in state.gates],
+            "gates": [{"discipline": g.discipline, "status": g.status, "note": g.note, "owner": g.owner, "delegate": g.delegate, "ready": _gate_ready(plan_id, g)} for g in state.gates],
             "is_delta": plan_id in DELTA_TARGET, "target_project_id": DELTA_TARGET.get(plan_id),
             "all_ratified": relay.all_ratified(state),
         })
@@ -1220,11 +1222,25 @@ async def get_plan(plan_id: str) -> PlanJSON:
     return PLANS[plan_id]
 
 
+def _gate_ready(plan_id: str, g) -> bool:
+    """Strict pipeline (P2): a pending gate is 'ready' (open) once its choices are cached; a gate with no
+    slice (the qa acceptance gate, setup) has nothing to generate → always ready."""
+    if g.status not in ("pending", "changes_requested"):
+        return True
+    if (plan_id, g.discipline) in SOLUTIONS:
+        return True
+    plan = PLANS.get(plan_id)
+    return not plan or not any(i.discipline == g.discipline for e in plan.epics for i in e.issues)
+
+
 @app.get("/api/plans/{plan_id}/relay", response_model=RelayState)
 async def get_relay(plan_id: str) -> RelayState:
     if plan_id not in RELAYS:
         raise HTTPException(404, "relay not found")
-    return RELAYS[plan_id]
+    state = RELAYS[plan_id]
+    for g in state.gates:  # stamp the strict-pipeline readiness at serialization time
+        g.ready = _gate_ready(plan_id, g)
+    return state
 
 
 # (Removed: the Autonomy dial / auto-pass endpoint. NO auto-approval — the human ratifies every gate, the AI only
@@ -1254,6 +1270,7 @@ async def ratify_gate(
     if discipline == "setup" and req.tech_stack is not None:  # the redirected lead confirms or OVERRIDES the stack
         plan.tech_stack = req.tech_stack                      # propagates to the scaffold (README/focus) at relay-close
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
+    _pregenerate_open_gates(plan_id)  # strict pipeline: the gates this ratify just unlocked start preparing (P2)
     try:  # durable runtime (P8): record the ratification so the relay's progress survives a restart
         await eventlog.emit("gate_ratified", created_at=datetime.now(timezone.utc).isoformat(),
                             payload={"plan_id": plan_id, "discipline": discipline,
@@ -1548,27 +1565,27 @@ async def handoff_gate(plan_id: str, discipline: str, assignee: str = "", member
     return state
 
 
-@app.get("/api/plans/{plan_id}/gates/{discipline}/solutions", response_model=SolutionSet)
-async def gate_solutions(
-    plan_id: str, discipline: str, member: DeveloperProfile = Depends(auth.current_member),
-) -> SolutionSet:
-    """Reuse-or-innovate (the Contract spine): lazily generate — then cache — the solution set for ONE gate:
-    a memory-grounded option + 1-2 fresh AI options + a write-your-own slot. One LLM call per gate, ever."""
-    plan = PLANS.get(plan_id)
-    if plan is None:
-        raise HTTPException(404, "plan not found")
-    # visibility = the gate's RATIFIER (delegate ?? owner ?? discipline lead), the manager, or a granted Watch
-    if not await _can_read_contract(member, discipline, plan_id):
-        return SolutionSet(discipline=discipline, solutions=[])  # private — ratifier / manager / granted Watch only
-    key = (plan_id, discipline)
-    if key in SOLUTIONS:
-        SOLUTIONS[key].chosen = CHOSEN.get(key)   # may have changed since cache (ratify writes CHOSEN)
-        return SOLUTIONS[key]
-    slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
-    if not slice_issues:
-        raise HTTPException(404, "no slice for this discipline in the plan")
+async def _gate_generation_context(plan_id: str, discipline: str) -> tuple[dict, list[dict]]:
+    """The feature context a gate's solutions are grounded on (P7): the CHOSEN solutions of this plan's
+    already-ratified gates + the signed interface shapes flowing INTO this gate — so the proposals stay
+    consistent with the decisions already made, never blind to the feature."""
+    upstream = {d: sol for (pid, d), sol in CHOSEN.items() if pid == plan_id and d != discipline}
     try:
-        sset = await propose_solutions(plan, discipline)  # MongoDB MCP grounding + one Gemini call
+        rows = await agreements_for_plan(plan_id)
+        inbound = [a for a in rows if a.get("type") == "interface" and a.get("consumer_discipline") == discipline
+                   and a.get("state") in ("active", "ratified", "auto_passed")]
+    except Exception:
+        inbound = []
+    return upstream, inbound
+
+
+async def _generate_gate_solutions(plan_id: str, plan: PlanJSON, discipline: str) -> SolutionSet:
+    """Generate + cache + persist ONE gate's reuse-or-innovate set (full feature context, P7). Shared by the
+    lazy GET (the never-strand fallback) and the strict-pipeline pre-generation (P2)."""
+    key = (plan_id, discipline)
+    upstream, inbound = await _gate_generation_context(plan_id, discipline)
+    try:
+        sset = await propose_solutions(plan, discipline, upstream_choices=upstream, inbound_contracts=inbound)  # MongoDB MCP grounding + one Gemini call
     except Exception:  # a transient model/DB error must NOT 500 the Contract — degrade to a stub + user slot
         sset = SolutionSet(solutions=[SolutionCard(
             source="ai", title="Define this slice",
@@ -1597,6 +1614,50 @@ async def gate_solutions(
     SOLUTIONS[key] = sset
     await _persist("solutions", f"{key[0]}|{key[1]}", sset.model_dump())  # durable cache
     return sset
+
+
+def _pregenerate_open_gates(plan_id: str) -> None:
+    """Strict pipeline (P2): fire-and-forget generation for every PENDING gate that has no cached solution
+    set yet, so a gate is 'preparing' the moment it unlocks and opens with its choices ready. Called at
+    reserve (the parallel first wave) and after each ratify (the newly unlocked gates). The lazy GET stays
+    as the fallback, so a failed background task can never strand a gate."""
+    plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
+    if plan is None or state is None:
+        return
+
+    async def _one(disc: str) -> None:
+        try:
+            await _generate_gate_solutions(plan_id, plan, disc)
+        except Exception:
+            logging.getLogger("sprint0.pregen").warning(
+                "pre-generation failed for %s/%s — the lazy GET will retry on open", plan_id, disc)
+
+    for g in state.gates:
+        if g.status in ("pending", "changes_requested") and (plan_id, g.discipline) not in SOLUTIONS \
+                and any(i.discipline == g.discipline for e in plan.epics for i in e.issues):
+            asyncio.create_task(_one(g.discipline))
+
+
+@app.get("/api/plans/{plan_id}/gates/{discipline}/solutions", response_model=SolutionSet)
+async def gate_solutions(
+    plan_id: str, discipline: str, member: DeveloperProfile = Depends(auth.current_member),
+) -> SolutionSet:
+    """Reuse-or-innovate (the Contract spine): the strict pipeline pre-generates (P2); this GET serves the
+    cache — and remains the lazy fallback that generates on the spot if pre-generation hasn't landed."""
+    plan = PLANS.get(plan_id)
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    # visibility = the gate's RATIFIER (delegate ?? owner ?? discipline lead), the manager, or a granted Watch
+    if not await _can_read_contract(member, discipline, plan_id):
+        return SolutionSet(discipline=discipline, solutions=[])  # private — ratifier / manager / granted Watch only
+    key = (plan_id, discipline)
+    if key in SOLUTIONS:
+        SOLUTIONS[key].chosen = CHOSEN.get(key)   # may have changed since cache (ratify writes CHOSEN)
+        return SOLUTIONS[key]
+    slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
+    if not slice_issues:
+        raise HTTPException(404, "no slice for this discipline in the plan")
+    return await _generate_gate_solutions(plan_id, plan, discipline)
 
 
 async def _build_reuse_seeds(plan_id: str, plan: PlanJSON) -> dict[str, list[dict]]:
@@ -1855,6 +1916,7 @@ async def _reserve_locked(plan_id: str, req: DispatchRequest) -> dict:
                             payload={"plan_id": plan_id, "reserved": res})
     except Exception:
         pass
+    _pregenerate_open_gates(plan_id)  # strict pipeline: the first-wave gates start preparing NOW (P2)
     return {"project_id": res["project_id"], "web_url": res.get("web_url", ""), "relay_open": True}
 
 
