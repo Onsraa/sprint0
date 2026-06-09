@@ -27,13 +27,9 @@ log = logging.getLogger(__name__)
 
 _PP_PROJECTION = {"name": 1, "tech_stack": 1, "total_estimate_days": 1, "actual_days": 1, "outcome_notes": 1}
 
-# Reuse relevance floors (cosine), calibrated empirically against the seeded corpus. A genuine domain
-# match scores >0.80 for a past project / ≥0.75 for code; a mismatched brief (e.g. a video game) tops out
-# ~0.73 / ~0.726 — including GENERIC infra code (auth/user/server), which otherwise leaks in via the
-# import-graph expansion when a borderline hit clears the floor. A single 0.75 floor cleanly filters both,
-# so a mismatched brief surfaces NOTHING and gets a fresh-build plan instead of forced reuse.
-REUSE_MIN_SCORE = 0.75
-CODE_MIN_SCORE = 0.75
+# Reuse relevance is decided by the LLM (CRAG: a verdict + reason per candidate), NOT a cosine threshold —
+# bi-encoder cosine isn't comparable across briefs (anisotropic, phrasing-sensitive) and the N=2 corpus is
+# un-tunable. Retrieval below is RECALL only; the judge lives in clarify (memory_candidates) + the agent prompts.
 _DEV_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "skills_text": 1, "trust_level": 1}
 # Match needs the scoring fields + the stored vector (we rank locally over the tiny roster, not per-skill in Atlas).
 _DEV_MATCH_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "username": 1, "trust_level": 1, "trust": 1,
@@ -107,17 +103,17 @@ def _safe_username(raw: str) -> str:
 async def propose_architectures(brief_text: str, constraints: Constraints | None = None) -> ArchitectureOptions:
     async with MongoMCP() as m:
         qv = embed_query(brief_text)
-        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION, min_score=REUSE_MIN_SCORE)
+        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)
         try:  # ground the per-card `reuse` block in real reusable files (code-RAG + 1-hop import cluster)
-            code = await code_search_expanded(m, qv, k=5, min_score=CODE_MIN_SCORE)
+            code = await code_search_expanded(m, qv, k=5)
         except Exception:
             code = []
     prompt = (
         f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"SIMILAR PAST PROJECTS (agency memory — relevance-gated; reuse a card's `reuse` block ONLY if a "
-        f"project here genuinely fits this brief's domain; if the list is empty, design a fresh stack):\n{_format_past(past)}\n\n"
+        f"CANDIDATE PAST PROJECTS (agency memory — JUDGE each for fit; reuse a card's `reuse` block ONLY from a "
+        f"project that genuinely fits this brief's domain; if none fit, design a fresh stack):\n{_format_past(past)}\n\n"
         f"REUSABLE CODE (chunk-level — cite the project + feature in each card's `reuse`, only if listed):\n{_format_code(code)}\n\n"
         f"DEV ROSTER:\n{_format_roster(roster)}\n\n"
         f"Propose 2-3 distinct architecture cards + your own ai_pick. A fresh-build card with no reuse is a "
@@ -132,27 +128,30 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
 
 
 async def clarify_brief(brief_text: str, constraints: Constraints | None = None) -> ClarifiedSpec:
-    """Intake step: extract the spec, flag unclear *features* as ambiguity cards, and propose
-    memory-grounded reuse — the manager's first panel, before architecture + planning."""
+    """Intake step: extract the spec, flag unclear *features* as ambiguity cards, and JUDGE each memory
+    candidate for reuse-fit (CRAG — verdict + reason, no cosine gate). The manager's first panel."""
     qv = embed_query(brief_text)
     async with MongoMCP() as m:
+        # retrieve for RECALL only — the LLM judges relevance per candidate (CRAG); no cosine decision-gate
         past = await m.hybrid_search(
             PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION,
-            min_score=REUSE_MIN_SCORE,
         )
         try:
-            code = await m.code_search(qv, k=5, min_score=CODE_MIN_SCORE)
+            code = await m.code_search(qv, k=5)
         except Exception:
             code = []  # code-RAG index not present yet (pre-reseed) → skip the reuse-code section
     prompt = (
         f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"SIMILAR PAST PROJECTS (agency memory — relevance-gated; empty = nothing in memory fits this domain):\n{_format_past(past)}\n\n"
-        f"REUSABLE CODE (chunk-level code-RAG over agency repos — cite specific files ONLY in genuinely-fitting reuse proposals):\n{_format_code(code)}\n\n"
-        f"Produce the clarified spec: extraction, 2-4 ambiguity cards, and reuse proposals ONLY where a listed "
-        f"project genuinely fits (if none are listed, propose no reuse — a fresh build is correct)."
+        f"CANDIDATE PAST PROJECTS (agency memory — retrieved by similarity; JUDGE each for fit):\n{_format_past(past)}\n\n"
+        f"CANDIDATE CODE (chunk-level code-RAG over agency repos; JUDGE each for fit):\n{_format_code(code)}\n\n"
+        f"Produce the clarified spec: extraction, 2-4 ambiguity cards, a `memory_candidates` verdict for EVERY "
+        f"candidate above (reuse/maybe/skip + why), and reuse proposals grounded only on the ones you judge relevant."
     )
-    return await generate_clarification(prompt)
+    spec = await generate_clarification(prompt)
+    for c in spec.memory_candidates:  # server default — reuse-verdict candidates pre-selected; the human toggles in the UI
+        c.used = c.verdict == "reuse"
+    return spec
 
 
 async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None) -> SolutionSet:
@@ -171,9 +170,9 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
     query = f"{plan.project_name} · {discipline}: " + "; ".join(i.title for i in slice_issues)
     qv = embed_query(query)
     async with MongoMCP() as m:
-        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, query, k=3, projection=_PP_PROJECTION, min_score=REUSE_MIN_SCORE)
+        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, query, k=3, projection=_PP_PROJECTION)
         try:  # in-lane chunks for THIS gate (discipline pre-filter) + their 1-hop import cluster
-            code = await code_search_expanded(m, qv, k=5, discipline=discipline, min_score=CODE_MIN_SCORE)
+            code = await code_search_expanded(m, qv, k=5, discipline=discipline)
         except Exception:
             code = []
     try:  # #33 — feed past TEAM decisions so the LLM can ground a `conflict` flag (not hallucinate it)
@@ -187,7 +186,7 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
         f"GATE DISCIPLINE: {discipline}\n\n"
         f"THE SLICE (issues this gate delivers):\n{slice_text}\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"SIMILAR PAST PROJECTS (agency memory — relevance-gated; reuse ONLY if a listed project genuinely fits this gate; empty = build fresh):\n{_format_past(past)}\n\n"
+        f"CANDIDATE PAST PROJECTS (agency memory — JUDGE each; reuse ONLY a project that genuinely fits this gate; none fit = build fresh):\n{_format_past(past)}\n\n"
         f"REUSABLE CODE (chunk-level — only if listed):\n{_format_code(code)}\n\n"
         f"PAST TEAM DECISIONS (set conflict=true + name it in conflict_reason ONLY if an option genuinely "
         f"contradicts one; else conflict=false):\n{_format_decisions(team_decisions)}\n\n"
@@ -263,7 +262,7 @@ async def run_brief(
 ) -> PlanJSON:
     vocab = await _known_profile_labels()  # own MCP context — fetch BEFORE the main one (no re-entrancy)
     async with MongoMCP() as m:
-        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION, min_score=REUSE_MIN_SCORE)
+        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
         plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
         plan.grounded_on = plan.grounded_on or [p["name"] for p in past]
@@ -363,7 +362,6 @@ async def delta_brief(feature_text: str, record: dict, constraints: Constraints 
     async with MongoMCP() as m:
         past = await m.hybrid_search(
             PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(feature_text), feature_text, k=3, projection=_PP_PROJECTION,
-            min_score=REUSE_MIN_SCORE,
         )
         plan = await generate_plan(_build_delta_prompt(feature_text, record, existing_titles, manifest, past, stack, constraints, decisions))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side

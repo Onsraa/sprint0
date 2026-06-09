@@ -175,6 +175,18 @@ class ReuseItem(BaseModel):
     from_project: str
     feature: str
     action: Literal["reuse", "adapt", "drop"] = "reuse"
+    reason: str = ""                                       # ≤140 — why this is worth reusing for THIS brief
+
+
+class MemoryCandidate(BaseModel):
+    """A retrieved past-project/code candidate the AI JUDGED for reuse-relevance (CRAG-style): a verdict +
+    a human-readable reason replace the old cosine threshold. The human ratifies which to actually use."""
+    ref: str                                               # the candidate's identity (project name or file path)
+    kind: Literal["project", "code"] = "project"
+    project: str = ""                                      # source project (for a code ref)
+    verdict: Literal["reuse", "maybe", "skip"] = "skip"    # the AI's relevance call — abstain = skip
+    reason: str = ""                                       # ≤140 — WHY it does or doesn't fit this brief
+    used: bool = False                                     # the human's pick (server defaults reuse→True; the UI toggles)
 
 
 class ArchitectureCard(BaseModel):
@@ -237,6 +249,7 @@ class ClarifiedSpec(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     ambiguities: list[AmbiguityCard] = Field(default_factory=list)
     reuse: list[ReuseItem] = Field(default_factory=list)
+    memory_candidates: list[MemoryCandidate] = Field(default_factory=list)  # CRAG: judged reuse candidates (verdict + why)
 
 
 # ── Relay: the ratification DAG ({uiux ∥ be} → fe → qa) ──

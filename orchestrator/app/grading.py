@@ -76,7 +76,7 @@ def signal_for(card) -> str:
 def recommend_architecture(cards: list, ai_pick_name: str = "") -> int | None:
     """The badged card follows the AI's OWN pick (`ai_pick_name`) — NOT a reuse-max heuristic. We dropped the
     old "most proven reuse" scoring (reused*2 + grounded) because it forced a reuse bias even on a mismatched
-    brief; reuse is now one option among equals, and relevance is gated upstream (reason.REUSE_MIN_SCORE) so a
+    brief; reuse is now one option among equals, and relevance is LLM-judged upstream (CRAG: verdict+reason) so a
     card only cites memory when a past project genuinely fits. Returns the index of the card whose name matches
     the AI's pick, else None (no server badge — the cards stand on their own)."""
     if not cards or not ai_pick_name:
