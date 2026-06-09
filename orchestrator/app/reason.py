@@ -27,11 +27,13 @@ log = logging.getLogger(__name__)
 
 _PP_PROJECTION = {"name": 1, "tech_stack": 1, "total_estimate_days": 1, "actual_days": 1, "outcome_notes": 1}
 
-# Reuse relevance floors (cosine), calibrated empirically: a genuine domain match scores >0.80 for past
-# projects / >0.76 for code; spurious matches top out ~0.73 / ~0.68. Below the floor nothing is surfaced,
-# so a mismatched-domain brief (e.g. a video game) gets a fresh-build plan instead of forced reuse.
+# Reuse relevance floors (cosine), calibrated empirically against the seeded corpus. A genuine domain
+# match scores >0.80 for a past project / ≥0.75 for code; a mismatched brief (e.g. a video game) tops out
+# ~0.73 / ~0.726 — including GENERIC infra code (auth/user/server), which otherwise leaks in via the
+# import-graph expansion when a borderline hit clears the floor. A single 0.75 floor cleanly filters both,
+# so a mismatched brief surfaces NOTHING and gets a fresh-build plan instead of forced reuse.
 REUSE_MIN_SCORE = 0.75
-CODE_MIN_SCORE = 0.72
+CODE_MIN_SCORE = 0.75
 _DEV_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "skills_text": 1, "trust_level": 1}
 # Match needs the scoring fields + the stored vector (we rank locally over the tiny roster, not per-skill in Atlas).
 _DEV_MATCH_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "username": 1, "trust_level": 1, "trust": 1,
