@@ -33,5 +33,7 @@ dist/
 *.md
 docs/
 .mcp.json
-.env.example
 *.gitkeep
+# …but the public repo needs its front door (root only):
+!/README.md
+!/LICENSE
