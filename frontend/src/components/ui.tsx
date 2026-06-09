@@ -187,20 +187,48 @@ export function LoadMeter({ value = 0, width = 44 }: { value?: number; width?: n
   );
 }
 
-/* When a member can start NEW work — the honest capacity signal (replaces the load %). green=free now,
-   amber=soon (≤3d), grey=busy. `compact` drops the backlog tail for tight rows (e.g. the relay candidate list). */
+/* When a member can start NEW work — the honest capacity signal (replaces the load %).
+   now=green · soon(≤3d)=blue · busy=amber. Full mode is two lines: when-free on top, then a mono
+   row of active tasks (list icon) + queued days (clock icon). `compact` keeps dot + label only for
+   tight rows (the relay candidate list). Ported from the v5 mockup primitives. */
+const AVAIL_TONE = { now: "var(--green)", soon: "var(--blue)", busy: "var(--amber)" } as const;
+function availTier(d: number): keyof typeof AVAIL_TONE { return d <= 0 ? "now" : d <= 3 ? "soon" : "busy"; }
 export function Availability({ a, compact = false }: { a?: AvailabilityT | null; compact?: boolean }) {
   if (!a) return <span className="mono" style={{ fontSize: 11, color: "var(--text-quaternary)" }}>—</span>;
-  const d = a.free_in_days;
-  const tone = d === 0 ? "var(--green)" : d <= 3 ? "var(--amber)" : "var(--text-tertiary)";
-  const label = d === 0 ? "Free now" : `Free in ${d}d`;
+  const tier = availTier(a.free_in_days);
+  const free = tier === "now";
+  const primary = free ? "Free now" : `Free in ${a.free_in_days}d`;
+  const dot = <span style={{ width: 7, height: 7, borderRadius: "50%", background: AVAIL_TONE[tier], flexShrink: 0 }} />;
+  const title = `Available ${free ? "now" : `in ${a.free_in_days} days`}${a.queued_days > 0 ? ` · ~${Math.round(a.queued_days)}d queued` : ""}`;
+
+  if (compact) {
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }} title={title}>
+        {dot}
+        <span style={{ fontSize: 12, fontWeight: 500, color: free ? "var(--green)" : "var(--text-secondary)" }}>{primary}</span>
+      </span>
+    );
+  }
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }} title={`Available ${a.available_on} · ${a.active_count} active · ~${Math.round(a.queued_days)}d queued`}>
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: tone, flexShrink: 0 }} />
-      <span style={{ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{label}</span>
-      {!compact && a.active_count > 0 && (
-        <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", whiteSpace: "nowrap" }}>· {a.active_count} {a.active_count === 1 ? "task" : "tasks"} · ~{Math.round(a.queued_days)}d</span>
-      )}
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }} title={title}>
+      {dot}
+      <span style={{ display: "inline-flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 500, color: free ? "var(--green)" : "var(--text-secondary)", whiteSpace: "nowrap" }}>{primary}</span>
+        {(a.active_count > 0 || a.queued_days > 0) && (
+          <span className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 10, fontSize: 10.5, color: "var(--text-quaternary)", whiteSpace: "nowrap" }}>
+            {a.active_count > 0 && (
+              <span title={`${a.active_count} active ${a.active_count === 1 ? "task" : "tasks"}`} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                <Icon name="list" size={11} style={{ opacity: 0.8 }} />{a.active_count}
+              </span>
+            )}
+            {a.queued_days > 0 && (
+              <span title={`~${Math.round(a.queued_days)} days of work queued`} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                <Icon name="clock" size={11} style={{ opacity: 0.8 }} />~{Math.round(a.queued_days)}d
+              </span>
+            )}
+          </span>
+        )}
+      </span>
     </span>
   );
 }
