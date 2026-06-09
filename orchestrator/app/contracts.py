@@ -198,11 +198,31 @@ class MemoryCandidate(BaseModel):
     cons: list[str] = Field(default_factory=list)          # detail view — caveats / what differs
     used: bool = False                                     # the human's pick (server defaults strong→True; the UI toggles)
 
+    @field_validator("what")
+    @classmethod
+    def _trunc_what(cls, v: str) -> str:
+        return (v or "")[:120]
+
+    @field_validator("reason")
+    @classmethod
+    def _trunc_reason(cls, v: str) -> str:
+        return (v or "")[:140]
+
+    @field_validator("pros", "cons")
+    @classmethod
+    def _trunc_proscons(cls, v: list[str]) -> list[str]:
+        return [_trunc_words(x, 8) for x in (v or [])[:3]]
+
 
 class MemoryJudgment(BaseModel):
     """The memory-judge agent's output (judge_memory): a reuse verdict per retrieved candidate, graded on the
     RESOLVED spec — after the manager answered the ambiguities, so their answers can shift the grounding."""
     candidates: list[MemoryCandidate] = []
+
+    @field_validator("candidates")
+    @classmethod
+    def _cap_candidates(cls, v: list[MemoryCandidate]) -> list[MemoryCandidate]:
+        return (v or [])[:8]  # the UI panel renders a handful; an over-eager judge must not flood it
 
 
 class ArchitectureCard(BaseModel):
@@ -221,6 +241,16 @@ class ArchitectureCard(BaseModel):
     @classmethod
     def _trunc_proscons(cls, v: list[str]) -> list[str]:
         return [_trunc_words(x, 8) for x in (v or [])[:3]]
+
+    @field_validator("summary", "fit_to_constraints")
+    @classmethod
+    def _trunc_summary(cls, v: str) -> str:
+        return (v or "")[:140]
+
+    @field_validator("rationale")
+    @classmethod
+    def _trunc_rationale(cls, v: str) -> str:
+        return (v or "")[:240]
 
 
 class ArchitectureOptions(BaseModel):
@@ -255,10 +285,16 @@ class AmbiguityCard(BaseModel):
     options: list[str]                 # 2-3 candidate interpretations
     resolution: Optional[str] = None   # manager's pick or free-text escape
 
+    @field_validator("options")
+    @classmethod
+    def _cap_options(cls, v: list[str]) -> list[str]:
+        return (v or [])[:4]
+
 
 class ClarifiedSpec(BaseModel):
     """Emitted by the clarify agent (goal/users/must_haves/constraints/ambiguities);
-    `reuse` is filled server-side from the memory match."""
+    `reuse` is filled server-side from the memory match. List bounds mirror the instruction
+    ("2-4 ambiguities", short lists) — an instruction-ignoring generation must not flood the UI."""
     goal: str
     users: list[str] = Field(default_factory=list)
     must_haves: list[str] = Field(default_factory=list)
@@ -266,6 +302,26 @@ class ClarifiedSpec(BaseModel):
     ambiguities: list[AmbiguityCard] = Field(default_factory=list)
     reuse: list[ReuseItem] = Field(default_factory=list)
     memory_candidates: list[MemoryCandidate] = Field(default_factory=list)  # CRAG: judged reuse candidates (verdict + why)
+
+    @field_validator("users")
+    @classmethod
+    def _cap_users(cls, v: list[str]) -> list[str]:
+        return (v or [])[:5]
+
+    @field_validator("must_haves")
+    @classmethod
+    def _cap_musts(cls, v: list[str]) -> list[str]:
+        return (v or [])[:8]
+
+    @field_validator("constraints")
+    @classmethod
+    def _cap_constraints(cls, v: list[str]) -> list[str]:
+        return (v or [])[:6]
+
+    @field_validator("ambiguities")
+    @classmethod
+    def _cap_ambiguities(cls, v: list[AmbiguityCard]) -> list[AmbiguityCard]:
+        return (v or [])[:5]
 
 
 # ── Relay: the ratification DAG ({uiux ∥ be} → fe → qa) ──
@@ -438,6 +494,11 @@ class ContractProposalSet(BaseModel):
     def _skip(cls, v: str) -> str:
         return (v or "")[:140]
 
+    @field_validator("proposals")
+    @classmethod
+    def _cap_proposals(cls, v: list[InterfaceProposal]) -> list[InterfaceProposal]:
+        return (v or [])[:3]  # instruction says 1-2 options; the picker renders at most a few
+
 
 class SubteamDraft(BaseModel):
     """For 2+ devs on ONE discipline's slice — the AI proposes pair (high-risk → review / junior+senior →
@@ -602,6 +663,11 @@ class QAItemResult(BaseModel):
     note: str = ""
     runner: Optional[str] = None    # the responsible dev (issue.assignee) — reject reroutes here
     disc: Optional[Discipline] = None  # the gate this item belongs to — drives the QA route pills
+
+    @field_validator("note")
+    @classmethod
+    def _trunc_note(cls, v: str) -> str:
+        return (v or "")[:200]
 
 
 class TesterPick(BaseModel):

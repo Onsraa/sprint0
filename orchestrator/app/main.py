@@ -35,7 +35,7 @@ from app.contracts import (
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
-from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card, generate_shape
+from app.agent import AIOutputError, AITimeoutError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card, generate_shape
 from app.execute import execute_plan, extend_project, reserve_project, scaffold_project
 from app.graphstore import store
 from app.rag import (
@@ -113,6 +113,12 @@ async def _genai_error(_request, exc: ClientError) -> JSONResponse:
     if code == 429:
         return JSONResponse(status_code=503, content={"detail": "AI quota / rate-limit hit — retry shortly."})
     return JSONResponse(status_code=502, content={"detail": f"AI provider error ({code})."})
+
+
+@app.exception_handler(AITimeoutError)
+async def _genai_timeout(_request, exc: AITimeoutError) -> JSONResponse:
+    """A hung model stream hit the per-attempt deadline — clean 504 the wizard can toast + retry."""
+    return JSONResponse(status_code=504, content={"detail": "AI call timed out — retry."})
 
 
 # ── Rate-limit for the PUBLIC (unauthenticated) AI intake endpoints ──

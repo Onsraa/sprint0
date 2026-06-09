@@ -26,6 +26,8 @@ React (Vite) ─REST/WS─▶ FastAPI gateway
 ```
 **Core principle:** REASON (Gemini → validated JSON, no tool-loop) is split from EXECUTE (the gateway drives batched calls) — deterministic, no timeouts. MongoDB is the brain: hybrid (vector + full-text) retrieval grounds every plan, merges grow per-discipline trust, and shipped projects flow back into memory.
 
+**Guardrailed AI I/O:** every untrusted input — the brief, CVs, *and* retrieved memory/code — is delimiter-tagged as data-not-instructions; every output is schema-validated with server-owned IDs and bounded fields; model calls run low-temperature with a hard timeout; and no AI output causes a side-effect without a human ratifying it.
+
 ## Quickstart (one command)
 Fill in your secrets, run one script — it provisions everything end-to-end.
 1. `cp .env.example .env`, then fill the five secrets: `GEMINI_API_KEY`, `VOYAGE_API_KEY`, `MONGODB_URI`, `GITLAB_TOKEN`, `GITLAB_DEMO_GROUP`.

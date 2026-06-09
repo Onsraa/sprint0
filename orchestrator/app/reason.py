@@ -36,6 +36,10 @@ _DEV_MATCH_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "username": 
                          "discipline": 1, "load": 1, "role": 1, "seniority": 1, "history": 1, "skill_embedding": 1}
 
 
+# Everything retrieved from memory (past projects, code chunks, decisions) or derived from user uploads
+# (roster skills come from CVs) is UNTRUSTED prompt input — same threat class as the brief itself. Each
+# formatter wraps its block in delimiter tags so every caller inherits the injection boundary, and the
+# instructions tell the model the tagged content is data, never instructions.
 def _format_past(projects: list[dict]) -> str:
     lines = []
     for p in projects:
@@ -45,7 +49,7 @@ def _format_past(projects: list[dict]) -> str:
             f"- {p.get('name')} | {stack} | est {p.get('total_estimate_days', '?')}d, "
             f"actual {p.get('actual_days', '?')}d | {(p.get('outcome_notes', '') or '')[:160]}"
         )
-    return "\n".join(lines) or "(no close matches)"
+    return "<past_projects>\n" + ("\n".join(lines) or "(no close matches)") + "\n</past_projects>"
 
 
 def _format_code(chunks: list[dict]) -> str:
@@ -56,19 +60,21 @@ def _format_code(chunks: list[dict]) -> str:
         f"    {(c.get('summary') or (c.get('excerpt', '') or '')[:240]).strip()}"
         for c in chunks
     ]
-    return "\n".join(lines) or "(no reusable code found)"
+    return "<code_chunks>\n" + ("\n".join(lines) or "(no reusable code found)") + "\n</code_chunks>"
 
 
 def _format_decisions(decisions: list[dict]) -> str:
     lines = [f"- [{d.get('grade', 'proposed')}] {d.get('recommendation', '')} (on {d.get('project_name', '?')})"
              for d in decisions]
-    return "\n".join(lines) or "(no standing team decisions for this gate)"
+    return "<team_decisions>\n" + ("\n".join(lines) or "(no standing team decisions for this gate)") + "\n</team_decisions>"
 
 
 def _format_roster(devs: list[dict]) -> str:
-    return "\n".join(
-        f"- @{d.get('gitlab_username')} ({d.get('trust_level')}): {d.get('skills_text', '')}" for d in devs
+    # skills_text is CV-derived (user upload) → cap it: injection surface AND the biggest prompt-size item
+    body = "\n".join(
+        f"- @{d.get('gitlab_username')} ({d.get('trust_level')}): {(d.get('skills_text', '') or '')[:160]}" for d in devs
     ) or "(roster unavailable)"
+    return "<roster>\n" + body + "\n</roster>"
 
 
 def _format_constraints(c: Constraints | None) -> str:
