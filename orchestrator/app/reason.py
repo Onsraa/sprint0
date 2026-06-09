@@ -133,7 +133,7 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
         f"valid, often-correct answer when nothing in memory fits."
     )
     from app import trace
-    trace.step("gemini", "action", "Design architecture options", "ground the cards on the chosen memory; propose 2-3 stacks")
+    trace.step("gemini", "action", "Design architecture options", "ground the cards on the chosen memory, propose 2-3 stacks")
     opts = await generate_architectures(prompt)
     for card in opts.cards:  # text hygiene — no semicolons / em-dashes in the card prose
         card.summary, card.rationale = _sanitize(card.summary), _sanitize(card.rationale)

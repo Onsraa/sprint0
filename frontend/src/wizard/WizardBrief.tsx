@@ -24,7 +24,7 @@ import {
   SiPostgresql, SiRedis, SiMongodb, SiTailwindcss, SiNextdotjs, SiVuedotjs, SiGo, SiRust,
   SiGraphql, SiKubernetes, SiGitlab,
 } from "@icons-pack/react-simple-icons";
-import { Button, Badge, DiscDot, discLabel } from "../components/ui";
+import { Button, Badge, DiscDot, discLabel, Avatar } from "../components/ui";
 import { Stepper, ReActTrace, ConfirmDraft } from "./WizardMotion";
 import { api } from "../lib/api";
 import type {
@@ -744,11 +744,16 @@ function StepPlan({ plan, relay, staffing, members }: {
     const isGap = isSetup ? false : (cov ? !cov.covered : !ownerUser);
     const leadName = ownerUser ? (byUser(ownerUser)?.name?.split(" ")[0] ?? ownerUser) : "Tech Lead";  // gap routes to the Tech Lead
     return (
-      <div key={disc} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "10px 8px", borderRadius: "var(--r-lg)", minWidth: 96,
-        background: "var(--bg-elevated)", border: isGap ? "1px dashed var(--text-primary)" : "0.5px solid var(--border)", boxShadow: "var(--shadow-1)" }}>
-        <DiscDot d={disc} size={11} />
-        <span style={{ fontSize: 11.5, fontWeight: 600 }}>{discLabel(disc)}</span>
-        <span style={{ fontSize: 10, color: isGap ? "var(--text-primary)" : "var(--text-tertiary)", fontWeight: isGap ? 600 : 400, textAlign: "center" }}>{leadName}</span>
+      <div key={disc} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "18px 16px", borderRadius: "var(--r-xl)", minWidth: 140,
+        background: "var(--bg-elevated)", border: isGap ? "1.5px dashed var(--text-primary)" : "0.5px solid var(--border)", boxShadow: "var(--shadow-1)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <DiscDot d={disc} size={13} />
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{discLabel(disc)}</span>
+        </div>
+        {ownerUser
+          ? <Avatar name={byUser(ownerUser)?.name ?? ownerUser} size={34} />
+          : <span style={{ width: 34, height: 34, borderRadius: "50%", border: "1.5px dashed var(--border-strong)", display: "grid", placeItems: "center" }}><Icon name="team" size={16} style={{ color: "var(--text-quaternary)" }} /></span>}
+        <span style={{ fontSize: 11.5, color: isGap ? "var(--text-primary)" : "var(--text-tertiary)", fontWeight: isGap ? 600 : 500, textAlign: "center" }}>{leadName}</span>
       </div>
     );
   };
@@ -758,11 +763,11 @@ function StepPlan({ plan, relay, staffing, members }: {
       <WizHead title="The relay" sub={`${taskCount} task${taskCount === 1 ? "" : "s"} across ${order.length} discipline gate${order.length === 1 ? "" : "s"}. Each gate is ratified by its owner. Nothing auto-passes.`} />
 
       <div className="kicker" style={{ marginBottom: 12 }}>Who runs each gate, in order{gapCount > 0 ? ` · ${gapCount} gap${gapCount === 1 ? "" : "s"}` : ""}</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 0, flexWrap: "wrap", rowGap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, flexWrap: "wrap", rowGap: 16, padding: "52px 0" }}>
         {byStage.map((st, si) => (
           <Fragment key={st.stage}>
-            {si > 0 && <div style={{ display: "flex", alignItems: "center", alignSelf: "center", padding: "0 6px" }}><Icon name="arrowRight" size={14} style={{ color: "var(--border-strong)" }} /></div>}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{st.gates.map((d: string) => gateCard(d))}</div>
+            {si > 0 && <div style={{ display: "flex", alignItems: "center", alignSelf: "center", padding: "0 10px" }}><Icon name="arrowRight" size={18} style={{ color: "var(--border-strong)" }} /></div>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{st.gates.map((d: string) => gateCard(d))}</div>
           </Fragment>
         ))}
       </div>

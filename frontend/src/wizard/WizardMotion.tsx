@@ -257,3 +257,28 @@ export function ConfirmDraft({ name, onConfirm, onCancel }: { name: string; onCo
     </div>
   );
 }
+
+/* ───────── discard draft sheet (destructive — red) ───────── */
+export function DiscardDraft({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div onClick={onCancel} style={{ position: "fixed", inset: 0, zIndex: 60, display: "grid", placeItems: "center",
+      background: "rgba(20,18,16,0.32)", backdropFilter: "blur(2px)", animation: "s0-scrim-in var(--t-reg) both" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 380, background: "var(--bg-elevated)", borderRadius: "var(--r-xl)",
+        border: "0.5px solid var(--border)", boxShadow: "var(--shadow-3)", padding: 20, animation: "s0-sheet-in var(--t-reg) var(--ease-out) both" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <span style={{ width: 30, height: 30, borderRadius: "var(--r-md)", background: "color-mix(in srgb, var(--red) 12%, transparent)", border: "0.5px solid var(--border)", display: "grid", placeItems: "center" }}>
+            <Icon name="close" size={15} style={{ color: "var(--red)" }} />
+          </span>
+          <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px" }}>Discard this draft?</span>
+        </div>
+        <p style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.55, margin: "0 0 18px" }}>
+          <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{name}</b> will be removed from Drafts. This cannot be undone. Nothing was created in GitLab, so nothing else is affected.
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Button variant="ghost" size="md" onClick={onCancel}>Cancel</Button>
+          <Button variant="secondary" size="md" icon="close" onClick={onConfirm} style={{ color: "var(--red)", borderColor: "var(--red)" }}>Discard draft</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
