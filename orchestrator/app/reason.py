@@ -202,11 +202,18 @@ async def judge_memory(spec: ClarifiedSpec, constraints: Constraints | None = No
     )
     trace.step("gemini", "action", "Judge reuse fit", "grade each candidate reuse / maybe / skip on the resolved spec")
     judgment = await generate_memory_judgment(prompt)
-    for c in judgment.candidates:  # server default — reuse-verdict candidates pre-selected; the human toggles in the UI
-        c.used = c.verdict == "reuse"
-    _n = sum(1 for c in judgment.candidates if c.verdict == "reuse")
-    trace.step("gemini", "result", f"{_n} reuse verdict(s) of {len(judgment.candidates)}")
+    for c in judgment.candidates:  # server default — strong-fit capabilities pre-selected; the human toggles in the UI
+        c.used = c.fit == "strong"
+        if not c.year:
+            c.year = _year_of(c.ref) or _year_of(c.project)  # year lives in the project name (traillog-2025)
+    _n = sum(1 for c in judgment.candidates if c.fit == "strong")
+    trace.step("gemini", "result", f"{_n} strong-fit capabilit(ies) of {len(judgment.candidates)}")
     return judgment.candidates
+
+
+def _year_of(name: str) -> str:
+    m = re.search(r"(?:19|20)\d{2}", name or "")
+    return m.group(0) if m else ""
 
 
 async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None) -> SolutionSet:

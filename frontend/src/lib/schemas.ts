@@ -79,11 +79,14 @@ export const ReuseItem = z.object({
   from_project: z.string(), feature: z.string(), action: z.enum(["reuse", "adapt", "drop"]),
   reason: z.string().optional(),                   // why this is worth reusing for THIS brief
 });
-export const MemoryCandidate = z.object({          // CRAG: a retrieved candidate the AI judged for reuse-fit
-  ref: z.string(), kind: z.enum(["project", "code"]).optional(), project: z.string().optional(),
-  verdict: z.enum(["reuse", "maybe", "skip"]),     // the AI's relevance call (abstain = skip) — replaces the cosine score
-  reason: z.string().optional(),                   // WHY it does/doesn't fit (shown to the human)
-  used: z.boolean().optional(),                    // the human's pick (reuse pre-selected; the Memory panel toggles)
+export const MemoryCandidate = z.object({          // CRAG: a reusable CAPABILITY the AI judged against this brief
+  ref: z.string(), project: z.string().optional(), year: z.string().optional(),
+  capability: z.string().optional(),               // short title, e.g. "Live-map vehicle tracking"
+  what: z.string().optional(),                     // what the capability does (the reusable part)
+  reason: z.string().optional(),                   // WHY it does/doesn't fit this brief
+  fit: z.enum(["strong", "partial", "skip"]),      // the AI's relevance call (abstain = skip) — replaces the cosine score
+  pros: z.array(z.string()).optional(), cons: z.array(z.string()).optional(),  // detail view
+  used: z.boolean().optional(),                    // the human's pick (strong pre-selected; the Memory panel toggles)
 });
 export type MemoryCandidate = z.infer<typeof MemoryCandidate>;
 export const ClarifiedSpec = z.object({

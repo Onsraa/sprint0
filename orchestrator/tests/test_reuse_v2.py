@@ -10,24 +10,24 @@ from app.contracts import ClarifiedSpec, MemoryCandidate
 from app.reason import select_grounded
 
 
-def test_memory_candidate_schema_and_closed_verdict():
-    c = MemoryCandidate(ref="quantapay-2024", kind="project", verdict="reuse", reason="fintech match")
-    assert c.verdict == "reuse" and c.used is False          # used defaults False; clarify sets it from the verdict
+def test_memory_candidate_schema_and_closed_fit():
+    c = MemoryCandidate(ref="quantapay-2024", capability="JWT auth", fit="strong", reason="fintech match")
+    assert c.fit == "strong" and c.used is False             # used defaults False; judge_memory sets it from the fit
     with pytest.raises(Exception):
-        MemoryCandidate(ref="x", verdict="definitely")        # verdict is a closed {reuse, maybe, skip}
+        MemoryCandidate(ref="x", fit="definitely")            # fit is a closed {strong, partial, skip}
 
 
 def test_clarified_spec_carries_candidates():
-    spec = ClarifiedSpec(goal="g", memory_candidates=[MemoryCandidate(ref="p", verdict="skip", reason="no fit")])
-    assert len(spec.memory_candidates) == 1 and spec.memory_candidates[0].verdict == "skip"
+    spec = ClarifiedSpec(goal="g", memory_candidates=[MemoryCandidate(ref="p", fit="skip", reason="no fit")])
+    assert len(spec.memory_candidates) == 1 and spec.memory_candidates[0].fit == "skip"
 
 
 def test_used_default_rule():
-    # the rule clarify_brief applies: a reuse-verdict candidate is pre-selected (used=True), maybe/skip are not
-    cands = [MemoryCandidate(ref="a", verdict="reuse"), MemoryCandidate(ref="b", verdict="maybe"),
-             MemoryCandidate(ref="c", verdict="skip")]
+    # the rule judge_memory applies: a strong-fit capability is pre-selected (used=True), partial/skip are not
+    cands = [MemoryCandidate(ref="a", fit="strong"), MemoryCandidate(ref="b", fit="partial"),
+             MemoryCandidate(ref="c", fit="skip")]
     for c in cands:
-        c.used = c.verdict == "reuse"
+        c.used = c.fit == "strong"
     assert [c.used for c in cands] == [True, False, False]
 
 
@@ -88,5 +88,5 @@ def test_judge_memory_grades_and_presets_used(monkeypatch):
     spec = ClarifiedSpec(goal="personal-finance SaaS", must_haves=["secure login"])
     cands = asyncio.run(reason.judge_memory(spec))
     assert cands, "demo judge returns graded candidates"
-    assert all(c.used == (c.verdict == "reuse") for c in cands)   # the used-default rule
-    assert any(c.used for c in cands)                              # at least one reuse pre-selected
+    assert all(c.used == (c.fit == "strong") for c in cands)      # the used-default rule
+    assert any(c.used for c in cands)                              # at least one strong-fit pre-selected

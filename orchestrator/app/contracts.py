@@ -179,14 +179,19 @@ class ReuseItem(BaseModel):
 
 
 class MemoryCandidate(BaseModel):
-    """A retrieved past-project/code candidate the AI JUDGED for reuse-relevance (CRAG-style): a verdict +
-    a human-readable reason replace the old cosine threshold. The human ratifies which to actually use."""
-    ref: str                                               # the candidate's identity (project name or file path)
-    kind: Literal["project", "code"] = "project"
-    project: str = ""                                      # source project (for a code ref)
-    verdict: Literal["reuse", "maybe", "skip"] = "skip"    # the AI's relevance call — abstain = skip
+    """A reusable CAPABILITY the AI found in agency memory and judged against THIS brief (CRAG: a reasoned fit
+    verdict, not a similarity score). Capability-level, not file-level — paths belong to the gate's impacted
+    files, not the choice. The human ratifies which capabilities ground the plan."""
+    ref: str                                               # grounding key — the source project (select_grounded)
+    project: str = ""                                      # source project name
+    year: str = ""                                         # shipped year, parsed from the project name
+    capability: str = ""                                   # short name, e.g. "Live-map vehicle tracking"
+    what: str = ""                                         # ≤120 — what this capability does (the reusable part)
     reason: str = ""                                       # ≤140 — WHY it does or doesn't fit this brief
-    used: bool = False                                     # the human's pick (server defaults reuse→True; the UI toggles)
+    fit: Literal["strong", "partial", "skip"] = "skip"     # the AI's relevance call — abstain = skip
+    pros: list[str] = Field(default_factory=list)          # detail view — why grounding on it helps
+    cons: list[str] = Field(default_factory=list)          # detail view — caveats / what differs
+    used: bool = False                                     # the human's pick (server defaults strong→True; the UI toggles)
 
 
 class MemoryJudgment(BaseModel):

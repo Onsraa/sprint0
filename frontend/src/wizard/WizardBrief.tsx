@@ -163,7 +163,7 @@ export function WizardBrief() {
         const updated = await api.resolveClarify(briefId, answers);  // judges memory on the resolved spec
         setSpec(updated);
         // seed the Use/Skip selection from the AI's verdicts (reuse → pre-selected)
-        setUsed(Object.fromEntries((updated.memory_candidates ?? []).map((c) => [c.ref, c.used ?? false])));
+        setUsed(Object.fromEntries((updated.memory_candidates ?? []).map((c) => [memKey(c), c.used ?? false])));
         setCards([]); setSelectedCardName(null); setChosenStack(null);  // cards (re)generate after the human grounds
         commitRef.current = () => setStep(2);
       },
@@ -174,7 +174,7 @@ export function WizardBrief() {
   // STEP 2 phase A → B: ground the architecture on the KEPT memory, then draft the stack options (stays on step 2).
   const goArch = () => {
     if (!briefId) return;
-    const grounded = (spec?.memory_candidates ?? []).filter((c) => used[c.ref]).map((c) => c.ref);  // [] = explicit fresh build
+    const grounded = [...new Set((spec?.memory_candidates ?? []).filter((c) => used[memKey(c)]).map((c) => c.ref))];  // unique kept projects; [] = explicit fresh build
     runLoader(
       {
         phase: "arch",
@@ -264,7 +264,7 @@ export function WizardBrief() {
           if (b?.text) setBrief(b.text);
           const s = await api.getSpec(d.briefId).catch(() => null);
           if (s) setSpec(s);
-          if (s?.memory_candidates) setUsed(Object.fromEntries(s.memory_candidates.map((c) => [c.ref, c.used ?? false])));
+          if (s?.memory_candidates) setUsed(Object.fromEntries(s.memory_candidates.map((c) => [memKey(c), c.used ?? false])));
           if (d.answers) setAnswers(d.answers);
           if ((d.step ?? 0) >= 2) {
             const opts = await api.getArchitectures(d.briefId).catch(() => null);
@@ -469,68 +469,96 @@ function StepClarify({ spec, answers, setAnswers }: {
 
 }
 
-/* ── Memory candidates — reasoned, human-ratified reuse (ported 1:1 from the v5 mockup) ──
-   Each candidate the AI judged on the RESOLVED spec shows a verdict (reuse|maybe|skip) + a one-line WHY +
-   a Use/Skip toggle. `used` is lifted to the wizard so the kept refs ground the architecture
-   (api.architectures(.., grounded)). Empty / all-skip → the "fresh build" state. */
-const VERDICT_META: Record<string, { label: string; fg: string; bg: string }> = {
-  reuse: { label: "reuse", fg: "var(--green)", bg: "color-mix(in srgb, var(--green) 12%, transparent)" },
-  maybe: { label: "maybe", fg: "var(--amber)", bg: "color-mix(in srgb, var(--amber) 12%, transparent)" },
-  skip:  { label: "skip",  fg: "var(--text-quaternary)", bg: "var(--bg-secondary)" },
+/* ── Memory candidates — capability-level, human-ratified grounding ──
+   Each card is a reusable CAPABILITY the AI found in past work and judged against the resolved spec:
+   fit chip (strong|partial|skip) + source project · year + what it does + why it fits, with a Use/Skip
+   toggle and an expand for pros·cons. `used` is keyed per-capability (capabilities can share a project);
+   the kept refs (projects) ground the architecture. Empty / all-skip → the "fresh build" state. */
+const FIT_META: Record<string, { label: string; fg: string; dot: string }> = {
+  strong:  { label: "strong fit", fg: "var(--green)", dot: "var(--green)" },
+  partial: { label: "partial fit", fg: "var(--amber)", dot: "var(--amber)" },
+  skip:    { label: "skip", fg: "var(--text-quaternary)", dot: "var(--text-quaternary)" },
 };
+const memKey = (c: MemoryCandidate) => `${c.ref}·${c.capability ?? ""}`;
 
 function StepMemory({ candidates, used, setUsed }: {
   candidates: MemoryCandidate[];
   used: Record<string, boolean>;
   setUsed: (fn: (u: Record<string, boolean>) => Record<string, boolean>) => void;
 }) {
-  const allSkip = candidates.length > 0 && candidates.every((c) => c.verdict === "skip");
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const allSkip = candidates.length > 0 && candidates.every((c) => c.fit === "skip");
   return (
     <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
-      <WizHead title="Ground on agency memory" sub="The AI judged each retrieved candidate against your answers. Keep what fits — your selection grounds the architecture." />
+      <WizHead title="Ground the plan on this past work?" sub="The AI found these reusable capabilities in agency memory and weighed them against your answers. Keep what fits. Your selection grounds the architecture." />
       <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderBottom: "0.5px solid var(--border-subtle)", background: "var(--bg-secondary)" }}>
           <ZeroMark size={14} />
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>Memory candidates</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>Reusable capabilities</span>
           <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>· your selection grounds the architecture</span>
           <div style={{ flex: 1 }} />
-          <span className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)" }}>{candidates.length} retrieved</span>
+          <span className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)" }}>{candidates.length} found</span>
         </div>
         {candidates.length === 0 || allSkip ? (
           <div style={{ padding: "24px 14px", textAlign: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)" }}>Fresh build — nothing in memory fits.</div>
-            <div style={{ fontSize: 11.5, color: "var(--text-quaternary)", marginTop: 4 }}>{candidates.length ? "All candidates considered and skipped." : "No prior work matched this brief."}</div>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)" }}>Fresh build. Nothing in memory fits.</div>
+            <div style={{ fontSize: 11.5, color: "var(--text-quaternary)", marginTop: 4 }}>{candidates.length ? "Every capability was considered and skipped." : "No prior work matched this brief."}</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column" }}>
             {candidates.map((c, i) => {
-              const vm = VERDICT_META[c.verdict] || VERDICT_META.skip;
-              const isUsed = !!used[c.ref];
-              const isSkip = c.verdict === "skip";
+              const fm = FIT_META[c.fit] || FIT_META.skip;
+              const k = memKey(c);
+              const isUsed = !!used[k];
+              const isSkip = c.fit === "skip";
+              const isOpen = !!open[k];
+              const hasDetail = (c.pros?.length ?? 0) + (c.cons?.length ?? 0) > 0;
               return (
-                <div key={c.ref} style={{ display: "flex", alignItems: "flex-start", gap: 11, padding: "10px 14px",
-                  borderBottom: i < candidates.length - 1 ? "0.5px solid var(--border-subtle)" : "none", opacity: isSkip ? 0.5 : 1 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", height: 18, padding: "0 7px", borderRadius: "var(--r-xs)",
-                    background: vm.bg, color: vm.fg, fontSize: 9.5, fontWeight: 700, fontFamily: "var(--font-mono)",
-                    letterSpacing: "0.04em", textTransform: "uppercase", flexShrink: 0, marginTop: 2 }}>{vm.label}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 3 }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{c.ref}</span>
-                      {c.project && c.project !== c.ref && <span style={{ fontSize: 11, color: "var(--text-quaternary)" }}>· {c.project}</span>}
-                      <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 15, padding: "0 5px", borderRadius: "var(--r-xs)",
-                        background: "var(--bg-secondary)", border: "0.5px solid var(--border)", fontSize: 9.5, color: "var(--text-quaternary)" }}>{c.kind}</span>
+                <div key={k} style={{ display: "flex", flexDirection: "column", padding: "11px 14px",
+                  borderBottom: i < candidates.length - 1 ? "0.5px solid var(--border-subtle)" : "none", opacity: isSkip ? 0.55 : 1 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 11 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {/* fit + capability + source */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, fontFamily: "var(--font-mono)", color: fm.fg, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                          <span style={{ width: 7, height: 7, borderRadius: "50%", background: fm.dot }} />{fm.label}
+                        </span>
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{c.capability || c.ref}</span>
+                        <span style={{ fontSize: 11, color: "var(--text-quaternary)" }}>{c.project || c.ref}{c.year ? ` · ${c.year}` : ""}</span>
+                      </div>
+                      {c.what && <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 2 }}>{c.what}</div>}
+                      {c.reason && <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", lineHeight: 1.4 }}>{c.reason}</div>}
+                      {hasDetail && (
+                        <button className="s0-press" onClick={() => setOpen((o) => ({ ...o, [k]: !o[k] }))}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", cursor: "pointer", background: "none", border: "none", padding: 0 }}>
+                          <Icon name="chevronDown" size={12} style={{ transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform var(--t-quick)" }} />
+                          {isOpen ? "Less" : "Detail"}
+                        </button>
+                      )}
                     </div>
-                    <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", lineHeight: 1.4 }}>{c.reason}</div>
-                    {isSkip && <div style={{ fontSize: 10.5, color: "var(--text-quaternary)", marginTop: 3, fontStyle: "italic" }}>considered — not relevant</div>}
+                    {!isSkip && (
+                      <button className="s0-press" onClick={() => setUsed((u) => ({ ...u, [k]: !u[k] }))}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 24, padding: "0 10px", borderRadius: "var(--r-md)",
+                          fontSize: 11.5, fontWeight: 500, flexShrink: 0, cursor: "pointer", marginTop: 2,
+                          background: isUsed ? "var(--text-primary)" : "var(--bg-elevated)", color: isUsed ? "#fff" : "var(--text-secondary)",
+                          border: isUsed ? "none" : "0.5px solid var(--border-strong)", transition: "background var(--t-quick), color var(--t-quick)" }}>
+                        {isUsed ? <><Icon name="check" size={11} style={{ color: "#fff" }} /> Use</> : "Skip"}
+                      </button>
+                    )}
                   </div>
-                  {!isSkip && (
-                    <button className="s0-press" onClick={() => setUsed((u) => ({ ...u, [c.ref]: !u[c.ref] }))}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 24, padding: "0 10px", borderRadius: "var(--r-md)",
-                        fontSize: 11.5, fontWeight: 500, flexShrink: 0, cursor: "pointer",
-                        background: isUsed ? "var(--text-primary)" : "var(--bg-elevated)", color: isUsed ? "#fff" : "var(--text-secondary)",
-                        border: isUsed ? "none" : "0.5px solid var(--border-strong)", transition: "background var(--t-quick), color var(--t-quick)" }}>
-                      {isUsed ? <><Icon name="check" size={11} style={{ color: "#fff" }} /> Use</> : "Skip"}
-                    </button>
+                  {isOpen && hasDetail && (
+                    <div style={{ display: "flex", gap: 18, marginTop: 9, paddingLeft: 2, animation: "s0-fade-in var(--t-reg) both" }}>
+                      {(c.pros?.length ?? 0) > 0 && (
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {(c.pros ?? []).map((p, j) => <div key={j} style={{ display: "flex", gap: 6, fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}><Icon name="check" size={11} style={{ color: "var(--green)", flexShrink: 0, marginTop: 2 }} />{p}</div>)}
+                        </div>
+                      )}
+                      {(c.cons?.length ?? 0) > 0 && (
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {(c.cons ?? []).map((p, j) => <div key={j} style={{ display: "flex", gap: 6, fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}><span style={{ width: 9, height: 1.5, background: "var(--amber)", flexShrink: 0, marginTop: 8, borderRadius: 1 }} />{p}</div>)}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               );

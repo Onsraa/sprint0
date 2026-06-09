@@ -301,15 +301,18 @@ CANNED_SPEC = ClarifiedSpec.model_validate(
     }
 )
 
-# Demo judgment for judge_memory — graded on the RESOLVED spec (after ambiguities). Mirrors CANNED_SPEC.reuse.
+# Demo judgment for judge_memory — capability-level, graded on the RESOLVED spec (after ambiguities).
 CANNED_MEMORY = MemoryJudgment(
     candidates=[
-        MemoryCandidate(ref="LedgerLite (2024)", kind="project", project="LedgerLite (2024)", verdict="reuse",
-                        reason="Personal-finance domain match — its JWT auth + refresh fits secure login as-is.", used=True),
-        MemoryCandidate(ref="BudgetBuddy (2023)", kind="project", project="BudgetBuddy (2023)", verdict="maybe",
-                        reason="Plaid webhook ingestion is adaptable, but its budgets model differs from this brief.", used=False),
-        MemoryCandidate(ref="src/auth/jwt.ts", kind="code", project="LedgerLite (2024)", verdict="reuse",
-                        reason="Battle-tested JWT issue/refresh — a drop-in starting point for the login feature.", used=True),
+        MemoryCandidate(ref="LedgerLite", project="LedgerLite", year="2024", capability="JWT auth + refresh",
+                        what="Token issue and refresh with session handling for secure login.",
+                        reason="Personal-finance domain match. The auth flow fits secure login as is.", fit="strong",
+                        pros=["Battle-tested in production", "Drop-in for the login feature"],
+                        cons=["Tied to its own user model"], used=True),
+        MemoryCandidate(ref="BudgetBuddy", project="BudgetBuddy", year="2023", capability="Plaid webhook ingestion",
+                        what="Bank-sync ingestion via Plaid webhooks with retry.",
+                        reason="Bank sync is relevant but this brief's budgets model differs.", fit="partial",
+                        pros=["Saves the Plaid wiring"], cons=["Budgets schema differs", "Needs a re-map"], used=False),
     ]
 )
 

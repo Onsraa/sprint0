@@ -192,15 +192,22 @@ async def generate_clarification(prompt: str) -> ClarifiedSpec:
     return _parse(ClarifiedSpec, await _run_agent(clarify_agent, prompt), clarify_agent.name)
 
 
-INSTRUCTION_MEMJUDGE = """You are a reuse analyst. Given a clarified project SPEC — already disambiguated, the \
-manager answered the open questions — and CANDIDATE past projects + code retrieved from agency memory by \
-similarity, JUDGE each candidate for reuse-fit on THIS project (CRAG: a reasoned verdict, not a similarity \
-score). For EVERY listed candidate output a `candidates` entry: `ref` (the project name or file path, exactly \
-as listed), `kind` ("project" or "code"), `project` (its source project), a `verdict` — "reuse" (genuinely \
-fits this project's domain AND a feature here), "maybe" (partial / uncertain fit), or "skip" (unrelated) — and \
-a ≤140-char `reason` in plain words. Judge by DOMAIN + FEATURE fit, weighing the RESOLVED decisions, not \
-surface keywords: a payments app does NOT fit a video game. If every candidate is "skip", that is the right \
-answer — a fresh build. Return only the structured judgment."""
+INSTRUCTION_MEMJUDGE = """You are a reuse analyst. Given a clarified project SPEC (already disambiguated — the \
+manager answered the open questions) and CANDIDATE past projects + their code from agency memory, identify the \
+2-4 reusable CAPABILITIES from that prior work that best fit THIS project, and judge each (CRAG: a reasoned fit, \
+not a similarity score). A capability is a coherent feature or sub-feature worth grounding the plan on, e.g. \
+"live-map WebSocket tracking", "Stripe checkout flow", "the kanban drag animation". Consolidate related files \
+into ONE capability. Never list file paths.
+
+For each capability output a `candidates` entry: `ref` (the SOURCE PROJECT name exactly as listed, the grounding \
+key), `project` (the source project name), `capability` (a short title, max 6 words), `what` (max 120 chars, what \
+it does, the reusable part), `reason` (max 140 chars, why it fits or not THIS project given the resolved \
+decisions), `fit` ("strong" clearly reusable here, "partial" adaptable or uncertain, "skip" unrelated), and \
+`pros` / `cons` (1-3 short bullets each, why grounding helps and what differs).
+
+Judge by DOMAIN and FEATURE fit, not surface keywords: a payments app does NOT fit a video game. If nothing \
+from memory fits, return an empty list, a fresh build is the right answer. Write plain words with no semicolons \
+and no dashes. Return only the structured judgment."""
 
 memjudge_agent = Agent(name="sprint0_memjudge", model=MODEL, instruction=INSTRUCTION_MEMJUDGE, output_schema=MemoryJudgment)
 
