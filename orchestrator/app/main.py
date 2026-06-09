@@ -821,6 +821,8 @@ async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
     """Intake: extract the spec, flag unclear features as ambiguity cards, propose reuse."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
+    from app import trace
+    trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for this brief; later phases accumulate onto it
     spec = await clarify_brief(BRIEFS[brief_id], constraints or Constraints())
     SPECS[brief_id] = spec
     await _persist("specs", brief_id, spec.model_dump())
@@ -850,10 +852,20 @@ async def architectures(brief_id: str, constraints: Optional[Constraints] = None
     (Use/Skip from the Clarify Memory panel); None → the AI judges all retrieved candidates inline."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
+    from app import trace
+    trace.begin(brief_id)   # accumulate the architecture phase onto this brief's ReAct trace
     opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints(), grounded=grounded)
     ARCHS[brief_id] = opts  # cache for wizard resume
     await _persist("archs", brief_id, opts.model_dump())
     return opts
+
+
+@app.get("/api/briefs/{brief_id}/trace")
+async def brief_trace(brief_id: str, _: DeveloperProfile = Depends(auth.current_manager)) -> dict:
+    """The ReAct trace for a brief's run — the agent's REAL Reason→Action steps (Gemini · MongoDB · GitLab)
+    accumulated across the wizard phases — for the UI to replay as a live loop instead of a fake spinner."""
+    from app import trace
+    return {"brief_id": brief_id, "steps": trace.get(brief_id)}
 
 
 def _manifest_of(plan: PlanJSON) -> list[str]:

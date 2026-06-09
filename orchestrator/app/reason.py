@@ -132,7 +132,10 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
         f"Propose 2-3 distinct architecture cards + your own ai_pick. A fresh-build card with no reuse is a "
         f"valid, often-correct answer when nothing in memory fits."
     )
+    from app import trace
+    trace.step("gemini", "action", "Design architecture options", "ground the cards on the chosen memory; propose 2-3 stacks")
     opts = await generate_architectures(prompt)
+    trace.step("gemini", "result", f"{len(opts.cards)} stack card(s) · AI pick: {opts.ai_pick_name}")
     from app import grading
     idx = grading.recommend_architecture(opts.cards, opts.ai_pick_name)   # badge follows the AI's OWN pick, not reuse-max
     if idx is not None:
@@ -143,14 +146,19 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
 async def clarify_brief(brief_text: str, constraints: Constraints | None = None) -> ClarifiedSpec:
     """Intake step: extract the spec, flag unclear *features* as ambiguity cards, and JUDGE each memory
     candidate for reuse-fit (CRAG — verdict + reason, no cosine gate). The manager's first panel."""
+    from app import trace
+    trace.step("gemini", "thought", "Reading the brief", brief_text[:120])
     qv = embed_query(brief_text)
     async with MongoMCP() as m:
         # retrieve for RECALL only — the LLM judges relevance per candidate (CRAG); no cosine decision-gate
+        trace.step("mongodb", "action", "Search agency memory", "$rankFusion ($vectorSearch + $search) over PastProjects")
         past = await m.hybrid_search(
             PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION,
         )
+        trace.step("mongodb", "result", f"{len(past)} candidate project(s)", ", ".join(p.get("name", "") for p in past))
         try:
             code = await m.code_search(qv, k=5)
+            trace.step("mongodb", "result", f"{len(code)} candidate code chunk(s)")
         except Exception:
             code = []  # code-RAG index not present yet (pre-reseed) → skip the reuse-code section
     prompt = (
@@ -161,9 +169,12 @@ async def clarify_brief(brief_text: str, constraints: Constraints | None = None)
         f"Produce the clarified spec: extraction, 2-4 ambiguity cards, a `memory_candidates` verdict for EVERY "
         f"candidate above (reuse/maybe/skip + why), and reuse proposals grounded only on the ones you judge relevant."
     )
+    trace.step("gemini", "action", "Clarify + judge reuse", "extract the spec; grade each memory candidate reuse/maybe/skip")
     spec = await generate_clarification(prompt)
     for c in spec.memory_candidates:  # server default — reuse-verdict candidates pre-selected; the human toggles in the UI
         c.used = c.verdict == "reuse"
+    _n = sum(1 for c in spec.memory_candidates if c.verdict == "reuse")
+    trace.step("gemini", "result", f"{len(spec.ambiguities)} ambiguit(ies) · {_n} reuse verdict(s)")
     return spec
 
 
