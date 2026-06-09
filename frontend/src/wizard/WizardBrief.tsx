@@ -19,6 +19,11 @@ import { toast } from "sonner";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { Icon, ZeroMark, FullLogo } from "../lib/icon";
+import {
+  SiReact, SiTypescript, SiJavascript, SiPython, SiFastapi, SiNodedotjs, SiExpress, SiDocker,
+  SiPostgresql, SiRedis, SiMongodb, SiTailwindcss, SiNextdotjs, SiVuedotjs, SiGo, SiRust,
+  SiGraphql, SiKubernetes, SiGitlab,
+} from "@icons-pack/react-simple-icons";
 import { Button, Badge, DiscDot, discLabel } from "../components/ui";
 import { Stepper, ReActTrace, ConfirmDraft } from "./WizardMotion";
 import { api } from "../lib/api";
@@ -591,20 +596,53 @@ const TECH_ROWS: { key: keyof TechStack; label: string }[] = [
   { key: "db", label: "Database" }, { key: "infra", label: "Infra" },
 ];
 
+/* Brand logos for the common techs the planner emits — unknown ones (MapLibre, Cloud Run, PostGIS…)
+   render as a plain pill. Keyed by the tech name normalized to lowercase-alphanumeric. */
+const TECH_ICONS: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
+  react: SiReact, typescript: SiTypescript, javascript: SiJavascript, python: SiPython,
+  fastapi: SiFastapi, nodejs: SiNodedotjs, node: SiNodedotjs, express: SiExpress, docker: SiDocker,
+  postgresql: SiPostgresql, postgres: SiPostgresql, redis: SiRedis, mongodb: SiMongodb,
+  tailwindcss: SiTailwindcss, tailwind: SiTailwindcss, nextjs: SiNextdotjs, vue: SiVuedotjs,
+  go: SiGo, golang: SiGo, rust: SiRust, graphql: SiGraphql, kubernetes: SiKubernetes, gitlab: SiGitlab,
+};
+const techKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/* one tech as a tag-block pill: [logo] Name. Splits a "A / B / C" stack value into separate pills. */
+function TechPill({ tech }: { tech: string }) {
+  const Logo = TECH_ICONS[techKey(tech)];
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 10px",
+      borderRadius: "var(--r-md)", background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)",
+      fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", whiteSpace: "nowrap", boxShadow: "var(--shadow-1)" }}>
+      {Logo ? <Logo size={13} color="var(--text-tertiary)" /> : <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-quaternary)" }} />}
+      {tech}
+    </span>
+  );
+}
+
+/* whole-COLUMN selection: insets stack into a continuous accent border down the picked card's column. */
+const colSel = (on: boolean, edge: "head" | "mid" | "foot"): React.CSSProperties => on ? {
+  background: "var(--bg-active)",
+  boxShadow: ["inset 1.5px 0 0 var(--text-primary)", "inset -1.5px 0 0 var(--text-primary)",
+    edge === "head" ? "inset 0 1.5px 0 var(--text-primary)" : "",
+    edge === "foot" ? "inset 0 -1.5px 0 var(--text-primary)" : ""].filter(Boolean).join(", "),
+} : {};
+
 function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setChosenStack }: {
   cards: ArchitectureCard[]; aiPick: { name: string; why: string }; selectedCardName: string | null; setSelectedCardName: (n: string) => void; setChosenStack: (s: TechStack) => void;
 }) {
-  const cols = `96px repeat(${cards.length}, minmax(0, 1fr))`;
-  const cell: React.CSSProperties = { padding: "9px 10px", borderTop: "0.5px solid var(--border-subtle)", minWidth: 0 };
+  const cols = `104px repeat(${cards.length}, minmax(0, 1fr))`;
+  const cell: React.CSSProperties = { padding: "13px 13px", borderTop: "0.5px solid var(--border-subtle)", minWidth: 0 };
   const rowLabel: React.CSSProperties = { ...cell, fontSize: 10.5, color: "var(--text-quaternary)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 };
+  const pick = (c: ArchitectureCard) => { setSelectedCardName(c.name); setChosenStack(c.tech_stack); };
 
   return (
     <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
-      <WizHead title="Pick a stack" sub="Compare the options side by side. The AI recommends; you choose." />
+      <WizHead title="Pick a stack" sub="Compare the options side by side. The AI recommends. You choose." />
 
       {/* the AI recommends one card; the human chooses */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 12, fontSize: 11.5, color: "var(--text-tertiary)" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="bolt" size={12} style={{ color: "var(--amber)" }} /> <b style={{ fontWeight: 600, color: "var(--text-secondary)" }}>AI's pick</b> — the model's own call{aiPick.why ? ` · ${aiPick.why}` : ""}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="bolt" size={12} style={{ color: "var(--amber)" }} /> <b style={{ fontWeight: 600, color: "var(--text-secondary)" }}>AI's pick</b> · the model's own call{aiPick.why ? ` · ${aiPick.why}` : ""}</span>
       </div>
 
       <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)" }}>
@@ -614,13 +652,10 @@ function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setCho
           {cards.map((c) => {
             const on = selectedCardName === c.name;
             return (
-              <button key={c.name} className="s0-press" onClick={() => { setSelectedCardName(c.name); setChosenStack(c.tech_stack); }}
-                style={{ textAlign: "left", padding: "11px 10px", borderLeft: "0.5px solid var(--border-subtle)", minWidth: 0,
-                  background: on ? "var(--bg-secondary)" : "transparent", boxShadow: on ? "inset 0 0 0 1.5px var(--text-primary)" : "none", cursor: "pointer" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                  <span style={{ width: 15, height: 15, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center", border: `1.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`, background: on ? "var(--ink-fill)" : "transparent" }}>{on && <Icon name="check" size={10} style={{ color: "#fff" }} />}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
-                </div>
+              <button key={c.name} className="s0-press" onClick={() => pick(c)}
+                style={{ textAlign: "left", padding: "15px 14px", borderLeft: "0.5px solid var(--border-subtle)", minWidth: 0,
+                  cursor: "pointer", ...colSel(on, "head") }}>
+                <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 7 }}>{c.name}</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                   {c.name === aiPick.name && <Badge tone="amber" mono><Icon name="bolt" size={9} /> AI's pick</Badge>}
                 </div>
@@ -628,38 +663,53 @@ function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setCho
           })}
         </div>
 
-        {/* BLOCK 1 — tech stack, row by row */}
+        {/* BLOCK 1 — tech stack, row by row (each value split into logo pills) */}
         {TECH_ROWS.map((r) => (
           <div key={r.key} style={{ display: "grid", gridTemplateColumns: cols }}>
             <div style={rowLabel}>{r.label}</div>
-            {cards.map((c) => <div key={c.name} className="mono" style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", fontSize: 11.5, color: "var(--text-secondary)" }}>{c.tech_stack[r.key]}</div>)}
+            {cards.map((c) => {
+              const on = selectedCardName === c.name;
+              return (
+                <div key={c.name} onClick={() => pick(c)}
+                  style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", cursor: "pointer",
+                    display: "flex", flexWrap: "wrap", gap: 6, alignContent: "flex-start", ...colSel(on, "mid") }}>
+                  {String(c.tech_stack[r.key] ?? "").split("/").map((t) => t.trim()).filter(Boolean).map((t, i) => <TechPill key={i} tech={t} />)}
+                </div>
+              );
+            })}
           </div>
         ))}
 
         {/* BLOCK 2 — pros / cons */}
         <div style={{ display: "grid", gridTemplateColumns: cols, background: "var(--bg-secondary)" }}>
           <div style={rowLabel}>Trade-offs</div>
-          {cards.map((c) => (
-            <div key={c.name} style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 3 }}>
-              {(c.pros ?? []).map((p, i) => <span key={"p" + i} style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.35 }}><b style={{ color: "var(--green)" }}>+</b> {p}</span>)}
-              {(c.cons ?? []).map((p, i) => <span key={"c" + i} style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.35 }}><b style={{ color: "var(--amber)" }}>−</b> {p}</span>)}
-            </div>
-          ))}
+          {cards.map((c) => {
+            const on = selectedCardName === c.name;
+            return (
+              <div key={c.name} onClick={() => pick(c)} style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 3, ...colSel(on, "mid") }}>
+                {(c.pros ?? []).map((p, i) => <span key={"p" + i} style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.35 }}><b style={{ color: "var(--green)" }}>+</b> {p}</span>)}
+                {(c.cons ?? []).map((p, i) => <span key={"c" + i} style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.35 }}><b style={{ color: "var(--amber)" }}>−</b> {p}</span>)}
+              </div>
+            );
+          })}
         </div>
 
         {/* BLOCK 3 — reuse from memory */}
         <div style={{ display: "grid", gridTemplateColumns: cols }}>
           <div style={rowLabel}>Reuse</div>
-          {cards.map((c) => (
-            <div key={c.name} style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 4 }}>
+          {cards.map((c) => {
+            const on = selectedCardName === c.name;
+            return (
+            <div key={c.name} onClick={() => pick(c)} style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 4, ...colSel(on, "foot") }}>
               {(c.reuse ?? []).length ? (c.reuse ?? []).map((r, i) => (
                 <div key={i} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                   <span style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.3 }}>{r.feature}</span>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9.5, color: "var(--text-quaternary)" }}><ZeroMark size={9} /> {r.from_project} · {r.action}</span>
                 </div>
-              )) : <span style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>fresh build — nothing from memory</span>}
+              )) : <span style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>fresh build, nothing from memory</span>}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
