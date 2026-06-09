@@ -84,6 +84,7 @@ export function WizardBrief() {
   const [cards, setCards] = useState<ArchitectureCard[]>([]);
   const [aiPick, setAiPick] = useState<{ name: string; why: string }>({ name: "", why: "" });
   const [chosenStack, setChosenStack] = useState<TechStack | null>(null);
+  const [selectedCardName, setSelectedCardName] = useState<string | null>(null);  // the PICKED card's identity — two cards can share a stack
   const [setupOwner, setSetupOwner] = useState<string | null>(null);  // manager redirected the stack call to a lead → a setup gate
   const [planId, setPlanId] = useState<string | null>(null);
   const [plan, setPlan] = useState<PlanJSON | null>(null);
@@ -177,7 +178,9 @@ export function WizardBrief() {
         setCards(opts.cards);
         setAiPick({ name: opts.ai_pick_name ?? "", why: opts.ai_pick_why ?? "" });
         // default the choice to the AI's own pick (the badged card), else the first
-        setChosenStack((opts.cards.find((c) => c.recommended) ?? opts.cards[0])?.tech_stack ?? null);
+        { const def = opts.cards.find((c) => c.recommended) ?? opts.cards[0];
+          setSelectedCardName(def?.name ?? null);
+          setChosenStack(def?.tech_stack ?? null); }
         commitRef.current = () => setStep(2);
       },
       "Could not generate architectures",
@@ -306,7 +309,7 @@ export function WizardBrief() {
                 <>
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
                   {step === 1 && spec && <StepClarify spec={spec} answers={answers} setAnswers={setAnswers} />}
-                  {step === 2 && <StepArch cards={cards} aiPick={aiPick} chosenStack={chosenStack} setChosenStack={setChosenStack} setupOwner={setupOwner} setSetupOwner={setSetupOwner} />}
+                  {step === 2 && <StepArch cards={cards} aiPick={aiPick} selectedCardName={selectedCardName} setSelectedCardName={setSelectedCardName} setChosenStack={setChosenStack} setupOwner={setupOwner} setSetupOwner={setSetupOwner} />}
                   {step === 3 && plan && <StepPlan plan={plan} relay={relay} staffing={staffing} members={members} />}
                   {step === 4 && preview && <StepReview
                     preview={preview} projectName={projectName} setProjectName={setProjectName}
@@ -441,12 +444,10 @@ const TECH_ROWS: { key: keyof TechStack; label: string }[] = [
   { key: "db", label: "Database" }, { key: "infra", label: "Infra" },
 ];
 
-function StepArch({ cards, aiPick, chosenStack, setChosenStack, setupOwner, setSetupOwner }: {
-  cards: ArchitectureCard[]; aiPick: { name: string; why: string }; chosenStack: TechStack | null; setChosenStack: (s: TechStack) => void;
+function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setChosenStack, setupOwner, setSetupOwner }: {
+  cards: ArchitectureCard[]; aiPick: { name: string; why: string }; selectedCardName: string | null; setSelectedCardName: (n: string) => void; setChosenStack: (s: TechStack) => void;
   setupOwner: string | null; setSetupOwner: (u: string | null) => void;
 }) {
-  const sameStack = (a: TechStack | null, b: TechStack) =>
-    !!a && a.frontend === b.frontend && a.backend === b.backend && a.db === b.db && a.infra === b.infra;
   const archQ = useQuery({ queryKey: ["architects"], queryFn: () => api.architects() });  // %-match leads for the redirect
   const cols = `96px repeat(${cards.length}, minmax(0, 1fr))`;
   const cell: React.CSSProperties = { padding: "9px 10px", borderTop: "0.5px solid var(--border-subtle)", minWidth: 0 };
@@ -466,9 +467,9 @@ function StepArch({ cards, aiPick, chosenStack, setChosenStack, setupOwner, setS
         <div style={{ display: "grid", gridTemplateColumns: cols }}>
           <div />
           {cards.map((c) => {
-            const on = sameStack(chosenStack, c.tech_stack);
+            const on = selectedCardName === c.name;
             return (
-              <button key={c.name} className="s0-press" onClick={() => { setChosenStack(c.tech_stack); setSetupOwner(null); }}
+              <button key={c.name} className="s0-press" onClick={() => { setSelectedCardName(c.name); setChosenStack(c.tech_stack); setSetupOwner(null); }}
                 style={{ textAlign: "left", padding: "11px 10px", borderLeft: "0.5px solid var(--border-subtle)", minWidth: 0,
                   background: on && !setupOwner ? "var(--bg-secondary)" : "transparent", boxShadow: on && !setupOwner ? "inset 0 0 0 1.5px var(--text-primary)" : "none", cursor: "pointer" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
@@ -521,7 +522,7 @@ function StepArch({ cards, aiPick, chosenStack, setChosenStack, setupOwner, setS
       <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Not sure? Hand the stack call to a lead:</span>
         <select value={setupOwner ?? ""}
-          onChange={(e) => { const u = e.target.value || null; setSetupOwner(u); const def = cards.find((c) => c.recommended) ?? cards[0]; if (u && def) setChosenStack(def.tech_stack); }}
+          onChange={(e) => { const u = e.target.value || null; setSetupOwner(u); const def = cards.find((c) => c.recommended) ?? cards[0]; if (u && def) { setSelectedCardName(def.name); setChosenStack(def.tech_stack); } }}
           style={{ height: 32, padding: "0 10px", fontSize: 12.5, border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)", background: setupOwner ? "var(--bg-secondary)" : "var(--bg-elevated)", color: "var(--text-primary)", fontFamily: "inherit" }}>
           <option value="">— I'll pick it myself —</option>
           {(archQ.data?.candidates ?? []).map((c: any) => <option key={c.username} value={c.username}>{c.name} · {c.score}% match</option>)}
