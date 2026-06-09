@@ -11,6 +11,7 @@ import asyncio
 import difflib
 import io
 import json
+import logging
 import os
 import time
 import uuid
@@ -147,22 +148,38 @@ REQA: dict[int, set] = {}  # project_id → reopened issue iids awaiting re-QA (
 SOLUTIONS: dict[tuple[str, str], SolutionSet] = {}  # (plan_id, discipline) → cached reuse-or-innovate set (lazy)
 CHOSEN: dict[tuple[str, str], SolutionCard] = {}    # (plan_id, discipline) → the ratified solution pick
 
+# Per-plan lock serializing reserve + scaffold: their idempotency guards (RESERVED / RELAYS-absent) check
+# then await GitLab, so two concurrent callers (double-clicked Create; last-gate ratify racing a manual
+# dispatch) could BOTH pass the guard and create twice. The loser now re-checks after the winner finishes.
+_DISPATCH_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _dispatch_lock(plan_id: str) -> asyncio.Lock:
+    return _DISPATCH_LOCKS.setdefault(plan_id, asyncio.Lock())
+
+
+_BRIEF_MAX_CHARS = 20_000
+
 
 # ── Durability: the workflow dicts above stay the fast read cache (hot paths never hit Mongo), but every
 # WRITE also persists THROUGH to the SessionState collection so a restart loses nothing. Rehydrated on
-# startup. Best-effort — a snapshot write never fails the request. ──
+# startup. Best-effort — a snapshot write never fails the request, but a failure is LOGGED: silent
+# no-persistence means "Saved ✓" in the UI while the data lives in RAM only (Atlas M0 idle-pause hits this).
+_persist_log = logging.getLogger("sprint0.persist")
+
+
 async def _persist(store: str, key, value: dict) -> None:
     try:
         await save_state(store, str(key), value)
-    except Exception:
-        pass
+    except Exception as exc:
+        _persist_log.warning("session-state write FAILED (%s/%s): %s — in-memory only until Mongo recovers", store, key, exc)
 
 
 async def _unpersist(store: str, key) -> None:
     try:
         await delete_state(store, str(key))
-    except Exception:
-        pass
+    except Exception as exc:
+        _persist_log.warning("session-state delete failed (%s/%s): %s", store, key, exc)
 
 
 async def _persist_relay(plan_id: str) -> None:
@@ -782,6 +799,9 @@ async def create_brief(text: Optional[str] = Form(None), file: Optional[UploadFi
             content = raw.decode("utf-8", "ignore").strip()
     if not content:
         raise HTTPException(400, "empty brief")
+    # cap the brief — a pasted 50kB doc would blow the clarify prompt budget (the UI caps at 8k;
+    # PDFs can extract more, so truncate rather than reject)
+    content = content[:_BRIEF_MAX_CHARS]
     bid = f"brief_{uuid.uuid4().hex[:8]}"
     BRIEFS[bid] = content
     await _persist("briefs", bid, {"v": content})
@@ -1652,7 +1672,15 @@ async def _finalize_scaffold(plan_id: str, plan: PlanJSON, *, project_id: int | 
     """Phase 2 (the relay has CLOSED): scaffold the real GitLab infra — issues, branches, focus files, QA —
     onto a project, re-key the draft tasks → real (in_progress), persist the record, then drop the relay from
     the in-flight board. Called by the dispatch endpoint AND the ratify-close hook. `project_id`: a delta
-    target / a reserved pid; None = create fresh (reserve+scaffold in one). Idempotent (RELAYS-absent guard)."""
+    target / a reserved pid; None = create fresh (reserve+scaffold in one). Idempotent (RELAYS-absent guard,
+    serialized per plan by _dispatch_lock so concurrent callers can't both pass the guard)."""
+    async with _dispatch_lock(plan_id):
+        result = await _finalize_scaffold_locked(plan_id, plan, project_id=project_id)
+    _DISPATCH_LOCKS.pop(plan_id, None)  # finished (or no-op) — don't leak a lock per dispatched plan
+    return result
+
+
+async def _finalize_scaffold_locked(plan_id: str, plan: PlanJSON, *, project_id: int | None = None) -> dict:
     if plan_id not in RELAYS:  # already finalized (a re-ratify after the relay was popped) → no double-scaffold
         return RESULTS.get(plan_id, {})
     seeds = await _build_reuse_seeds(plan_id, plan)  # reuse layer-2: adapted reference code → focus branches
@@ -1760,6 +1788,11 @@ async def reserve_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile =
     only — and KEEP the relay OPEN so the leads ratify their gates live. The real scaffold (issues, branches,
     focus files, QA + the work tasks) fires AUTOMATICALLY when the relay closes (the last gate's ratify).
     No GitLab work here beyond the empty repo; nothing is auto-approved."""
+    async with _dispatch_lock(plan_id):  # a double-clicked Create must hit the RESERVED guard, not create twice
+        return await _reserve_locked(plan_id, req)
+
+
+async def _reserve_locked(plan_id: str, req: DispatchRequest) -> dict:
     plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
     if plan is None or state is None:
         raise HTTPException(404, "plan not found")

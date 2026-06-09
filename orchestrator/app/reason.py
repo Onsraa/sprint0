@@ -135,6 +135,8 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
     from app import trace
     trace.step("gemini", "action", "Design architecture options", "ground the cards on the chosen memory; propose 2-3 stacks")
     opts = await generate_architectures(prompt)
+    for card in opts.cards:  # text hygiene — no semicolons / em-dashes in the card prose
+        card.summary, card.rationale = _sanitize(card.summary), _sanitize(card.rationale)
     trace.step("gemini", "result", f"{len(opts.cards)} stack card(s) · AI pick: {opts.ai_pick_name}")
     from app import grading
     idx = grading.recommend_architecture(opts.cards, opts.ai_pick_name)   # badge follows the AI's OWN pick, not reuse-max
@@ -206,6 +208,8 @@ async def judge_memory(spec: ClarifiedSpec, constraints: Constraints | None = No
         c.used = c.fit == "strong"
         if not c.year:
             c.year = _year_of(c.ref) or _year_of(c.project)  # year lives in the project name (traillog-2025)
+        c.capability, c.what, c.reason = _sanitize(c.capability), _sanitize(c.what), _sanitize(c.reason)
+        c.pros, c.cons = [_sanitize(p) for p in c.pros], [_sanitize(p) for p in c.cons]
     _n = sum(1 for c in judgment.candidates if c.fit == "strong")
     trace.step("gemini", "result", f"{_n} strong-fit capabilit(ies) of {len(judgment.candidates)}")
     return judgment.candidates
@@ -214,6 +218,18 @@ async def judge_memory(spec: ClarifiedSpec, constraints: Constraints | None = No
 def _year_of(name: str) -> str:
     m = re.search(r"(?:19|20)\d{2}", name or "")
     return m.group(0) if m else ""
+
+
+def _sanitize(s: str) -> str:
+    """Code-owned text hygiene for AI copy: no semicolons, no em/en dashes, no doubled punctuation. The
+    prompts ask for this too; this guarantees it (manage in code, don't over-constrain the model)."""
+    if not s:
+        return s
+    s = s.replace("—", ", ").replace("–", "-")     # em-dash → comma break, en-dash → hyphen
+    s = re.sub(r"\s*;\s*", ". ", s)                  # semicolon → sentence break
+    s = re.sub(r"\s+([,.])", r"\1", s)               # no space before , or .
+    s = re.sub(r",\s*,", ",", s).replace(". .", ".")  # collapse doubled punctuation
+    return re.sub(r"\s{2,}", " ", s).strip()
 
 
 async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None) -> SolutionSet:

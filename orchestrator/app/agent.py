@@ -96,7 +96,7 @@ planner_agent = Agent(name="sprint0_planner", model=MODEL, instruction=INSTRUCTI
 architect_agent = Agent(name="sprint0_architect", model=MODEL, instruction=INSTRUCTION_ARCH, output_schema=ArchitectureOptions)
 
 
-_RETRYABLE_CODES = {429, 503}   # rate-limit / transient server error — safe to retry (our generate calls are idempotent)
+_RETRYABLE_CODES = {429, 500, 502, 503, 504}   # rate-limit / transient server errors — safe to retry (our generate calls are idempotent)
 _MAX_TRIES = 3                  # 1 attempt + 2 retries
 _BACKOFF_S = 1.5               # SHORT: interactive endpoint — do NOT mirror Voyage's 21s
 

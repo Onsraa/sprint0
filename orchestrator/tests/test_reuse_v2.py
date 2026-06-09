@@ -59,6 +59,14 @@ def test_select_grounded_code_matches_qualified_ref():
 
 
 # ── judge_memory: reuse is judged on the RESOLVED spec (after ambiguities), not the raw brief ──
+def test_sanitize_strips_semicolons_and_dashes():
+    from app.reason import _sanitize
+    assert _sanitize("Fast; clean — and tidy") == "Fast. clean, and tidy"
+    assert _sanitize("range 2–3 days") == "range 2-3 days"
+    assert ";" not in _sanitize("a; b; c") and "—" not in _sanitize("a — b")
+    assert _sanitize("") == ""
+
+
 def test_resolved_query_includes_the_answered_calls():
     # the manager's resolutions fold into the text we ground memory on → answers can shift the RAG
     from app.reason import _resolved_query
