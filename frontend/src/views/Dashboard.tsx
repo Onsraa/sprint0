@@ -66,7 +66,7 @@ export function Dashboard() {
               borderBottom: "0.5px solid var(--border-subtle)", position: "sticky", top: 0, background: "var(--bg-elevated)", zIndex: 1 }}>
               <span className="kicker" style={{ flex: 1, minWidth: 0 }}>Project</span>
               {!selP && <span className="kicker" style={{ width: 196, flexShrink: 0 }}>Stack</span>}
-              <span className="kicker" style={{ width: 76, flexShrink: 0 }}>Issues</span>
+              <span className="kicker" style={{ width: 76, flexShrink: 0 }}>Tasks</span>
               {!selP && <span className="kicker" style={{ width: 116, flexShrink: 0 }}>Team</span>}
               <span className="kicker" style={{ width: 92, flexShrink: 0, textAlign: "right" }}>Status</span>
             </div>
@@ -195,7 +195,7 @@ function ProjectPanel({ p, hasRelays, onViewRelays, onClose, onResume }: { p: an
 
         {!isRef && !isDraft && (
           <div style={{ display: "flex", gap: 0, marginBottom: 16, border: "0.5px solid var(--border)", borderRadius: "var(--r-md)", overflow: "hidden" }}>
-            {[["Issues", p.issues], ["Devs", p.devs], ["Created", p.created]].map(([l, v], i) => (
+            {[["Tasks", p.issues], ["Devs", p.devs], ["Created", p.created]].map(([l, v], i) => (
               <div key={l} style={{ flex: 1, padding: "10px 12px", borderLeft: i ? "0.5px solid var(--border)" : "none" }}>
                 <div className="kicker" style={{ marginBottom: 4, fontSize: 10 }}>{l}</div>
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 600 }}>{v}</div>

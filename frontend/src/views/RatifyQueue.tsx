@@ -2,7 +2,7 @@
  * manager sees all, a lead sees their own. Wired to the real myQueue via the useApp() adapter. */
 import { useApp } from "../app/useApp";
 import { ViewChrome } from "../components/ViewChrome";
-import { Badge, DiscDot, DISC } from "../components/ui";
+import { Badge, DiscDot, DISC, discLabel } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { GATE_META } from "./RatifyPanel";
 
@@ -30,7 +30,7 @@ export function RatifyQueue() {
                   <DiscDot d={q.disc} size={10} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 500 }}>{q.project}</div>
-                    <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{DISC[q.disc]?.label ?? q.disc} gate · {q.issues} issues{q.gap ? " · orphan gap" : ""}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{discLabel(q.disc)} gate · {q.issues} task{q.issues === 1 ? "" : "s"}{q.gap ? " · orphan gap" : ""}</div>
                   </div>
                   {q.baton && <Badge tone="ink"><Icon name="flag" size={11} />baton</Badge>}
                   <span style={{ fontSize: 12, fontWeight: 500, color: meta.fg }}>{meta.label}</span>

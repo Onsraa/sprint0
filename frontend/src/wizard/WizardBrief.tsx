@@ -13,13 +13,13 @@
    (createBrief→clarify→architectures→plan/staffing→dispatchPreview→dispatch). The
    existing SequenceLoader covers each async wait. */
 import { Fragment, useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { qk } from "../lib/query";
 import { toast } from "sonner";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { Icon, ZeroMark, FullLogo } from "../lib/icon";
-import { Button, Badge, DiscDot, DISC } from "../components/ui";
+import { Button, Badge, DiscDot, discLabel } from "../components/ui";
 import { Stepper, ReActTrace, ConfirmDraft } from "./WizardMotion";
 import { api } from "../lib/api";
 import type {
@@ -72,7 +72,6 @@ export function WizardBrief() {
   const [aiPick, setAiPick] = useState<{ name: string; why: string }>({ name: "", why: "" });
   const [chosenStack, setChosenStack] = useState<TechStack | null>(null);
   const [selectedCardName, setSelectedCardName] = useState<string | null>(null);  // the PICKED card's identity — two cards can share a stack
-  const [setupOwner, setSetupOwner] = useState<string | null>(null);  // manager redirected the stack call to a lead → a setup gate
   const [planId, setPlanId] = useState<string | null>(null);
   const [plan, setPlan] = useState<PlanJSON | null>(null);
   const [relay, setRelay] = useState<RelayState | null>(null);
@@ -207,7 +206,7 @@ export function WizardBrief() {
         lines: ["Planning epics and tasks", "Sequencing the discipline relay", "Checking team coverage for each gate"],
       },
       async () => {
-        const res = await api.plan(briefId, { chosen_stack: chosenStack, setup_owner: setupOwner });
+        const res = await api.plan(briefId, { chosen_stack: chosenStack });
         setPlanId(res.plan_id);
         setPlan(res.plan);
         setRelay(res.relay);
@@ -362,7 +361,7 @@ export function WizardBrief() {
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
                   {step === 1 && spec && <StepClarify spec={spec} answers={answers} setAnswers={setAnswers} />}
                   {step === 2 && (cards.length
-                    ? <StepArch cards={cards} aiPick={aiPick} selectedCardName={selectedCardName} setSelectedCardName={setSelectedCardName} setChosenStack={setChosenStack} setupOwner={setupOwner} setSetupOwner={setSetupOwner} />
+                    ? <StepArch cards={cards} aiPick={aiPick} selectedCardName={selectedCardName} setSelectedCardName={setSelectedCardName} setChosenStack={setChosenStack} />
                     : <StepMemory candidates={spec?.memory_candidates ?? []} used={used} setUsed={setUsed} />)}
                   {step === 3 && plan && <StepPlan plan={plan} relay={relay} staffing={staffing} members={members} />}
                   {step === 4 && preview && <StepReview
@@ -575,11 +574,9 @@ const TECH_ROWS: { key: keyof TechStack; label: string }[] = [
   { key: "db", label: "Database" }, { key: "infra", label: "Infra" },
 ];
 
-function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setChosenStack, setupOwner, setSetupOwner }: {
+function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setChosenStack }: {
   cards: ArchitectureCard[]; aiPick: { name: string; why: string }; selectedCardName: string | null; setSelectedCardName: (n: string) => void; setChosenStack: (s: TechStack) => void;
-  setupOwner: string | null; setSetupOwner: (u: string | null) => void;
 }) {
-  const archQ = useQuery({ queryKey: ["architects"], queryFn: () => api.architects() });  // %-match leads for the redirect
   const cols = `96px repeat(${cards.length}, minmax(0, 1fr))`;
   const cell: React.CSSProperties = { padding: "9px 10px", borderTop: "0.5px solid var(--border-subtle)", minWidth: 0 };
   const rowLabel: React.CSSProperties = { ...cell, fontSize: 10.5, color: "var(--text-quaternary)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 };
@@ -600,9 +597,9 @@ function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setCho
           {cards.map((c) => {
             const on = selectedCardName === c.name;
             return (
-              <button key={c.name} className="s0-press" onClick={() => { setSelectedCardName(c.name); setChosenStack(c.tech_stack); setSetupOwner(null); }}
+              <button key={c.name} className="s0-press" onClick={() => { setSelectedCardName(c.name); setChosenStack(c.tech_stack); }}
                 style={{ textAlign: "left", padding: "11px 10px", borderLeft: "0.5px solid var(--border-subtle)", minWidth: 0,
-                  background: on && !setupOwner ? "var(--bg-secondary)" : "transparent", boxShadow: on && !setupOwner ? "inset 0 0 0 1.5px var(--text-primary)" : "none", cursor: "pointer" }}>
+                  background: on ? "var(--bg-secondary)" : "transparent", boxShadow: on ? "inset 0 0 0 1.5px var(--text-primary)" : "none", cursor: "pointer" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
                   <span style={{ width: 15, height: 15, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center", border: `1.5px solid ${on ? "var(--text-primary)" : "var(--border-strong)"}`, background: on ? "var(--ink-fill)" : "transparent" }}>{on && <Icon name="check" size={10} style={{ color: "#fff" }} />}</span>
                   <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
@@ -649,22 +646,6 @@ function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setCho
         </div>
       </div>
 
-      {/* or hand the stack call to a lead → becomes a setup gate the lead ratifies before the build starts */}
-      <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Not sure? Hand the stack call to a lead:</span>
-        <select value={setupOwner ?? ""}
-          onChange={(e) => { const u = e.target.value || null; setSetupOwner(u); const def = cards.find((c) => c.recommended) ?? cards[0]; if (u && def) { setSelectedCardName(def.name); setChosenStack(def.tech_stack); } }}
-          style={{ height: 32, padding: "0 10px", fontSize: 12.5, border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)", background: setupOwner ? "var(--bg-secondary)" : "var(--bg-elevated)", color: "var(--text-primary)", fontFamily: "inherit" }}>
-          <option value="">— I'll pick it myself —</option>
-          {(archQ.data?.candidates ?? []).map((c: any) => <option key={c.username} value={c.username}>{c.name} · {c.score}% match</option>)}
-        </select>
-      </div>
-      {setupOwner && (
-        <div style={{ fontSize: 11.5, color: "var(--text-secondary)", marginTop: 7, display: "flex", gap: 7, alignItems: "flex-start" }}>
-          <Icon name="merges" size={13} style={{ color: "var(--text-tertiary)", flexShrink: 0, marginTop: 1 }} />
-          <span>The stack becomes a <b style={{ fontWeight: 600 }}>setup gate</b> — <b style={{ fontWeight: 600 }}>{setupOwner}</b> confirms or overrides it before any discipline gate opens. (The AI's proven pick is the provisional default.)</span>
-        </div>
-      )}
     </div>);
 }
 
@@ -677,43 +658,50 @@ function StepPlan({ plan, relay, staffing, members }: {
   const covOf = (disc: string) => coverage.find((c) => c.discipline === disc);
   const allIssues = plan.epics.flatMap((e) => e.issues);
   const leadFor = (disc: string) => allIssues.find((i) => i.discipline === disc && i.assignee)?.assignee as string | undefined;
-  // ONE viz from the FULL relay (every gate in DAG order — NOT the baton, which only holds the active ones)
+  // the REAL parallel DAG, not a linear chain: {uiux ∥ backend ∥ devops} → frontend → qa.
   const gateList = (relay?.gates ?? []).map((g: any) => g.discipline);
   const order = gateList.length ? gateList : coverage.map((c) => c.discipline);
   const gapCount = coverage.filter((c) => !c.covered).length;
+  const STAGE_OF: Record<string, string> = { setup: "setup", uiux: "build", backend: "build", devops: "build", frontend: "integrate", qa: "accept" };
+  const STAGE_SEQ = ["setup", "build", "integrate", "accept"];
+  const byStage = STAGE_SEQ
+    .map((s) => ({ stage: s, gates: order.filter((d: string) => (STAGE_OF[d] ?? "build") === s) }))
+    .filter((g) => g.gates.length);  // gates in the same stage run in parallel; stages run in order
+
+  const gateCard = (disc: string) => {
+    const cov = covOf(disc);
+    const gate = ((relay?.gates ?? []) as any[]).find((g) => g.discipline === disc);
+    const isSetup = disc === "setup";
+    // owner = the gate's delegate, else its assigned owner (WS1), else an issue-assignee / seated dev (roster).
+    const ownerUser = gate?.delegate ?? gate?.owner ?? (isSetup ? undefined : (leadFor(disc) ?? members.find((m: any) => m.role === "developer" && m.discipline === disc)?.username));
+    const isGap = isSetup ? false : (cov ? !cov.covered : !ownerUser);
+    const leadName = ownerUser ? (byUser(ownerUser)?.name?.split(" ")[0] ?? ownerUser) : "Tech Lead";  // gap routes to the Tech Lead
+    return (
+      <div key={disc} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "10px 8px", borderRadius: "var(--r-lg)", minWidth: 96,
+        background: "var(--bg-elevated)", border: isGap ? "1px dashed var(--text-primary)" : "0.5px solid var(--border)", boxShadow: "var(--shadow-1)" }}>
+        <DiscDot d={disc} size={11} />
+        <span style={{ fontSize: 11.5, fontWeight: 600 }}>{discLabel(disc)}</span>
+        <span style={{ fontSize: 10, color: isGap ? "var(--text-primary)" : "var(--text-tertiary)", fontWeight: isGap ? 600 : 400, textAlign: "center" }}>{leadName}</span>
+      </div>
+    );
+  };
 
   return (
     <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
-      <WizHead title="The relay" sub={`${taskCount} task${taskCount === 1 ? "" : "s"} across ${order.length} discipline gate${order.length === 1 ? "" : "s"}. Each gate is ratified by its owner — nothing auto-passes.`} />
+      <WizHead title="The relay" sub={`${taskCount} task${taskCount === 1 ? "" : "s"} across ${order.length} discipline gate${order.length === 1 ? "" : "s"}. Each gate is ratified by its owner. Nothing auto-passes.`} />
 
       <div className="kicker" style={{ marginBottom: 12 }}>Who runs each gate, in order{gapCount > 0 ? ` · ${gapCount} gap${gapCount === 1 ? "" : "s"}` : ""}</div>
-      <div style={{ display: "flex", alignItems: "stretch", gap: 0, flexWrap: "wrap", rowGap: 14 }}>
-        {order.map((disc: string, i: number) => {
-          const cov = covOf(disc);
-          const gate = ((relay?.gates ?? []) as any[]).find((g) => g.discipline === disc);
-          const isSetup = disc === "setup";  // Architecture: the manager's own gate (or a delegate's), never an orphan
-          // owner = the gate's delegate, else an issue-assignee, else the discipline's seated dev (roster).
-          const ownerUser = gate?.delegate ?? (isSetup ? undefined : (leadFor(disc) ?? members.find((m: any) => m.role === "developer" && m.discipline === disc)?.username));
-          const isGap = isSetup ? false : (cov ? !cov.covered : !ownerUser);
-          const leadName = ownerUser ? (byUser(ownerUser)?.name?.split(" ")[0] ?? ownerUser) : (isSetup ? "Manager" : "Routes to you");
-          return (
-            <Fragment key={disc}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, minWidth: 80 }}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "10px 8px", borderRadius: "var(--r-lg)", minWidth: 78,
-                  background: "var(--bg-elevated)", border: isGap ? "1px dashed var(--text-primary)" : "0.5px solid var(--border)", boxShadow: "var(--shadow-1)" }}>
-                  <DiscDot d={disc} size={11} />
-                  <span style={{ fontSize: 11.5, fontWeight: 600 }}>{DISC[disc]?.label ?? disc}</span>
-                  <span style={{ fontSize: 10, color: isGap ? "var(--text-primary)" : "var(--text-tertiary)", fontWeight: isGap ? 600 : 400, textAlign: "center" }}>{leadName}</span>
-                </div>
-              </div>
-              {i < order.length - 1 && <div style={{ display: "flex", alignItems: "center", alignSelf: "flex-start", height: 60 }}><Icon name="arrowRight" size={13} style={{ color: "var(--border-strong)" }} /></div>}
-            </Fragment>
-          );
-        })}
+      <div style={{ display: "flex", alignItems: "center", gap: 0, flexWrap: "wrap", rowGap: 14 }}>
+        {byStage.map((st, si) => (
+          <Fragment key={st.stage}>
+            {si > 0 && <div style={{ display: "flex", alignItems: "center", alignSelf: "center", padding: "0 6px" }}><Icon name="arrowRight" size={14} style={{ color: "var(--border-strong)" }} /></div>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{st.gates.map((d: string) => gateCard(d))}</div>
+          </Fragment>
+        ))}
       </div>
       {gapCount > 0 && (
         <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 16, lineHeight: 1.5 }}>
-          A dashed gate has no dedicated dev — it routes to you (manager) to ratify or hand off, just like any gate.
+          A dashed gate has no dedicated dev. It routes to the Tech Lead to ratify or hand off, just like any gate.
         </p>
       )}
     </div>);

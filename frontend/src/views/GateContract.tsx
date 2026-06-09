@@ -9,7 +9,7 @@
    by producer/consumer discipline (the mock's `a.lanes` collapses onto our two-discipline shape). */
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/useApp";
-import { Badge, DiscDot, DISC } from "../components/ui";
+import { Badge, DiscDot, discLabel } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome, type Crumb } from "../components/ViewChrome";
 import { RatifyPanel, GATE_META } from "./RatifyPanel";
@@ -116,7 +116,7 @@ function LaneTab({ d, gate, active, onClick }: { d: string; gate?: any; active: 
         border: `0.5px solid ${active ? "var(--text-primary)" : "var(--border)"}`,
         boxShadow: active ? "0 0 0 1px var(--text-primary)" : "var(--shadow-1)", transition: "border-color var(--t-quick), background var(--t-quick)" }}>
       <DiscDot d={d} size={9} />
-      <span style={{ fontSize: 13, fontWeight: active ? 600 : 500, color: active ? "var(--text-primary)" : "var(--text-secondary)" }}>{DISC[d]?.label ?? d}</span>
+      <span style={{ fontSize: 13, fontWeight: active ? 600 : 500, color: active ? "var(--text-primary)" : "var(--text-secondary)" }}>{discLabel(d)}</span>
       {gate?.baton && <Icon name="flag" size={11} style={{ color: "var(--text-primary)" }} />}
       {meta && <span title={meta.label} style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: meta.fg }} />}
     </button>);
@@ -143,7 +143,7 @@ function EmptyContracts({ disc }: { disc: string }) {
     <div style={{ border: "0.5px dashed var(--border-strong)", borderRadius: "var(--r-lg)", padding: "26px 18px", textAlign: "center", background: "var(--bg-elevated)" }}>
       <Icon name="relay" size={20} style={{ color: "var(--border-strong)" }} />
       <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 9, lineHeight: 1.5, textWrap: "pretty" }}>
-        No contract here yet. A contract is <b style={{ color: "var(--text-secondary)" }}>drafted from your gate choice</b> — ratify the <b style={{ color: "var(--text-secondary)" }}>{DISC[disc]?.label ?? disc}</b> gate to generate the API the consumer builds against. If this slice produces no API for another discipline, none is needed.
+        No contract here yet. A contract is <b style={{ color: "var(--text-secondary)" }}>drafted from your gate choice</b> — ratify the <b style={{ color: "var(--text-secondary)" }}>{discLabel(disc)}</b> gate to generate the API the consumer builds against. If this slice produces no API for another discipline, none is needed.
       </div>
     </div>);
 }

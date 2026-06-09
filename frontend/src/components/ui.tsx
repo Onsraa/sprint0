@@ -167,6 +167,10 @@ export const DISC: Record<string, { label: string; color: string }> = {
   qa: { label: "Tester", color: "var(--disc-qa)" },
   devops: { label: "DevOps", color: "var(--disc-devops)" },
 };
+/* The AI returns lowercase lanes; we own the casing. discLabel = the DISC label, else the raw lane
+   capitalized (an AI-discovered lane like "security" → "Security"). Never show a raw lowercase lane. */
+export const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+export const discLabel = (d?: string | null) => (d ? DISC[d]?.label ?? cap(d) : "");
 export function DiscDot({ d, size = 7 }: { d?: string | null; size?: number }) {
   return <span style={{ width: size, height: size, borderRadius: 2, background: (d && DISC[d]?.color) || "var(--text-quaternary)", flexShrink: 0, display: "inline-block" }} />;
 }
