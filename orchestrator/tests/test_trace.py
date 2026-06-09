@@ -88,3 +88,25 @@ def test_run_brief_trace_is_noop_without_a_run(monkeypatch):
     trace.end(); trace.clear()
     asyncio.run(reason.run_brief("x"))
     assert trace.get("b") == []
+
+
+def test_run_brief_reuses_the_arch_phase_grounding(monkeypatch):
+    # T3: the arch phase cached its PastProjects retrieval — the plan phase must reuse it (no
+    # re-fetch) and say so honestly in the trace.
+    _stub_run_brief_deps(monkeypatch)
+    fetches: list[int] = []
+
+    class _M:  # counts hybrid_search calls — a cache hit means ZERO
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def hybrid_search(self, *a, **k): fetches.append(1); return []
+        async def find(self, *a, **k): return []
+    monkeypatch.setattr(reason, "MongoMCP", _M)
+
+    reason._cache_grounding("the cached brief", [{"name": "quantapay-2024"}])
+    trace.clear("c"); trace.begin("c")
+    asyncio.run(reason.run_brief("the cached brief"))
+    assert fetches == []   # no redundant $rankFusion round-trip
+    labels = [s["label"] for s in trace.get("c")]
+    assert "Reuse the architecture-phase grounding" in labels and "Retrieve grounding" not in labels
+    trace.end()

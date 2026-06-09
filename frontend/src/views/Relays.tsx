@@ -36,8 +36,9 @@ function classify(r: RelaySummary, scopeDisc: Discipline | undefined, isManager:
     const batonOrphan = orphans.find((g) => r.baton.includes(g.discipline));
     return { status: batonOrphan ? "open" : "pending", disc: (batonOrphan ?? orphans[0]).discipline, action: "gate" };
   }
-  // dev/qa: a delegated gate belongs to its delegate; otherwise the discipline lead owns it.
-  const owns = (g: Gate) => (g.delegate ? (!!meUser && g.delegate === meUser) : g.discipline === scopeDisc);
+  // dev/qa: a gate belongs to its RATIFIER — delegate ?? owner (the assigned lead, who may be
+  // out-of-discipline when availability stretched the work) ?? the discipline lead.
+  const owns = (g: Gate) => { const r = g.delegate ?? g.owner; return r ? (!!meUser && r === meUser) : g.discipline === scopeDisc; };
   const mineGates = r.gates.filter(owns);
   if (!mineGates.length) return null;                       // not on this relay at all
   const notDone = mineGates.filter((g) => !DONE.includes(g.status));

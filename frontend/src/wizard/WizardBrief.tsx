@@ -22,8 +22,11 @@ import { Icon, ZeroMark, FullLogo } from "../lib/icon";
 import {
   SiReact, SiTypescript, SiJavascript, SiPython, SiFastapi, SiNodedotjs, SiExpress, SiDocker,
   SiPostgresql, SiRedis, SiMongodb, SiTailwindcss, SiNextdotjs, SiVuedotjs, SiGo, SiRust,
-  SiGraphql, SiKubernetes, SiGitlab,
+  SiGraphql, SiKubernetes, SiGitlab, SiVite, SiMapbox, SiLeaflet, SiDjango, SiSqlalchemy,
+  SiFlask, SiSvelte, SiAngular, SiMysql, SiSqlite, SiSupabase, SiFirebase, SiVercel, SiNginx,
+  SiAmazonwebservices, SiGooglecloud, SiStripe, SiPrisma,
 } from "@icons-pack/react-simple-icons";
+import { Monitor, Server, Database, Cloud } from "lucide-react";
 import { Button, Badge, DiscDot, discLabel, Avatar } from "../components/ui";
 import { Stepper, ReActTrace, ConfirmDraft } from "./WizardMotion";
 import { api } from "../lib/api";
@@ -591,31 +594,44 @@ function StepMemory({ candidates, used, setUsed }: {
   );
 }
 
-const TECH_ROWS: { key: keyof TechStack; label: string }[] = [
-  { key: "frontend", label: "Frontend" }, { key: "backend", label: "Backend" },
-  { key: "db", label: "Database" }, { key: "infra", label: "Infra" },
+const TECH_ROWS: { key: keyof TechStack; label: string; RowIcon: React.ComponentType<{ size?: number; style?: React.CSSProperties }> }[] = [
+  { key: "frontend", label: "Frontend", RowIcon: Monitor }, { key: "backend", label: "Backend", RowIcon: Server },
+  { key: "db", label: "Database", RowIcon: Database }, { key: "infra", label: "Infra", RowIcon: Cloud },
 ];
 
-/* Brand logos for the common techs the planner emits — unknown ones (MapLibre, Cloud Run, PostGIS…)
-   render as a plain pill. Keyed by the tech name normalized to lowercase-alphanumeric. */
+/* Brand logos for the common techs the planner emits — unknown ones (MapLibre, PostGIS…) render as a
+   plain pill. Keyed by the tech name normalized to lowercase-alphanumeric; a compound name falls back
+   to its FIRST word ("AWS RDS" → aws, "GitLab CI/CD" → gitlab, "Mapbox GL JS" → mapbox). */
 const TECH_ICONS: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
   react: SiReact, typescript: SiTypescript, javascript: SiJavascript, python: SiPython,
   fastapi: SiFastapi, nodejs: SiNodedotjs, node: SiNodedotjs, express: SiExpress, docker: SiDocker,
   postgresql: SiPostgresql, postgres: SiPostgresql, redis: SiRedis, mongodb: SiMongodb,
   tailwindcss: SiTailwindcss, tailwind: SiTailwindcss, nextjs: SiNextdotjs, vue: SiVuedotjs,
   go: SiGo, golang: SiGo, rust: SiRust, graphql: SiGraphql, kubernetes: SiKubernetes, gitlab: SiGitlab,
+  vite: SiVite, mapbox: SiMapbox, leaflet: SiLeaflet, django: SiDjango, sqlalchemy: SiSqlalchemy,
+  flask: SiFlask, svelte: SiSvelte, angular: SiAngular, mysql: SiMysql, sqlite: SiSqlite,
+  supabase: SiSupabase, firebase: SiFirebase, vercel: SiVercel, nginx: SiNginx,
+  aws: SiAmazonwebservices, amazonwebservices: SiAmazonwebservices, gcp: SiGooglecloud,
+  googlecloud: SiGooglecloud, stripe: SiStripe, prisma: SiPrisma,
 };
 const techKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const techIcon = (tech: string) => TECH_ICONS[techKey(tech)] ?? TECH_ICONS[techKey(tech.split(" ")[0])];
 
-/* one tech as a tag-block pill: [logo] Name. Splits a "A / B / C" stack value into separate pills. */
+/* The planner returns a free-form stack value ("React, TypeScript, Vite, Mapbox GL JS",
+   "Postgres with PostGIS", "Docker, GitLab CI/CD") — split on commas / " + " / " & " / " with " /
+   SPACED slashes only (a bare "/" stays: "CI/CD", "EC2/RDS" are one tech). */
+const splitTechs = (value: string): string[] =>
+  String(value ?? "").split(/,|\s\+\s|\s&\s|\swith\s|\s\/\s/i).map((t) => t.trim()).filter(Boolean);
+
+/* one tech as a tag-block pill: [logo] Name — contained (ellipsizes instead of overflowing the column). */
 function TechPill({ tech }: { tech: string }) {
-  const Logo = TECH_ICONS[techKey(tech)];
+  const Logo = techIcon(tech);
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 10px",
       borderRadius: "var(--r-md)", background: "var(--bg-elevated)", border: "0.5px solid var(--border-strong)",
-      fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", whiteSpace: "nowrap", boxShadow: "var(--shadow-1)" }}>
-      {Logo ? <Logo size={13} color="var(--text-tertiary)" /> : <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-quaternary)" }} />}
-      {tech}
+      fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", maxWidth: "100%", boxShadow: "var(--shadow-1)" }}>
+      {Logo ? <Logo size={13} color="var(--text-tertiary)" /> : <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-quaternary)", flexShrink: 0 }} />}
+      <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{tech}</span>
     </span>
   );
 }
@@ -666,14 +682,16 @@ function StepArch({ cards, aiPick, selectedCardName, setSelectedCardName, setCho
         {/* BLOCK 1 — tech stack, row by row (each value split into logo pills) */}
         {TECH_ROWS.map((r) => (
           <div key={r.key} style={{ display: "grid", gridTemplateColumns: cols }}>
-            <div style={rowLabel}>{r.label}</div>
+            <div style={{ ...rowLabel, display: "flex", alignItems: "center", gap: 6 }}>
+              <r.RowIcon size={13} style={{ color: "var(--text-quaternary)", flexShrink: 0 }} />{r.label}
+            </div>
             {cards.map((c) => {
               const on = selectedCardName === c.name;
               return (
                 <div key={c.name} onClick={() => pick(c)}
                   style={{ ...cell, borderLeft: "0.5px solid var(--border-subtle)", cursor: "pointer",
                     display: "flex", flexWrap: "wrap", gap: 6, alignContent: "flex-start", ...colSel(on, "mid") }}>
-                  {String(c.tech_stack[r.key] ?? "").split("/").map((t) => t.trim()).filter(Boolean).map((t, i) => <TechPill key={i} tech={t} />)}
+                  {splitTechs(c.tech_stack[r.key]).map((t, i) => <TechPill key={i} tech={t} />)}
                 </div>
               );
             })}

@@ -7,6 +7,7 @@ REASON only (RAG via MongoDB MCP + Gemini). Execution is the separate, human-gat
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from datetime import datetime, timezone
@@ -117,11 +118,28 @@ def select_grounded(past: list[dict], code: list[dict], grounded: list[str] | No
     return kept_past, kept_code
 
 
+# The arch + plan phases retrieve PastProjects with the SAME query (the brief text) — cache the arch
+# retrieval per query-hash so run_brief reuses it instead of a redundant $rankFusion round-trip.
+_PP_GROUNDING: dict[str, list[dict]] = {}
+_PP_GROUNDING_CAP = 32  # FIFO — a wizard session touches a handful of briefs
+
+
+def _grounding_key(text: str) -> str:
+    return hashlib.sha1((text or "").encode()).hexdigest()[:16]
+
+
+def _cache_grounding(text: str, past: list[dict]) -> None:
+    if len(_PP_GROUNDING) >= _PP_GROUNDING_CAP:
+        _PP_GROUNDING.pop(next(iter(_PP_GROUNDING)))
+    _PP_GROUNDING[_grounding_key(text)] = list(past)
+
+
 async def propose_architectures(brief_text: str, constraints: Constraints | None = None,
                                 grounded: list[str] | None = None) -> ArchitectureOptions:
     async with MongoMCP() as m:
         qv = embed_query(brief_text)
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION)
+        _cache_grounding(brief_text, past)  # the plan phase reuses this exact retrieval (same query)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)
         try:  # ground the per-card `reuse` block in real reusable files (code-RAG + 1-hop import cluster)
             code = await code_search_expanded(m, qv, k=5)
@@ -352,8 +370,12 @@ async def run_brief(
     from app import trace
     vocab = await _known_profile_labels()  # own MCP context — fetch BEFORE the main one (no re-entrancy)
     async with MongoMCP() as m:
-        trace.step("mongodb", "action", "Retrieve grounding", "$rankFusion over PastProjects for the plan")
-        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
+        past = _PP_GROUNDING.get(_grounding_key(brief_text))
+        if past is not None:  # the arch phase already retrieved for this exact query — reuse, don't re-fetch
+            trace.step("server", "action", "Reuse the architecture-phase grounding", ", ".join(p.get("name", "") for p in past))
+        else:
+            trace.step("mongodb", "action", "Retrieve grounding", "$rankFusion over PastProjects for the plan")
+            past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)  # WS12: size/sequence the plan with the real team
         trace.step("gemini", "action", "Plan the relay", "map features → epics → issues across the discipline gates")
         plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab, roster))

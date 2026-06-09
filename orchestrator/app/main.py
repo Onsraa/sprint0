@@ -470,12 +470,13 @@ def _my_gates(member: DeveloperProfile, members: list[DeveloperProfile]) -> list
                 continue
             if g.status not in ("pending", "changes_requested"):
                 continue
-            # a delegated gate belongs to the delegate (the lead handed it off); else the discipline lead
-            # (or the manager for an orphan). The manager always sees every gate.
-            if g.delegate:
-                mine = (g.delegate == member.username) or member.role == "manager"
+            # the gate queues for its RATIFIER: delegate ?? owner (the assigned lead, WS1) ?? the discipline
+            # lead; an unowned/orphan gate falls to the Tech Lead. Mirrors the ratify permission.
+            _ratifier = g.delegate or g.owner
+            if _ratifier:
+                mine = _ratifier == member.username
             else:
-                mine = (member.discipline == g.discipline) or (member.role == "manager" and staffing.is_orphan(g.discipline, members))
+                mine = (member.discipline == g.discipline) or member.role == "manager"
             if not mine:
                 continue
             issue_count = sum(
@@ -1452,18 +1453,25 @@ async def plan_staffing(plan_id: str) -> dict:
     return {"coverage": staffing.coverage(plan, members)}
 
 
-async def _can_read_contract(member: DeveloperProfile, discipline: str) -> bool:
-    """Contract visibility: a gate's Contract (solutions + decision card) is private to the gate OWNER (the
-    dev in that lane), the MANAGER, or anyone holding a GRANTED Watch on the owner. Tickets stay fully open —
-    this gates only the Contract reads (the per-gate reuse-or-innovate set + decision card)."""
+async def _can_read_contract(member: DeveloperProfile, discipline: str, plan_id: str | None = None) -> bool:
+    """Contract visibility: a gate's Contract (solutions + decision card) is private to the gate's RATIFIER
+    (delegate ?? owner — the assigned lead, who may be out-of-discipline when availability stretched the
+    work — ?? the discipline lead), the MANAGER, or anyone holding a GRANTED Watch on that ratifier.
+    Tickets stay fully open — this gates only the Contract reads."""
     if member.role == "manager":
         return True
-    if member.discipline == discipline:
+    gate = None
+    if plan_id and (st := RELAYS.get(plan_id)):
+        gate = next((g for g in st.gates if g.discipline == discipline), None)
+    ratifier = (gate.delegate or gate.owner) if gate else None
+    if ratifier and member.username == ratifier:
         return True
-    owner = next((m.username for m in team.all_members() if m.discipline == discipline), None)
-    if owner:
+    if not ratifier and member.discipline == discipline:  # unowned gate → the discipline lead reads it
+        return True
+    subject = ratifier or next((m.username for m in team.all_members() if m.discipline == discipline), None)
+    if subject:
         for g in await access_grants_for_requester(member.username):
-            if g.get("subject_id") == owner and g.get("status") == "granted":
+            if g.get("subject_id") == subject and g.get("status") == "granted":
                 return True
     return False
 
@@ -1539,12 +1547,9 @@ async def gate_solutions(
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
-    # the gate's DELEGATE (a lead handed it off) can read its Contract too — else they could ratify but not
-    # see the proposed solutions. Falls back to the owner / manager / granted-Watch rule.
-    _st = RELAYS.get(plan_id)
-    _is_delegate = bool(_st and any(g.discipline == discipline and g.delegate == member.username for g in _st.gates))
-    if not _is_delegate and not await _can_read_contract(member, discipline):
-        return SolutionSet(discipline=discipline, solutions=[])  # private — owner / delegate / manager / granted Watch only
+    # visibility = the gate's RATIFIER (delegate ?? owner ?? discipline lead), the manager, or a granted Watch
+    if not await _can_read_contract(member, discipline, plan_id):
+        return SolutionSet(discipline=discipline, solutions=[])  # private — ratifier / manager / granted Watch only
     key = (plan_id, discipline)
     if key in SOLUTIONS:
         SOLUTIONS[key].chosen = CHOSEN.get(key)   # may have changed since cache (ratify writes CHOSEN)
@@ -2610,7 +2615,7 @@ async def decision_card_for_gate(plan_id: str, discipline: str,
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
-    if not await _can_read_contract(member, discipline):  # Contract is private — redacted for non-owner/manager/watcher
+    if not await _can_read_contract(member, discipline, plan_id):  # Contract is private — redacted for non-ratifier/manager/watcher
         return {"card": None, "signal": "grey", "low_confidence": True, "past": {"own": [], "team": []}, "error": "private"}
     sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
     tags = sorted({i.required_skill for i in sl if i.required_skill})
