@@ -335,15 +335,15 @@ async def upsert_code_chunk(doc: dict) -> None:
 
 
 async def code_search_expanded(m: "MongoMCP", query_vec: list[float], k: int = 5,
-                               discipline: str | None = None) -> list[dict]:
+                               discipline: str | None = None, min_score: float | None = None) -> list[dict]:
     """Code-RAG with 1-hop import expansion: top-k chunks, then their direct import neighbors from the
     seed-time GraphEdges partition (project_id == CodeChunks.project) — multi-file features surface as a
     cluster, not one island. `discipline` pre-filters per-gate; 0 in-lane hits → unfiltered retry.
     Expansion reads GRAPH_EDGES_COLL via raw find (NOT graph_edges(), whose demo branch is in-mem-only)
     so it works in demo too, and is best-effort: any failure degrades to the plain hits."""
-    hits = await m.code_search(query_vec, k=k, discipline=discipline)
+    hits = await m.code_search(query_vec, k=k, discipline=discipline, min_score=min_score)
     if discipline and not hits:
-        hits = await m.code_search(query_vec, k=k)  # nothing in-lane → fall back to the global pool
+        hits = await m.code_search(query_vec, k=k, min_score=min_score)  # nothing in-lane → fall back to the global pool
     by_proj: dict[str, set[str]] = {}
     for h in hits:
         if h.get("project") and h.get("file_path"):
@@ -891,14 +891,20 @@ class MongoMCP:
     async def hybrid_search(
         self, collection: str, vector_index: str, text_index: str, vpath: str,
         query_vec: list[float], query_text: str, k: int = 3, projection: dict | None = None,
+        min_score: float | None = None, key: str = "name",
     ) -> list[dict]:
         """Hybrid retrieval: native MongoDB $rankFusion (server-side reciprocal rank fusion of
         $vectorSearch + $search full-text). Falls back to vector-only if fusion errors (e.g. the
-        full-text index is absent, or the server predates 8.1)."""
+        full-text index is absent, or the server predates 8.1).
+
+        `min_score` adds a RELEVANCE FLOOR: a doc only survives if its raw $vectorSearch cosine is
+        ≥ min_score. $rankFusion's output score is a fused RANK, not a cosine, so the floor is applied
+        via a paired vector_search keyed on `key` — a brief with no genuine match returns []. This is
+        what stops a mismatched-domain brief (e.g. a video game) from surfacing unrelated past work."""
         proj: dict = {"_id": 0}
         proj.update(projection or {})
         try:
-            return await self._aggregate(collection, [
+            fused = await self._aggregate(collection, [
                 {"$rankFusion": {"input": {"pipelines": {
                     "vector": [{"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k * 2}}],
                     "text": [{"$search": {"index": text_index, "text": {"query": query_text, "path": {"wildcard": "*"}}}}, {"$limit": k * 2}],
@@ -907,23 +913,32 @@ class MongoMCP:
                 {"$project": proj},
             ])
         except Exception:
-            return await self._aggregate(collection, [
+            fused = await self._aggregate(collection, [
                 {"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k}},
                 {"$project": proj},
             ])
+        if min_score is None or not fused:
+            return fused
+        gate = await self.vector_search(collection, vector_index, vpath, query_vec, k=max(k, 10), projection={key: 1})
+        keep = {g.get(key) for g in gate if (g.get("score") or 0) >= min_score}
+        return [d for d in fused if d.get(key) in keep]
 
     async def code_search(self, query_vec: list[float], k: int = 5, projection: dict | None = None,
-                          discipline: str | None = None) -> list[dict]:
+                          discipline: str | None = None, min_score: float | None = None) -> list[dict]:
         """Code-RAG: vector search over CodeChunks — reusable code across the agency's past repos.
-        `discipline` pre-filters server-side (the vector index has a filter field on it)."""
+        `discipline` pre-filters server-side (the vector index has a filter field on it). `min_score`
+        is a cosine relevance floor — chunks below it are dropped, so a mismatched brief surfaces none."""
         proj: dict = {"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1,
-                      "summary": 1, "discipline": 1, "language": 1}
+                      "summary": 1, "discipline": 1, "language": 1, "score": {"$meta": "vectorSearchScore"}}
         proj.update(projection or {})
         vs: dict = {"index": CODE_INDEX, "path": "embedding", "queryVector": query_vec,
                     "numCandidates": max(50, k * 10), "limit": k}
         if discipline:
             vs["filter"] = {"discipline": discipline}
-        return await self._aggregate(CODE_COLL, [{"$vectorSearch": vs}, {"$project": proj}])
+        rows = await self._aggregate(CODE_COLL, [{"$vectorSearch": vs}, {"$project": proj}])
+        if min_score is not None:
+            rows = [r for r in rows if (r.get("score") or 0) >= min_score]
+        return rows
 
     async def find(self, collection: str, projection: dict | None = None, query: dict | None = None, limit: int = 20) -> list[dict]:
         res = await self.session.call_tool(

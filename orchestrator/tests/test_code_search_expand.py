@@ -13,7 +13,7 @@ class FakeM:
         self.hits_by_disc, self.edges, self.chunks, self.find_raises = hits_by_disc, edges, chunks, find_raises
         self.calls: list[tuple] = []
 
-    async def code_search(self, query_vec, k=5, projection=None, discipline=None):
+    async def code_search(self, query_vec, k=5, projection=None, discipline=None, min_score=None):
         self.calls.append(("code_search", discipline))
         return [dict(h) for h in self.hits_by_disc.get(discipline, [])][:k]
 

@@ -73,23 +73,16 @@ def signal_for(card) -> str:
     return "orange"
 
 
-def recommend_architecture(cards: list) -> int | None:
-    """Deterministic stack pick (the server's badge, not the LLM's vote): the card that REUSES the most proven
-    memory — sprint0's thesis is reuse > rebuild. Score = reusable features (action reuse|adapt, weighted) +
-    grounded-on projects. Returns the top card's index, or None. The AI's OWN pick (ArchitectureOptions.ai_pick_*)
-    is surfaced alongside as the alternative view — it may favor a fresh/modern stack this score would penalize."""
-    if not cards:
+def recommend_architecture(cards: list, ai_pick_name: str = "") -> int | None:
+    """The badged card follows the AI's OWN pick (`ai_pick_name`) — NOT a reuse-max heuristic. We dropped the
+    old "most proven reuse" scoring (reused*2 + grounded) because it forced a reuse bias even on a mismatched
+    brief; reuse is now one option among equals, and relevance is gated upstream (reason.REUSE_MIN_SCORE) so a
+    card only cites memory when a past project genuinely fits. Returns the index of the card whose name matches
+    the AI's pick, else None (no server badge — the cards stand on their own)."""
+    if not cards or not ai_pick_name:
         return None
-
-    def score(c) -> int:
-        reuse = getattr(c, "reuse", None) or []
-        reused = sum(1 for r in reuse if getattr(r, "action", "reuse") in ("reuse", "adapt"))
-        grounded = len(getattr(c, "grounded_on", None) or [])
-        return reused * 2 + grounded
-
-    best_i, best_s = 0, -1
+    want = ai_pick_name.strip().lower()
     for i, c in enumerate(cards):
-        s = score(c)
-        if s > best_s:
-            best_i, best_s = i, s
-    return best_i
+        if (getattr(c, "name", "") or "").strip().lower() == want:
+            return i
+    return None

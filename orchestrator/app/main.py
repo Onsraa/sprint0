@@ -95,7 +95,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173", "http://127.0.0.1:5173",
         "http://localhost:5174", "http://127.0.0.1:5174",
-        *([os.environ["FRONTEND_ORIGIN"]] if os.getenv("FRONTEND_ORIGIN") else []),
+        # FRONTEND_ORIGIN may be a comma-list — a Cloud Run service answers on BOTH its URL formats
+        # (PROJECTNUM.REGION.run.app and SERVICE-HASH.REGION.a.run.app), so allow each.
+        *[o.strip() for o in os.getenv("FRONTEND_ORIGIN", "").split(",") if o.strip()],
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -370,13 +372,8 @@ async def _startup() -> None:
                 RELAYS.setdefault(_pid, _st)
         except Exception:
             pass
-        try:  # durability: the orphan-sweep above dropped the prior process's draft tasks (the _plan_pid
-            # placeholder is per-process), so re-materialize drafts for every rehydrated in-flight plan —
-            # the Work hub shows planned work again after a restart (idempotent: clears this plan's prior first).
-            for _pid, _pl in list(PLANS.items()):
-                await _persist_draft_tasks(_pl, _pid)
-        except Exception:
-            pass
+        # No draft-task re-materialization on restart: tasks exist only after a plan is dispatched
+        # (_finalize_scaffold), so an in-flight (un-dispatched) plan's Work hub is correctly empty.
     except Exception:
         pass  # Atlas may be momentarily unreachable; lazy-load on first authed request
 
@@ -869,23 +866,6 @@ def _plan_pid(plan_id: str) -> int:
     return -(abs(hash(plan_id)) % 2_000_000_000)
 
 
-async def _persist_draft_tasks(plan: PlanJSON, plan_id: str) -> None:
-    """Best-effort: store a plan's Tasks (status 'planned') under the placeholder id so the Work
-    hub sees drafted work. Idempotent — clears any prior draft for this plan first. (Phase A)"""
-    try:
-        now = datetime.now(timezone.utc).isoformat()
-        pid = _plan_pid(plan_id)
-        await delete_tasks_for_project(pid)
-        objs = tasklib.materialize_tasks(plan, pid, now)
-        pri = DELTA_PRIORITY.get(plan_id)
-        if pri:
-            for o in objs:
-                o.priority = pri  # the feature's urgency rides on its tasks → drives the cascade in the preview
-        await save_tasks([o.model_dump() for o in objs])
-    except Exception:
-        pass  # mirrors save_project_record — never fail planning over persistence
-
-
 def _reflow_change_events(rows: list[dict]) -> list[ChangeEvent]:
     """The event spine now also carries Living-Project-Graph events (plan_created, gitlab_*, reuse_recorded,
     corpus_reembedded, node_retired …) whose `kind` isn't a ChangeEvent kind. The reflow engine only consumes
@@ -916,7 +896,8 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
                             payload={"plan_id": plan_id, "plan": plan.model_dump()})
     except Exception:
         pass
-    await _persist_draft_tasks(plan, plan_id)
+    # Tasks are NOT materialized here — only at _finalize_scaffold (after the relay's gates ratify), so the
+    # Work hub stays empty until the plan is dispatched (no pre-ratification tasks, no negative-pid placeholders).
     await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
     return {"plan_id": plan_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
@@ -1851,7 +1832,7 @@ async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile 
     await _persist_relay(plan_id)  # durable: the delta plan + relay survive a restart
     await _persist("delta_target", plan_id, {"v": project_id})
     await _persist("delta_priority", plan_id, {"v": req.priority})
-    await _persist_draft_tasks(plan, plan_id)
+    # No pre-ratification draft tasks (see make_plan): the delta's tasks materialize at _finalize_scaffold.
     await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
     return {"plan_id": plan_id, "project_id": project_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 

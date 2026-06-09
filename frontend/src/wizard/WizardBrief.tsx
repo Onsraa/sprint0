@@ -176,7 +176,7 @@ export function WizardBrief() {
         const opts = await api.architectures(briefId);
         setCards(opts.cards);
         setAiPick({ name: opts.ai_pick_name ?? "", why: opts.ai_pick_why ?? "" });
-        // default the choice to the server's recommended (most proven reuse) card, else the first
+        // default the choice to the AI's own pick (the badged card), else the first
         setChosenStack((opts.cards.find((c) => c.recommended) ?? opts.cards[0])?.tech_stack ?? null);
         commitRef.current = () => setStep(2);
       },
@@ -415,7 +415,7 @@ function StepClarify({ spec, answers, setAnswers }: {
         <div key={a.id} className="s0-stagger" style={{ "--d": `${(d += 75)}ms`, border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", padding: 14, boxShadow: "var(--shadow-1)" } as React.CSSProperties}>
             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>{a.question}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-              {a.options.map((o) => {
+              {a.options.filter((o) => o && o.trim()).map((o) => {
               const on = answers[a.id] === o;
               return (
                 <button key={o} className="s0-press" onClick={() => setAnswers((ans) => ({ ...ans, [a.id]: o }))}
@@ -447,10 +447,7 @@ function StepArch({ cards, aiPick, chosenStack, setChosenStack, setupOwner, setS
 }) {
   const sameStack = (a: TechStack | null, b: TechStack) =>
     !!a && a.frontend === b.frontend && a.backend === b.backend && a.db === b.db && a.infra === b.infra;
-  const recCard = cards.find((c) => c.recommended);
   const archQ = useQuery({ queryKey: ["architects"], queryFn: () => api.architects() });  // %-match leads for the redirect
-  const aiCard = cards.find((c) => c.name === aiPick.name);
-  const diverge = !!recCard && !!aiCard && recCard.name !== aiCard.name;
   const cols = `96px repeat(${cards.length}, minmax(0, 1fr))`;
   const cell: React.CSSProperties = { padding: "9px 10px", borderTop: "0.5px solid var(--border-subtle)", minWidth: 0 };
   const rowLabel: React.CSSProperties = { ...cell, fontSize: 10.5, color: "var(--text-quaternary)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 };
@@ -459,19 +456,10 @@ function StepArch({ cards, aiPick, chosenStack, setChosenStack, setupOwner, setS
     <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
       <WizHead title="Pick a stack" sub="Compare the options side by side. The AI recommends; you choose." />
 
-      {/* dual-recommendation legend */}
+      {/* the AI recommends one card; the human chooses */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 12, fontSize: 11.5, color: "var(--text-tertiary)" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><ZeroMark size={12} /> <b style={{ fontWeight: 600, color: "var(--text-secondary)" }}>Most proven reuse</b> — the safe, memory-grounded pick</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="bolt" size={12} style={{ color: "var(--amber)" }} /> <b style={{ fontWeight: 600, color: "var(--text-secondary)" }}>AI's pick</b> — the model's own call</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="bolt" size={12} style={{ color: "var(--amber)" }} /> <b style={{ fontWeight: 600, color: "var(--text-secondary)" }}>AI's pick</b> — the model's own call{aiPick.why ? ` · ${aiPick.why}` : ""}</span>
       </div>
-      {diverge && aiCard && (
-        <div style={{ display: "flex", gap: 8, padding: "9px 12px", marginBottom: 14, borderRadius: "var(--r-md)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
-          <Icon name="bolt" size={14} style={{ color: "var(--amber)", flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45 }}>
-            They differ — proven reuse says <b>{recCard?.name}</b>, the AI would take <b>{aiCard.name}</b>{aiPick.why ? <> — {aiPick.why}</> : ""}. <b style={{ color: "var(--text-primary)" }}>Your call.</b>
-          </span>
-        </div>
-      )}
 
       <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)" }}>
         {/* selectable card headers */}
@@ -488,7 +476,6 @@ function StepArch({ cards, aiPick, chosenStack, setChosenStack, setupOwner, setS
                   <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {c.recommended && <Badge tone="green" mono><ZeroMark size={9} /> proven</Badge>}
                   {c.name === aiPick.name && <Badge tone="amber" mono><Icon name="bolt" size={9} /> AI's pick</Badge>}
                 </div>
               </button>);
@@ -534,7 +521,7 @@ function StepArch({ cards, aiPick, chosenStack, setChosenStack, setupOwner, setS
       <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Not sure? Hand the stack call to a lead:</span>
         <select value={setupOwner ?? ""}
-          onChange={(e) => { const u = e.target.value || null; setSetupOwner(u); if (u && recCard) setChosenStack(recCard.tech_stack); }}
+          onChange={(e) => { const u = e.target.value || null; setSetupOwner(u); const def = cards.find((c) => c.recommended) ?? cards[0]; if (u && def) setChosenStack(def.tech_stack); }}
           style={{ height: 32, padding: "0 10px", fontSize: 12.5, border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-md)", background: setupOwner ? "var(--bg-secondary)" : "var(--bg-elevated)", color: "var(--text-primary)", fontFamily: "inherit" }}>
           <option value="">— I'll pick it myself —</option>
           {(archQ.data?.candidates ?? []).map((c: any) => <option key={c.username} value={c.username}>{c.name} · {c.score}% match</option>)}
@@ -571,9 +558,12 @@ function StepPlan({ plan, relay, staffing, members }: {
       <div style={{ display: "flex", alignItems: "stretch", gap: 0, flexWrap: "wrap", rowGap: 14 }}>
         {order.map((disc: string, i: number) => {
           const cov = covOf(disc);
-          const isGap = cov ? !cov.covered : !leadFor(disc);
-          const lead = leadFor(disc);
-          const leadName = isGap ? "Routes to you" : (byUser(lead ?? "")?.name?.split(" ")[0] ?? lead ?? "—");
+          const gate = ((relay?.gates ?? []) as any[]).find((g) => g.discipline === disc);
+          const isSetup = disc === "setup";  // Architecture: the manager's own gate (or a delegate's), never an orphan
+          // owner = the gate's delegate, else an issue-assignee, else the discipline's seated dev (roster).
+          const ownerUser = gate?.delegate ?? (isSetup ? undefined : (leadFor(disc) ?? members.find((m: any) => m.role === "developer" && m.discipline === disc)?.username));
+          const isGap = isSetup ? false : (cov ? !cov.covered : !ownerUser);
+          const leadName = ownerUser ? (byUser(ownerUser)?.name?.split(" ")[0] ?? ownerUser) : (isSetup ? "Manager" : "Routes to you");
           return (
             <Fragment key={disc}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, minWidth: 80 }}>

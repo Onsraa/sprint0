@@ -17,10 +17,9 @@ import { qk } from "../lib/query";
 // real Member uses gitlab_username / trust_level; the mock used gitlab / trust.
 const trustOf = (m: Member) => (m as Member & { trust?: unknown }).trust_level ?? "medium";
 
-// TODO(reconcile): the mockup read STAFFING.plan_HARB_42.coverage (gaps + stretch_candidates) — there is
-// no staffing/coverage field on the useApp() adapter. Fall back to the orphan-gap discipline + a stretch
-// candidate derived from the roster so the banner still renders; wire to a real coverage endpoint later.
-const ORPHAN_GAP = "uiux";
+// Orphan disciplines = lanes with no seated developer, computed live from the roster. Setting a dev's
+// discipline invalidates the roster query (below), so the banner recomputes/clears automatically.
+const LANES = ["uiux", "backend", "frontend", "qa", "devops"];
 
 export function TeamView() {
   const { chrome, members, role } = useApp();
@@ -38,12 +37,12 @@ export function TeamView() {
       qc.invalidateQueries({ queryKey: qk.roster() });
     } catch (e) { toast.error(e instanceof Error ? e.message : "Reconcile failed"); }
   };
-  const gap = ORPHAN_GAP;
-  // strongest non-uiux candidate by trust as the stretch suggestion (mock had cov.stretch_candidates[0]).
-  const stretch =
+  const seated = new Set(members.filter((m) => m.role === "developer").map((m) => m.discipline));
+  const gaps = LANES.filter((d) => !seated.has(d));
+  // strongest candidate outside the gap discipline as the stretch suggestion.
+  const stretchFor = (gap: string) =>
     members.find((m) => m.role === "developer" && m.trust_level === "high" && m.discipline !== gap) ??
     members.find((m) => m.role === "developer");
-  const stretchScore = "0.74"; // TODO(reconcile): mock cosine match score had no real equivalent.
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -52,7 +51,6 @@ export function TeamView() {
           <Tab active={tab === "roster"} onClick={() => setTab("roster")}>Roster</Tab>
           <Tab active={tab === "capabilities"} onClick={() => setTab("capabilities")}>Capabilities</Tab>
         </div>
-        {role === "manager" && needsLink.length > 0 && <Button variant="secondary" size="sm" icon="gitlab" onClick={reconcile}>Reconcile links</Button>}
         {chrome.canOnboard && <Button variant="primary" size="sm" icon="plus" onClick={openHire}>Onboard a dev</Button>}
       </ViewChrome>
       {tab === "capabilities" ? (
@@ -60,16 +58,19 @@ export function TeamView() {
       ) : (
       <div style={{ flex: 1, overflow: "auto" }}>
         {/* staffing gap banner — manager-only (it's a staffing decision; leads don't act on it) */}
-        {role === "manager" && (
-        <div style={{ margin: "16px 20px 0", border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: "13px 14px", background: "var(--bg-secondary)", display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ width: 28, height: 28, borderRadius: "var(--r-md)", display: "grid", placeItems: "center", background: "var(--bg-elevated)", border: "1px dashed var(--text-primary)" }}><DiscDot d={gap} size={9} /></span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{DISC[gap].label} is an orphan gap</div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No dedicated dev — the gate routes to the manager. Stretch: {stretch?.name} (match {stretchScore}).</div>
+        {role === "manager" && gaps.map((gap) => {
+          const stretch = stretchFor(gap);
+          return (
+          <div key={gap} style={{ margin: "16px 20px 0", border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: "13px 14px", background: "var(--bg-secondary)", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 28, height: 28, borderRadius: "var(--r-md)", display: "grid", placeItems: "center", background: "var(--bg-elevated)", border: "1px dashed var(--text-primary)" }}><DiscDot d={gap} size={9} /></span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{DISC[gap]?.label ?? gap} is an orphan gap</div>
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No dedicated dev — the gate routes to the manager.{stretch ? ` Stretch: ${stretch.name}.` : ""}</div>
+            </div>
+            {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus" onClick={openHire}>Onboard</Button>}
           </div>
-          {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus" onClick={openHire}>Onboard</Button>}
-        </div>
-        )}
+          );
+        })}
 
         {role === "manager" && needsLink.length > 0 && (
         <div style={{ margin: "12px 20px 0", border: "0.5px solid var(--amber)", borderRadius: "var(--r-lg)", padding: "11px 14px", background: "rgba(199,120,0,0.07)", display: "flex", alignItems: "center", gap: 10 }}>
