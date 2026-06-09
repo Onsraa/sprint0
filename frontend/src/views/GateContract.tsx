@@ -27,7 +27,7 @@ export function GateContract() {
   const viewerDisc: string | undefined = watched ? watched.discipline : me.discipline;
   const viewerUser: string | undefined = watched ? watched.username : me.username;
   const seesAll = !watched && chrome.seesAllGates;
-  const owns = (d: string) => { const g = (gates as any[]).find((x) => x.discipline === d); return g?.delegate ? g.delegate === viewerUser : d === viewerDisc; };
+  const owns = (d: string) => { const g = (gates as any[]).find((x) => x.discipline === d); const ratifier = g?.delegate ?? g?.owner; return ratifier ? ratifier === viewerUser : d === viewerDisc; };
   const lanes = useMemo(() => (seesAll ? present : present.filter(owns)), [present, seesAll, gates, viewerDisc, viewerUser]);
   const pick = (d?: string | null) => (d && lanes.includes(d) ? d : null);
   // a Contract redirect may carry only { agr } — derive its lane from the agreement's two disciplines

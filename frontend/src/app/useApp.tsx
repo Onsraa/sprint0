@@ -71,7 +71,7 @@ const toMockAttribution = (a: Attribution): any => ({
   gitlab_author: a.gitlab_username, candidates: a.suggested ? [a.suggested] : [], resolved: null,
   ambiguous: true, trust_delta: null, score: a.score,
 });
-const toMockGate = (g: Gate, relay?: RelayState): any => ({ ...g, baton: !!relay?.baton?.includes(g.discipline as never), depends: g.depends_on ?? [], stretched: false, owner: null });
+const toMockGate = (g: Gate, relay?: RelayState): any => ({ ...g, baton: !!relay?.baton?.includes(g.discipline as never), depends: g.depends_on ?? [], stretched: false, owner: g.owner ?? null });
 
 /* (Removed: the Autonomy posture. NO auto-approval — every gate is ratified by its owner; the AI only recommends.) */
 

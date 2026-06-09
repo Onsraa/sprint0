@@ -440,10 +440,10 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
     .filter((i: any) => i.discipline === g.discipline)
     .map((i: any) => ({ id: i.id, t: i.title, s: "planned", tags: i.capability_tags ?? [] })), [plan, g.discipline]);
   const done = g.status === "ratified" || g.status === "auto_passed";
-  // A dev owns their own discipline's gate; the manager sees all; a granted Watch (personFilter) is read-only.
-  // (Gate.owner is unset in the adapter, so ownership is by discipline — exact in the demo's one-dev-per-lane.)
-  // a delegated gate is the delegate's to ratify (not the original lead's); else the discipline lead's.
-  const ownsThisGate = !personFilter && (chrome.seesAllGates || (g.delegate ? g.delegate === me.username : me.discipline === g.discipline));
+  // A dev owns their own discipline's gate; the Tech Lead sees all; a granted Watch (personFilter) is read-only.
+  // a delegated gate is the delegate's to ratify; else the assigned owner's (lane lead); else the discipline lead's.
+  const ratifier = g.delegate ?? g.owner;
+  const ownsThisGate = !personFilter && (chrome.seesAllGates || (ratifier ? ratifier === me.username : me.discipline === g.discipline));
   // a gate is actionable only when it's on the baton (deps cleared → relay flips locked→pending). Gating on
   // depends.length wrongly locked every frontend/qa gate (they always have deps) — incl. a handed-off one.
   const locked = !done && g.status !== "pending" && g.status !== "changes_requested";

@@ -110,6 +110,7 @@ export type ArchitectureOptions = z.infer<typeof ArchitectureOptions>;
 /* ── relay ───────────────────────────────────────────────────────────── */
 export const Gate = z.object({
   discipline: Discipline, status: GateStatus, depends_on: z.array(Discipline), note: z.string(),
+  owner: z.string().nullish(),      // the lead this gate routes to (lane assignee); null = gap → Tech Lead
   delegate: z.string().nullish(),   // human-in-control: a lead handed this gate to this user to ratify
   // spine (P1): the router's per-gate decision; null on legacy gates
   tier: RoutingTier.nullish(), confidence: z.number().nullish(), blast_radius: z.number().nullish(),
@@ -217,7 +218,7 @@ export type QueueItem = z.infer<typeof QueueItem>;
 
 export const RelaySummary = z.object({
   plan_id: z.string(), project: z.string(), baton: z.array(Discipline),
-  gates: z.array(z.object({ discipline: Discipline, status: GateStatus, note: z.string(), delegate: z.string().nullish() })),
+  gates: z.array(z.object({ discipline: Discipline, status: GateStatus, note: z.string(), owner: z.string().nullish(), delegate: z.string().nullish() })),
   is_delta: z.boolean(), target_project_id: z.number().nullable(), all_ratified: z.boolean(),
 });
 export type RelaySummary = z.infer<typeof RelaySummary>;

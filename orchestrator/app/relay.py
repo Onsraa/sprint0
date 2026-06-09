@@ -9,7 +9,7 @@ functions over RelayState — no I/O, so it's trivially testable.
 from __future__ import annotations
 
 from app import routing
-from app.contracts import DeveloperProfile, Gate, IntegrationSignal, Issue, Lane, PlanJSON, RelayState, TesterPick
+from app.contracts import _TYPE_TO_DISCIPLINE, DeveloperProfile, Gate, IntegrationSignal, Issue, Lane, PlanJSON, RelayState, TesterPick
 
 _DONE = {"auto_passed", "ratified"}
 
@@ -43,11 +43,19 @@ def is_setup_gate(gate: Gate) -> bool:
     return gate.discipline == "setup"
 
 
+def _canon_lane(issue: Issue) -> str:
+    """The canonical relay lane for an issue. The planner sometimes emits an IssueType as the `lane`
+    (e.g. "design"/"db"); fold those onto their discipline (design→uiux, db→backend) so gates match the
+    roster's disciplines + the DISC labels. A genuine AI-discovered lane ("security") is NOT a type → kept."""
+    lane = issue.lane or issue.discipline
+    return _TYPE_TO_DISCIPLINE.get(lane, lane)
+
+
 def _issues_by_lane(plan: PlanJSON) -> dict[str, list[Issue]]:
     out: dict[str, list[Issue]] = {}
     for epic in plan.epics:
         for issue in epic.issues:
-            out.setdefault(issue.lane or issue.discipline, []).append(issue)
+            out.setdefault(_canon_lane(issue), []).append(issue)
     return out
 
 
@@ -98,7 +106,11 @@ def build_relay(plan: PlanJSON, *, setup_owner: str | None = None) -> RelayState
         lanes = sorted(lane for lane in present if lane_stage(lane) == stage)
         deps = list(prev)
         for lane in lanes:
-            gates.append(Gate(discipline=lane, depends_on=deps, status="locked" if deps else "pending"))
+            # owner = the lane's assignee (assign_developers already picked the best profile by skill+availability);
+            # the most-common assignee leads. No assignee → gap → None → the Tech Lead ratifies it.
+            assignees = [i.assignee for i in by_lane.get(lane, []) if i.assignee]
+            owner = max(set(assignees), key=assignees.count) if assignees else None
+            gates.append(Gate(discipline=lane, owner=owner, depends_on=deps, status="locked" if deps else "pending"))
         if lanes:
             prev = lanes  # the next stage converges on this one
     if setup_owner:  # gate-0: the architecture decision, owned by the redirected lead (delegate)

@@ -264,6 +264,7 @@ class Gate(BaseModel):
     status: GateStatus = "pending"
     depends_on: list[Lane] = Field(default_factory=list)  # gates that must finish first
     note: str = ""
+    owner: Optional[str] = None  # the lead this gate routes to (the lane's assignee = best profile); None = gap → Tech Lead
     delegate: Optional[str] = None  # human-in-control: a lead handed this gate (+ its slice) to this user to ratify
     # ── spine refactor (P0, additive): the router's per-gate decision; all null on legacy gates ──
     tier: Optional[RoutingTier] = None            # auto_pass | one_expert | two_expert (the router's call)

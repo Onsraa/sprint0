@@ -665,7 +665,7 @@ async def list_relays(member: DeveloperProfile = Depends(auth.current_member)) -
             continue
         out.append({
             "plan_id": plan_id, "project": plan.project_name, "baton": list(state.baton),
-            "gates": [{"discipline": g.discipline, "status": g.status, "note": g.note, "delegate": g.delegate} for g in state.gates],
+            "gates": [{"discipline": g.discipline, "status": g.status, "note": g.note, "owner": g.owner, "delegate": g.delegate} for g in state.gates],
             "is_delta": plan_id in DELTA_TARGET, "target_project_id": DELTA_TARGET.get(plan_id),
             "all_ratified": relay.all_ratified(state),
         })
@@ -1205,10 +1205,11 @@ async def ratify_gate(
     _gate = next((g for g in state.gates if g.discipline == discipline), None)
     if _gate is None:
         raise HTTPException(404, f"no {discipline} gate")
-    # a delegated gate is the delegate's call (not the original lead's); else the lead's. Manager always may.
-    _owner_ok = member.role == "manager" or (_gate.delegate == member.username if _gate.delegate else member.discipline == discipline)
+    # a delegated gate is the delegate's call; else the assigned owner's; else the discipline lead's. Manager always may.
+    _ratifier = _gate.delegate or _gate.owner
+    _owner_ok = member.role == "manager" or (member.username == _ratifier if _ratifier else member.discipline == discipline)
     if not _owner_ok:
-        raise HTTPException(403, f"only this gate's owner ({_gate.delegate or discipline + ' lead'}) or the manager can ratify it")
+        raise HTTPException(403, f"only this gate's owner ({_ratifier or discipline + ' lead'}) or the Tech Lead can ratify it")
     if next(g.status for g in state.gates if g.discipline == discipline) == "blocked":
         raise HTTPException(409, "gate is blocked by an open integration failure — mark it api-ok first")
     if discipline == "setup" and req.tech_stack is not None:  # the redirected lead confirms or OVERRIDES the stack
