@@ -7,6 +7,7 @@ HTTPS/443, so this is unaffected by the Atlas :27017 network issue.
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 from urllib.parse import quote
 
@@ -46,14 +47,22 @@ def group_info(group: str | None = None) -> dict:
 def create_project_scaffold(
     project_name: str, labels: dict[str, str] | None = None, group: str | None = None
 ) -> dict:
-    """Create a project in the demo group + its labels. Returns ids + url."""
+    """Create a project in the demo group + its labels. Returns ids + url. On a path collision (GitLab
+    400 'has already been taken' — re-running the same brief, or a still-deletion_scheduled slug), retry
+    once with a short unique suffix so Create always succeeds."""
     group = group or DEMO_GROUP
     with _client() as c:
         gid = _group_id(c, group)
-        r = c.post(
-            "/projects",
-            json={"name": project_name, "namespace_id": gid, "initialize_with_readme": True, "visibility": "private"},
-        )
+        r = None
+        for attempt in range(2):
+            name = project_name if attempt == 0 else f"{project_name}-{secrets.token_hex(2)}"
+            r = c.post(
+                "/projects",
+                json={"name": name, "namespace_id": gid, "initialize_with_readme": True, "visibility": "private"},
+            )
+            if attempt == 0 and r.status_code == 400 and "taken" in r.text.lower():
+                continue  # path/name collision → retry once with a uniquified name
+            break
         r.raise_for_status()
         p = r.json()
         for name, color in (labels or {}).items():

@@ -1804,7 +1804,11 @@ async def _reserve_locked(plan_id: str, req: DispatchRequest) -> dict:
     from app import trace
     bid = plan_id.removeprefix("plan_"); trace.clear(bid); trace.begin(bid)  # the wizard polls /trace by brief_id
     trace.step("gitlab", "action", "Create the GitLab project", plan.project_name)
-    res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))  # contextvar can't cross the threadpool — bracket the real op here
+    try:
+        res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))  # contextvar can't cross the threadpool — bracket the real op here
+    except Exception as e:  # a GitLab failure must return a clean 502 (CORS headers attach), never an unhandled 500
+        trace.step("gitlab", "result", "GitLab rejected the create", str(e)[:140])
+        raise HTTPException(502, f"GitLab could not reserve the project: {str(e)[:200]}")
     trace.step("gitlab", "result", f"project #{res['project_id']} reserved", res.get("web_url", ""))
     trace.step("server", "result", "Relay open", "each gate is its lead's to ratify; tasks scaffold to GitLab on close")
     RESERVED[plan_id] = res
