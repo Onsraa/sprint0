@@ -284,14 +284,20 @@ def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | N
 async def run_brief(
     brief_text: str, chosen_stack: TechStack | None = None, constraints: Constraints | None = None
 ) -> PlanJSON:
+    from app import trace
     vocab = await _known_profile_labels()  # own MCP context — fetch BEFORE the main one (no re-entrancy)
     async with MongoMCP() as m:
+        trace.step("mongodb", "action", "Retrieve grounding", "$rankFusion over PastProjects for the plan")
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
+        trace.step("gemini", "action", "Plan the relay", "map features → epics → issues across the discipline gates")
         plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
         plan.grounded_on = plan.grounded_on or [p["name"] for p in past]
+        trace.step("server", "action", "Assign + schedule", "match each issue to the roster by skill + availability")
         await _match_and_assign(plan, m)
     await _discover_profiles(plan)  # own MCP context — AFTER the main one (no re-entrancy)
+    _tasks = sum(len(e.issues) for e in plan.epics)
+    trace.step("server", "result", f"{_tasks} task(s) · {len(plan.epics)} epic(s)", "relay ready to open on reserve")
     return plan
 
 

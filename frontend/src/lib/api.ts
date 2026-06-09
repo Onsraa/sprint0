@@ -91,6 +91,9 @@ import type {
 /** A passport-ranked teammate to hand work off to (task or gate). */
 export type HandoffCandidate = { username: string; name: string; discipline: string | null; score: number; in_lane: boolean; why: string };
 
+/** One step in the live ReAct trace the gateway emits during a wizard phase (clarify/arch/plan). */
+export type TraceStep = { seq: number; actor: string; kind: "thought" | "action" | "result"; label: string; detail?: string; ts?: number };
+
 export type {
   AccessGrant,
   AmbiguityCard,
@@ -503,6 +506,10 @@ export const api = {
   },
   getArchitectures(briefId: string): Promise<ArchitectureOptions> {
     return jget(`/api/briefs/${briefId}/architectures`);
+  },
+  /* The live Reason→Action trace the gateway emits during a phase; polled by the wizard loader. */
+  trace(briefId: string): Promise<{ steps: TraceStep[] }> {
+    return jget(`/api/briefs/${briefId}/trace`);
   },
   resolveClarify(briefId: string, answers: Record<string, string>): Promise<ClarifiedSpec> {
     return jpost(`/api/briefs/${briefId}/clarify/resolve`, { answers });

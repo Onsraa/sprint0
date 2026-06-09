@@ -20,7 +20,7 @@ import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { Icon, ZeroMark, FullLogo } from "../lib/icon";
 import { Button, Badge, DiscDot, DISC, CapTag } from "../components/ui";
-import { Stepper, SequenceLoader, ConfirmDraft } from "./WizardMotion";
+import { Stepper, SequenceLoader, ReActTrace, ConfirmDraft } from "./WizardMotion";
 import { api } from "../lib/api";
 import type {
   ArchitectureCard,
@@ -65,7 +65,9 @@ const DEFAULT_BRIEF = `Build a tenant portal for a freight client. They need: a 
 /* The async loaders shown during each wait. The SequenceLoader animates a fixed line
    sequence; the real API call runs in parallel and `onDone` commits + advances once the
    data has landed (see runLoader). */
-type LoaderCfg = { kicker: string; headline: React.ReactNode; lines: string[]; stepMs?: number };
+type LoaderCfg = { kicker: string; headline: React.ReactNode; lines: string[]; stepMs?: number;
+  // when set, the loader renders the live ReActTrace (polling /trace) instead of the scripted SequenceLoader
+  phase?: "clarify" | "arch" | "plan" };
 
 export function WizardBrief() {
   const { setView, members, addDraft } = useApp();
@@ -146,6 +148,7 @@ export function WizardBrief() {
   const goClarify = () => {
     runLoader(
       {
+        phase: "clarify",
         kicker: "sprint0 · clarify",
         headline: "Digesting the brief",
         lines: ["Reading the brief", "Extracting features", "Cross-referencing agency memory", "Flagging ambiguities that need a call"],
@@ -167,6 +170,7 @@ export function WizardBrief() {
     if (!briefId) return;
     runLoader(
       {
+        phase: "arch",
         kicker: "sprint0 · architecture",
         headline: "Grounding the stack",
         lines: ["Resolving the ambiguities you answered", "Scanning validated modules in memory", "Drafting grounded architecture options"],
@@ -194,6 +198,7 @@ export function WizardBrief() {
     if (!briefId || !chosenStack) return;
     runLoader(
       {
+        phase: "plan",
         kicker: "sprint0 · plan",
         headline: "Drafting the relay",
         lines: ["Planning epics and tasks", "Sequencing the discipline relay", "Checking team coverage for each gate"],
@@ -346,12 +351,20 @@ export function WizardBrief() {
           <div style={{ flex: 1, overflow: "auto", padding: "32px 0" }}>
             <div style={{ maxWidth: 660, margin: "0 auto", padding: "0 32px" }}>
               {loader ? (
-                <SequenceLoader
-                  kicker={loader.kicker}
-                  headline={loader.headline}
-                  lines={loader.lines}
-                  stepMs={loader.stepMs}
-                  onDone={onLoaderDone} />
+                loader.phase ? (
+                  <ReActTrace
+                    runId={briefId}
+                    phase={loader.phase}
+                    fallback={loader.lines}
+                    onDone={onLoaderDone} />
+                ) : (
+                  <SequenceLoader
+                    kicker={loader.kicker}
+                    headline={loader.headline}
+                    lines={loader.lines}
+                    stepMs={loader.stepMs}
+                    onDone={onLoaderDone} />
+                )
               ) : (
                 <>
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}

@@ -853,7 +853,7 @@ async def architectures(brief_id: str, constraints: Optional[Constraints] = None
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
     from app import trace
-    trace.begin(brief_id)   # accumulate the architecture phase onto this brief's ReAct trace
+    trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for the architecture phase
     opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints(), grounded=grounded)
     ARCHS[brief_id] = opts  # cache for wizard resume
     await _persist("archs", brief_id, opts.model_dump())
@@ -899,6 +899,8 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
     req = req or PlanRequest()
+    from app import trace
+    trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for the plan phase
     # REASON: RAG (MongoDB MCP) → Gemini → assign. chosen_stack locks the stack (Idea 1).
     plan = await run_brief(BRIEFS[brief_id], chosen_stack=req.chosen_stack, constraints=req.constraints)
     plan_id = f"plan_{brief_id}"

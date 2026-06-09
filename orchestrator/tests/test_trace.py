@@ -39,3 +39,51 @@ def test_clear_one_run():
     trace.clear("z")
     assert trace.get("z") == []
     trace.end()
+
+
+# ── plan-phase instrumentation (reason.run_brief) ──────────────────────────────
+# run_brief emits the live trace the wizard's plan loader animates. We stub its heavy deps
+# (Mongo · Gemini · assign) — we're asserting the instrumentation fires + accumulates, not the planner.
+import asyncio
+from types import SimpleNamespace
+
+from app import reason
+
+
+def _stub_run_brief_deps(monkeypatch):
+    class _M:  # async-ctx MongoMCP whose hybrid_search returns no grounding
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def hybrid_search(self, *a, **k): return []
+    async def _labels(): return []
+    async def _gen(_prompt): return SimpleNamespace(grounded_on=[], epics=[SimpleNamespace(issues=[1, 2, 3])])
+    async def _noop_async(*a, **k): return None
+    monkeypatch.setattr(reason, "_known_profile_labels", _labels)
+    monkeypatch.setattr(reason, "MongoMCP", _M)
+    monkeypatch.setattr(reason, "embed_query", lambda q: [])
+    monkeypatch.setattr(reason, "generate_plan", _gen)
+    monkeypatch.setattr(reason, "_build_plan_prompt", lambda *a, **k: "")
+    monkeypatch.setattr(reason, "_normalize_plan_ids", lambda plan: None)
+    monkeypatch.setattr(reason, "_match_and_assign", _noop_async)
+    monkeypatch.setattr(reason, "_discover_profiles", _noop_async)
+
+
+def test_run_brief_records_the_plan_phase_trace(monkeypatch):
+    _stub_run_brief_deps(monkeypatch)
+    trace.clear("b"); trace.begin("b")
+    asyncio.run(reason.run_brief("build a thing"))
+    steps = trace.get("b")
+    labels = [s["label"] for s in steps]
+    kinds = {(s["actor"], s["kind"]) for s in steps}
+    assert "Retrieve grounding" in labels and "Plan the relay" in labels and "Assign + schedule" in labels
+    assert ("mongodb", "action") in kinds and ("gemini", "action") in kinds
+    assert any(s["kind"] == "result" for s in steps)   # the closing "N task(s) · M epic(s)" step
+    trace.end()
+
+
+def test_run_brief_trace_is_noop_without_a_run(monkeypatch):
+    # the e2e/untraced path: run_brief must not blow up and records nothing when no run is active
+    _stub_run_brief_deps(monkeypatch)
+    trace.end(); trace.clear()
+    asyncio.run(reason.run_brief("x"))
+    assert trace.get("b") == []

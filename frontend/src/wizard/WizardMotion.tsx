@@ -7,6 +7,7 @@
 import { useState, useEffect } from "react";
 import { Icon, ZeroMark } from "../lib/icon";
 import { Button } from "../components/ui";
+import { api, type TraceStep } from "../lib/api";
 
 type Step = { id: string; label: string; sub: string };
 
@@ -94,6 +95,121 @@ export function SequenceLoader({ kicker, headline, lines, stepMs = 720, onDone }
                 color: state === "wait" ? "var(--text-quaternary)" : state === "run" ? "var(--text-primary)" : "var(--text-secondary)",
                 transition: "color var(--t-reg)" }}>{ln}</span>
               {state === "run" && <span style={{ width: 7, height: 14, borderLeft: "1.5px solid var(--text-primary)", marginLeft: 2, animation: "s0-caret 1s steps(1) infinite" }} />}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ───────── ReAct trace (live agent reasoning) ─────────
+   Polls GET /api/briefs/{id}/trace and renders the REAL Gemini · MongoDB · GitLab steps the
+   gateway emits during a phase (clarify/arch/plan). Visual is the v5 mockup's ReActTrace ported
+   1:1; the data is live (no canned REACT_STEPS). `onDone` fires after a minimum dwell so even a
+   fast (cached) phase shows a beat of reasoning — runLoader keeps the loader up until the real
+   call ALSO resolves, so a slow phase streams its whole trace. */
+const ACTOR_META: Record<string, { label: string; bg: string; fg: string }> = {
+  gemini:  { label: "Gemini",  bg: "oklch(0.28 0.09 265)", fg: "#fff" },
+  mongodb: { label: "MongoDB", bg: "oklch(0.28 0.13 148)", fg: "#fff" },
+  gitlab:  { label: "GitLab",  bg: "oklch(0.28 0.10 22)",  fg: "#fff" },
+  voyage:  { label: "Voyage",  bg: "oklch(0.28 0.10 290)", fg: "#fff" },
+  server:  { label: "server",  bg: "var(--bg-active)",     fg: "var(--text-secondary)" },
+};
+const KIND_DOT: Record<string, string> = {
+  thought: "var(--text-quaternary)",
+  action:  "var(--blue)",
+  result:  "var(--green)",
+};
+const PHASE_LABEL: Record<string, string> = { clarify: "clarify", arch: "architecture", plan: "plan" };
+
+export function ReActTrace({ runId, phase, fallback, onDone, minDwellMs = 1500 }: {
+  runId: string | null; phase: string; fallback: string[]; onDone: () => void; minDwellMs?: number;
+}) {
+  const [steps, setSteps] = useState<TraceStep[]>([]);
+
+  // poll the live trace while the phase runs (runId = briefId; set early for clarify, already set for arch/plan)
+  useEffect(() => {
+    if (!runId) return;
+    let alive = true;
+    const poll = async () => {
+      try { const r = await api.trace(runId); if (alive && r.steps?.length) setSteps(r.steps); } catch { /* trace is best-effort */ }
+    };
+    poll();
+    const id = setInterval(poll, 800);
+    return () => { alive = false; clearInterval(id); };
+  }, [runId]);
+
+  // fire onDone after a minimum dwell — runLoader holds the loader until the real call also resolves
+  useEffect(() => {
+    const t = setTimeout(onDone, minDwellMs);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // before any real step lands, show the phase's fallback lines as ghost thoughts so the pane is never empty
+  const shown: TraceStep[] = steps.length
+    ? steps
+    : fallback.map((l, i) => ({ seq: i, actor: "server", kind: "thought" as const, label: l }));
+  const lastIdx = shown.length - 1;
+
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto", padding: "6px 0", animation: "s0-fade-in var(--t-reg) both" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
+        <span style={{ width: 36, height: 36, borderRadius: "var(--r-md)", background: "var(--bg-secondary)",
+          border: "0.5px solid var(--border)", display: "grid", placeItems: "center" }}>
+          <ZeroMark size={19} />
+        </span>
+        <div>
+          <div className="kicker" style={{ marginBottom: 3 }}>sprint0 · {PHASE_LABEL[phase] || phase}</div>
+          <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px", display: "flex", alignItems: "center", gap: 9 }}>
+            Reasoning
+            <span style={{ display: "inline-flex", gap: 4 }}>
+              {[0, 1, 2].map(i => <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-primary)",
+                animation: `s0-dot-pulse 1.1s ${i * 0.16}s infinite` }} />)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {shown.map((step, i) => {
+          const actor = ACTOR_META[step.actor] || ACTOR_META.server;
+          const kindDot = KIND_DOT[step.kind] || KIND_DOT.thought;
+          const isCurrent = i === lastIdx;
+          const isLast = i === shown.length - 1;
+          return (
+            <div key={step.seq} style={{ display: "flex", gap: 10, animation: "s0-pop-in var(--t-reg) var(--ease-out) both" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 10, flexShrink: 0 }}>
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: kindDot, flexShrink: 0,
+                  boxShadow: isCurrent ? `0 0 0 3px color-mix(in srgb, ${kindDot} 20%, transparent)` : "none",
+                  transition: "box-shadow var(--t-reg)" }} />
+                {!isLast && <span style={{ width: 1.5, flex: 1, minHeight: 22, background: "var(--border)", marginTop: 3 }} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, padding: "5px 0 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: step.detail ? 6 : 0 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", height: 17, padding: "0 7px",
+                    borderRadius: "var(--r-xs)", background: actor.bg, color: actor.fg,
+                    fontSize: 9.5, fontWeight: 700, fontFamily: "var(--font-mono)", letterSpacing: "0.05em", flexShrink: 0 }}>
+                    {actor.label}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 500,
+                    color: isCurrent ? "var(--text-primary)" : "var(--text-secondary)",
+                    transition: "color var(--t-reg)" }}>
+                    {step.label}
+                  </span>
+                  {isCurrent && <span style={{ width: 6, height: 13, borderLeft: "1.5px solid var(--text-primary)",
+                    animation: "s0-caret 1s steps(1) infinite", marginLeft: 1 }} />}
+                </div>
+                {step.detail && (
+                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", lineHeight: 1.5,
+                    background: "var(--bg-secondary)", padding: "5px 9px", borderRadius: "var(--r-sm)",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    animation: "s0-fade-in var(--t-reg) 0.06s both" }}>
+                    {step.detail}
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
