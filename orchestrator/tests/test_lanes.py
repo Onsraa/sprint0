@@ -54,6 +54,23 @@ def test_unstaffed_gate_has_no_owner():
     assert uiux.owner is None  # gap → None → the Tech Lead ratifies it
 
 
+def test_task_md_carries_the_scoped_brief():
+    # WS11: the .sprint0/TASK.md a dev opens carries the feature, do/do-not, contract, and directives
+    from app.handoff import _task_md
+    iss = _iss("t1", "backend")
+    iss.feature, iss.does, iss.not_does = "Auth", "Issue + refresh JWTs", "No social login"
+    iss.api_contract, iss.directives = "POST /login -> {token}", ["Use argon2"]
+    md = _task_md(iss)
+    assert all(s in md for s in ["Auth", "Issue + refresh JWTs", "No social login", "POST /login", "Use argon2"])
+
+
+def test_plan_prompt_includes_the_roster():
+    # WS12: the planner sees the team so it sizes/sequences with real availability
+    from app.reason import _build_plan_prompt
+    p = _build_plan_prompt("b", [], None, None, roster=[{"gitlab_username": "jean", "skills_text": "backend", "trust_level": "high"}])
+    assert "DEV ROSTER" in p and "jean" in p and "backend" in p
+
+
 def test_seed_topology_unchanged():
     state = relay.build_relay(_plan(
         _iss("u", "design"), _iss("b", "backend"), _iss("o", "devops"), _iss("f", "frontend")))

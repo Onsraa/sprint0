@@ -55,6 +55,7 @@ def _stub_run_brief_deps(monkeypatch):
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
         async def hybrid_search(self, *a, **k): return []
+        async def find(self, *a, **k): return []   # roster fetch (WS12) — empty in the stub
     async def _labels(): return []
     async def _gen(_prompt): return SimpleNamespace(grounded_on=[], epics=[SimpleNamespace(issues=[1, 2, 3])])
     async def _noop_async(*a, **k): return None

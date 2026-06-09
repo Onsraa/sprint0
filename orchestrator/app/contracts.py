@@ -71,6 +71,11 @@ class Issue(BaseModel):
     # ── spine refactor (P0, additive) ──
     capability_tags: list[str] = Field(default_factory=list)  # dynamic AI-discovered skills; closed list[str] (Gemini-safe)
     lane: Optional[Lane] = None  # relay-DAG gate node; defaults to `discipline` (the transition shim)
+    # ── per-task dev payload (WS11): the scoped brief Gemini writes for whoever picks up this task ──
+    feature: str = ""                                       # the parent feature this task belongs to
+    does: str = ""                                          # ≤200 — what this task SHOULD do (scoped exactly to it)
+    not_does: str = ""                                      # ≤200 — what it should NOT do (the scope boundary)
+    directives: list[str] = Field(default_factory=list)     # 1-3 light, concise code recommendations from the planner
 
     @model_validator(mode="after")
     def _fill_kind(self) -> "Issue":

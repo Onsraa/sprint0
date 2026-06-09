@@ -317,7 +317,8 @@ async def regenerate_slice(issues: list, discipline: str, user_solution) -> Rege
 
 
 def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | None,
-                       constraints: Constraints | None, vocab: list[str] | None = None) -> str:
+                       constraints: Constraints | None, vocab: list[str] | None = None,
+                       roster: list[dict] | None = None) -> str:
     chosen = ""
     if chosen_stack:
         s = chosen_stack
@@ -326,11 +327,15 @@ def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | N
     if vocab:
         vocab_line = ("KNOWN CAPABILITY PROFILES (reuse these capability_tags when one fits; only coin "
                       f"a new kebab-case tag if none match):\n{', '.join(vocab)}\n\n")
+    roster_line = ""
+    if roster:  # WS12: size + sequence with the real team; flag (never drop) work it can't staff
+        roster_line = f"DEV ROSTER (size + sequence the work with this team; flag gaps, do not drop them):\n{_format_roster(roster)}\n\n"
     return (
         f"<client_brief>\n{brief}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n"
         f"{chosen}\n"
         f"{vocab_line}"
+        f"{roster_line}"
         f"SIMILAR PAST PROJECTS (ground your plan in these):\n{_format_past(past)}\n\nProduce the Sprint-0 plan."
     )
 
@@ -343,8 +348,9 @@ async def run_brief(
     async with MongoMCP() as m:
         trace.step("mongodb", "action", "Retrieve grounding", "$rankFusion over PastProjects for the plan")
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
+        roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)  # WS12: size/sequence the plan with the real team
         trace.step("gemini", "action", "Plan the relay", "map features → epics → issues across the discipline gates")
-        plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab))
+        plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab, roster))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
         plan.grounded_on = plan.grounded_on or [p["name"] for p in past]
         trace.step("server", "action", "Assign + schedule", "match each issue to the roster by skill + availability")

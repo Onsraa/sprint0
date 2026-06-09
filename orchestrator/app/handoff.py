@@ -55,6 +55,26 @@ def _reuse_manifest(seeds: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _task_md(issue) -> str:
+    """The `.sprint0/TASK.md` a dev opens: the task scoped EXACTLY — feature, do / do-not, the contract
+    it produces or consumes, and the planner's light directives (WS11)."""
+    lines = [f"# {issue.title}", ""]
+    if issue.feature:
+        lines += [f"**Feature:** {issue.feature}", ""]
+    if issue.description:
+        lines += [issue.description, ""]
+    if issue.does:
+        lines += ["## Do", issue.does, ""]
+    if issue.not_does:
+        lines += ["## Do not", issue.not_does, ""]
+    if issue.api_contract:
+        lines += ["## Contract", "```", issue.api_contract, "```", ""]
+    if issue.directives:
+        lines += ["## Directives", *[f"- {d}" for d in issue.directives], ""]
+    lines.append(f"> sprint0 task {issue.id} · only the files in `.sprint0/focus.json` matter here.")
+    return "\n".join(lines)
+
+
 def commit_context_branches(
     project_id: int, plan: PlanJSON, default_branch: str = "main", reuse_seeds: dict[str, list[dict]] | None = None
 ) -> list[str]:
@@ -72,6 +92,7 @@ def commit_context_branches(
                 gl.create_branch(project_id, branch, ref=default_branch)
                 files = [
                     {"path": ".sprint0/focus.json", "content": _focus_json(issue)},
+                    {"path": ".sprint0/TASK.md", "content": _task_md(issue)},
                     {"path": ".vscode/settings.json", "content": _vscode_settings(issue.context_scope.files, issue.id, issue.context_scope.note)},
                 ]
                 seeds = reuse_seeds.get(issue.id)
