@@ -96,10 +96,12 @@ export function useApp() {
   const login = useLogin();
   const switchPersona = (username: string) => login.mutate(username, {
     onSuccess: (res) => {
-      // Full identity change: EVICT every prior-persona cache (work/inbox/queue/relays/decisions keys
-      // aren't user-scoped, so the Today list was blending across switches) but KEEP `me` — useLogin
-      // already re-seeded it from this login result, so this predicate avoids a null-member frame.
-      qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "me" });
+      // Refetch ONLY the user-scoped queries (their content depends on the caller); KEEP the shared data
+      // cached — roster/projects/relays/profiles are identical across personas (the views role-gate them
+      // client-side), so evicting them blanked the whole app and caused the freeze. `me` is already
+      // re-seeded by useLogin. The per-user Today list recomputes from the fresh `me` + the cached relays.
+      const userScoped = [qk.me(), qk.myQueue(), qk.inbox(), qk.decisions(), qk.work("team"), ["access"], ["attributions"]];
+      userScoped.forEach((key) => qc.invalidateQueries({ queryKey: [...key] }));
       const r: MockRole = res.member.role === "manager" ? "manager" : res.member.discipline === "qa" ? "qa" : "developer";
       setRoute((VIEW_TO_ROUTE[ROLE_CHROME[r].land] ?? ROLE_CHROME[r].land) as never);
     },
@@ -184,7 +186,11 @@ export function useApp() {
     (access.i_can_see ?? []).some((g) => g.subject_id === u) ? "active"
       : (access.pending_out ?? []).some((g) => g.subject_id === u) ? "pending" : "none";
   const isWatching = (u: string) => watchStatus(u) === "active";
-  const requestWatch = (u: string) => { api.requestAccess(u).then(invAccess); };
+  const requestWatch = (u: string) => {
+    api.requestAccess(u)
+      .then(() => { invAccess(); toast("Watch requested", { description: `Waiting for @${u} to accept. You'll see their tickets once they grant it.` }); })
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Could not request access"));
+  };
   const unwatch = (u: string) => {  // cancel my pending request OR stop an active watch
     const g = [...(access.i_can_see ?? []), ...(access.pending_out ?? [])].find((x) => x.subject_id === u);
     if (g) api.revokeAccess(g.id).then(invAccess);

@@ -42,6 +42,9 @@ const STEPS = [
   { id: "review", label: "Review", sub: "Create the project" },
 ];
 
+// hard cap on the pasted brief — a 50kB doc would blow the clarify prompt budget and time out
+const BRIEF_MAX = 8000;
+
 const DEFAULT_BRIEF = `Build a tenant portal for a freight client. They need: a saved-search experience over shipments, shareable read-only views with expiring links, a live map with thousands of vehicle pins, and CSV export of any filtered view. Must scaffold a real GitLab project. Tight 8-week window.`;
 
 /* The async loaders shown during each wait. The SequenceLoader animates a fixed line
@@ -84,6 +87,7 @@ export function WizardBrief() {
   const [loader, setLoader] = useState<LoaderCfg | null>(null);
   const commitRef = useRef<(() => void) | null>(null);
   const loaderDoneRef = useRef(false);
+  const cancelledRef = useRef(false);  // user backed out of a wait — a late resolution must NOT advance the step
 
   const [dispatching, setDispatching] = useState(false);
   const [dispatched, setDispatched] = useState(false);
@@ -92,9 +96,11 @@ export function WizardBrief() {
   const runLoader = (cfg: LoaderCfg, work: () => Promise<void>, errMsg: string) => {
     loaderDoneRef.current = false;
     commitRef.current = null;
+    cancelledRef.current = false;
     setLoader(cfg);
     work()
       .then(() => {
+        if (cancelledRef.current) { commitRef.current = null; return; }
         // the call landed (commitRef now set by work). If the animation already finished, onDone ran
         // with nothing to do — so advance here; otherwise onDone will run the commit when it finishes.
         if (loaderDoneRef.current && commitRef.current) {
@@ -104,9 +110,16 @@ export function WizardBrief() {
         }
       })
       .catch((e) => {
+        if (cancelledRef.current) return;
         setLoader(null);
         toast.error(e instanceof Error ? e.message : errMsg);
       });
+  };
+  // escape hatch while a wait runs: stay on the current step, ignore the in-flight call when it lands
+  const cancelLoader = () => {
+    cancelledRef.current = true;
+    commitRef.current = null;
+    setLoader(null);
   };
   // the loader's onDone: if the call already committed its `next`, run it + close; else mark done so the
   // resolved call closes the loader (keeps the loader up for the *entire* async wait, never flickering).
@@ -183,6 +196,7 @@ export function WizardBrief() {
       },
       async () => {
         const opts = await api.architectures(briefId, undefined, grounded);
+        if (!opts.cards.length) throw new Error("The AI returned no architecture options — try again");
         setCards(opts.cards);
         setAiPick({ name: opts.ai_pick_name ?? "", why: opts.ai_pick_why ?? "" });
         // default the choice to the AI's own pick (the badged card), else the first
@@ -257,15 +271,19 @@ export function WizardBrief() {
     setResumeDraft(null);  // consume once
     (async () => {
       try {
+        // each block raises the resume ceiling only when its state ACTUALLY came back —
+        // a deleted/expired brief or plan must land the user on a step that can render,
+        // never the saved step with a blank pane.
+        let ceiling = 0;
         if (d.briefId) {
           setBriefId(d.briefId);
           const b = await api.getBrief(d.briefId).catch(() => null);
           if (b?.text) setBrief(b.text);
           const s = await api.getSpec(d.briefId).catch(() => null);
-          if (s) setSpec(s);
+          if (s) { setSpec(s); ceiling = 2; }  // steps 1+2 render off the spec
           if (s?.memory_candidates) setUsed(Object.fromEntries(s.memory_candidates.map((c) => [memKey(c), c.used ?? false])));
           if (d.answers) setAnswers(d.answers);
-          if ((d.step ?? 0) >= 2) {
+          if (s && (d.step ?? 0) >= 2) {
             const opts = await api.getArchitectures(d.briefId).catch(() => null);
             if (opts) {
               setCards(opts.cards);
@@ -280,16 +298,18 @@ export function WizardBrief() {
         if (d.planId && (d.step ?? 0) >= 3) {
           setPlanId(d.planId);
           const p = await api.getPlan(d.planId).catch(() => null);
-          if (p) setPlan(p);
+          if (p) { setPlan(p); ceiling = 3; }
           const r = await api.relay(d.planId).catch(() => null);
           if (r) setRelay(r);
           setStaffing(await api.staffing(d.planId).catch(() => ({ coverage: [] })));
-          if ((d.step ?? 0) >= 4) {
+          if (p && (d.step ?? 0) >= 4) {
             const pv = await api.dispatchPreview(d.planId).catch(() => null);
-            if (pv) { setPreview(pv); setProjectName(pv.project_name ?? ""); }
+            if (pv) { setPreview(pv); setProjectName(pv.project_name ?? ""); ceiling = 4; }
           }
         }
-        setStep(Math.min(d.step ?? 0, STEPS.length - 1));
+        const target = Math.min(d.step ?? 0, ceiling, STEPS.length - 1);
+        if (target < (d.step ?? 0)) toast("Draft partially restored", { description: "Some saved progress expired on the server — picking up from the last recoverable step." });
+        setStep(target);
       } catch { /* best-effort restore */ }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -315,7 +335,7 @@ export function WizardBrief() {
 
   // run dispatch on confirm; the SequenceLoader plays while the real call runs, then shows the success card
   const onDispatch = () => {
-    if (!planId) return;
+    if (!planId || dispatching) return;
     loaderDoneRef.current = false; // reset so the dispatch loader always plays through
     commitRef.current = null;
     setDispatching(true);
@@ -355,7 +375,12 @@ export function WizardBrief() {
           <div style={{ flex: 1, overflow: "auto", padding: "32px 0" }}>
             <div style={{ maxWidth: 660, margin: "0 auto", padding: "0 32px" }}>
               {loader ? (
-                <ReActTrace runId={briefId} phase={loader.phase ?? "plan"} onDone={onLoaderDone} />
+                <>
+                  <ReActTrace runId={briefId} phase={loader.phase ?? "plan"} onDone={onLoaderDone} />
+                  <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
+                    <Button variant="ghost" size="sm" icon="close" onClick={cancelLoader}>Cancel</Button>
+                  </div>
+                </>
               ) : (
                 <>
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
@@ -402,8 +427,11 @@ function StepBrief({ brief, setBrief }: { brief: string; setBrief: (v: string) =
   return (
     <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
       <WizHead title="Drop the client brief" sub="Paste the text or drop a PDF. The AI extracts a spec and proposes reuse before you commit anything." />
-      <div className="kicker" style={{ marginBottom: 8 }}>Brief</div>
-      <textarea value={brief} onChange={(e) => setBrief(e.target.value)} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)} rows={8}
+      <div className="kicker" style={{ marginBottom: 8, display: "flex", alignItems: "baseline" }}>
+        <span>Brief</span><span style={{ flex: 1 }} />
+        {brief.length > BRIEF_MAX * 0.8 && <span className="mono" style={{ fontSize: 10, color: brief.length >= BRIEF_MAX ? "var(--amber)" : "var(--text-quaternary)", textTransform: "none", letterSpacing: 0 }}>{brief.length.toLocaleString()} / {BRIEF_MAX.toLocaleString()}</span>}
+      </div>
+      <textarea value={brief} onChange={(e) => setBrief(e.target.value)} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)} rows={8} maxLength={BRIEF_MAX}
       style={{ width: "100%", padding: "14px 16px", fontSize: 14, lineHeight: 1.6, resize: "vertical",
         background: "var(--bg-elevated)", borderRadius: "var(--r-lg)",
         border: `0.5px solid ${focus ? "var(--text-primary)" : "var(--border-strong)"}`,

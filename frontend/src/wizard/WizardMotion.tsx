@@ -128,12 +128,17 @@ export function ReActTrace({ runId, phase, onDone, minDwellMs = 1500 }: {
 }) {
   const [steps, setSteps] = useState<TraceStep[]>([]);
 
-  // poll the live trace while the phase runs (runId = briefId; set early for clarify, already set for arch/plan)
+  // poll the live trace while the phase runs (runId = briefId; set early for clarify, already set for arch/plan).
+  // `inFlight` keeps a slow gateway from stacking overlapping polls on the 800ms tick.
   useEffect(() => {
     if (!runId) return;
     let alive = true;
+    let inFlight = false;
     const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try { const r = await api.trace(runId); if (alive && r.steps?.length) setSteps(r.steps); } catch { /* trace is best-effort */ }
+      finally { inFlight = false; }
     };
     poll();
     const id = setInterval(poll, 800);

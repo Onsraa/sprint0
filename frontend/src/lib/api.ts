@@ -349,6 +349,11 @@ export const draft = {
 
 /* ── Transport helpers ───────────────────────────────────────────────── */
 
+// Every call carries a hard timeout: a hung gateway/LLM call must surface as an error the UI
+// can react to (retry, toast), never an infinite spinner. 120s covers slow live Vertex plan-gen.
+const REQUEST_TIMEOUT_MS = 120_000;
+const reqSignal = () => AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+
 async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -362,19 +367,20 @@ async function jpost<T>(path: string, body?: unknown): Promise<T> {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: reqSignal(),
   });
   return unwrap<T>(res);
 }
 
 async function jget<T>(path: string, schema?: z.ZodType<T>): Promise<T> {
-  const data = await unwrap<T>(await fetch(BASE + path, { headers: authHeaders() }));
+  const data = await unwrap<T>(await fetch(BASE + path, { headers: authHeaders(), signal: reqSignal() }));
   // Zod validation at the boundary (opt-in): a backend contract change throws HERE with a clear,
   // located message instead of leaking undefined into a component three layers down.
   return schema ? schema.parse(data) : data;
 }
 
 async function jdelete<T>(path: string): Promise<T> {
-  return unwrap<T>(await fetch(BASE + path, { method: "DELETE", headers: authHeaders() }));
+  return unwrap<T>(await fetch(BASE + path, { method: "DELETE", headers: authHeaders(), signal: reqSignal() }));
 }
 
 async function jpatch<T>(path: string, body?: unknown): Promise<T> {
@@ -382,12 +388,13 @@ async function jpatch<T>(path: string, body?: unknown): Promise<T> {
     method: "PATCH",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: reqSignal(),
   });
   return unwrap<T>(res);
 }
 
 async function fpost<T>(path: string, form: FormData): Promise<T> {
-  return unwrap<T>(await fetch(BASE + path, { method: "POST", headers: authHeaders(), body: form }));
+  return unwrap<T>(await fetch(BASE + path, { method: "POST", headers: authHeaders(), body: form, signal: reqSignal() }));
 }
 
 /* ── Endpoints ───────────────────────────────────────────────────────── */
