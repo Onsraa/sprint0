@@ -62,7 +62,37 @@ def test_queue_unowned_gate_falls_back_to_discipline_then_tech_lead(monkeypatch)
     assert any(i["discipline"] == "uiux" for i in appmain._my_gates(boss, [boss]))   # orphan → Tech Lead
 
 
-def test_contract_visibility_follows_the_ratifier(stretched_relay):
+async def _none(*a, **k):
+    return None
+
+
+def _stub_handoff_io(monkeypatch):
+    """Routing test, not a store test — stub the task/notify/persist edges (the MCP singleton can't
+    cross per-asyncio.run event loops)."""
+    for fn in ("get_task", "notify", "notify_watchers", "_persist_relay"):
+        monkeypatch.setattr(appmain, fn, _none)
+
+
+def test_handoff_allows_the_gate_owner(stretched_relay, monkeypatch):
+    # the live 403: the OWNER (out-of-discipline, availability-stretched) must be able to hand the gate off
+    _stub_handoff_io(monkeypatch)
+    tony = _member("tony", "devops")
+    state = asyncio.run(appmain.handoff_gate("plan_x", "backend", assignee="pascal", member=tony))
+    assert next(g for g in state.gates if g.discipline == "backend").delegate == "pascal"
+
+
+def test_handoff_denies_a_non_ratifier(stretched_relay, monkeypatch):
+    _stub_handoff_io(monkeypatch)
+    sam = _member("sam", "frontend")
+    with pytest.raises(Exception) as e:
+        asyncio.run(appmain.handoff_gate("plan_x", "backend", assignee="sam", member=sam))
+    assert getattr(e.value, "status_code", None) == 403
+
+
+def test_contract_visibility_follows_the_ratifier(stretched_relay, monkeypatch):
+    async def _no_grants(_u):
+        return []
+    monkeypatch.setattr(appmain, "access_grants_for_requester", _no_grants)  # no Watch grants in this test
     tony = _member("tony", "devops")
     jean = _member("jean", "backend")
     boss = _member("teddy", None, role="manager")

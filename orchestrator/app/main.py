@@ -952,7 +952,7 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
         pass
     # Tasks are NOT materialized here — only at _finalize_scaffold (after the relay's gates ratify), so the
     # Work hub stays empty until the plan is dispatched (no pre-ratification tasks, no negative-pid placeholders).
-    await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
+    # (Subteam pacts CUT 2026-06-09 — _seed_subteam_agreements no longer called; interface contracts stay JIT.)
     return {"plan_id": plan_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
 
@@ -1012,6 +1012,9 @@ async def _generate_contracts_for_lane(plan_id: str, plan: PlanJSON, discipline:
         existing = await agreements_for_plan(plan_id)         # this plan's prior contracts (to supersede on a changed choice)
         pool = await all_agreements()                         # the cross-plan precedent pool (compound from past ratified shapes)
         now = datetime.now(timezone.utc).isoformat()
+        # each lane's signer = its gate RATIFIER (delegate ?? owner); the lane lead is the fallback
+        _state = RELAYS.get(plan_id)
+        gate_ratifiers = {g.discipline: (g.delegate or g.owner) for g in (_state.gates if _state else []) if (g.delegate or g.owner)}
         for (prod_id, cons_disc), cons in edges.items():
             prod = by_id[prod_id]
             prior = [a for a in existing if a.get("type") == "interface"
@@ -1032,8 +1035,10 @@ async def _generate_contracts_for_lane(plan_id: str, plan: PlanJSON, discipline:
                 interface=top, proposals=opts.proposals,
                 producer_issue_id=prod_id, consumer_issue_id=cons.id,
                 producer_discipline=discipline, consumer_discipline=cons_disc,
+                producer_actor=gate_ratifiers.get(discipline) or by_user,
+                consumer_actor=gate_ratifiers.get(cons_disc) or agreements.lead_of(cons_disc, members) or "",
                 state="proposed", created_at=now, updated_at=now)
-            a.ratifiers = agreements.ratifiers_for(a, members)
+            a.ratifiers = agreements.ratifiers_for(a, members, gate_ratifiers={discipline: a.producer_actor, cons_disc: a.consumer_actor})
             precedent = agreements.find_precedent(a.model_dump(), pool)
             if precedent:                                     # COMPOUND → a RECOMMENDATION (not auto-pass): badge it; the producer still signs
                 a.precedent_id = precedent                    # state stays "proposed"; no mock seeded until the human signs
@@ -1051,13 +1056,15 @@ async def _generate_contracts_for_lane(plan_id: str, plan: PlanJSON, discipline:
 
 @app.get("/api/plans/{plan_id}/agreements")
 async def list_agreements(plan_id: str, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    return {"agreements": await agreements_for_plan(plan_id)}
+    rows = await agreements_for_plan(plan_id)
+    return {"agreements": [a for a in rows if a.get("type") != "subteam"]}  # subteam pacts cut — hide legacy rows
 
 
 @app.get("/api/me/agreements")
 async def my_agreements(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """The agreements awaiting MY signature — the Inbox queue (minimal-ratifier routing, no broadcast)."""
-    return {"agreements": await agreements_for_ratifier(member.username)}
+    rows = await agreements_for_ratifier(member.username)
+    return {"agreements": [a for a in rows if a.get("type") != "subteam"]}
 
 
 class RatifyAgreementBody(BaseModel):
@@ -1086,7 +1093,9 @@ async def ratify_agreement(agreement_id: str, body: RatifyAgreementBody,
     if member.username not in a.ratifiers and member.role != "manager":
         raise HTTPException(403, "not a ratifier of this agreement")
     now = datetime.now(timezone.utc).isoformat()
-    is_producer = member.discipline is not None and member.discipline == a.producer_discipline
+    # the producer ACTOR (the producing gate's ratifier, possibly out-of-discipline) — discipline fallback for legacy rows
+    is_producer = (member.username == a.producer_actor) if a.producer_actor \
+        else (member.discipline is not None and member.discipline == a.producer_discipline)
     # the producer picks WHICH shape they're signing (reuse / fresh / write-your-own) → becomes the agreed interface
     if is_producer and body.decision == "ratified":
         if body.interface is not None:                       # write-your-own → the producer authored the shape
@@ -1506,9 +1515,10 @@ async def handoff_gate(plan_id: str, discipline: str, assignee: str = "", member
     gate = next((g for g in state.gates if g.discipline == discipline), None)
     if gate is None:
         raise HTTPException(404, f"no {discipline} gate")
-    owner_ok = member.role == "manager" or (gate.delegate == member.username if gate.delegate else member.discipline == discipline)
+    _ratifier = gate.delegate or gate.owner
+    owner_ok = member.role == "manager" or (member.username == _ratifier if _ratifier else member.discipline == discipline)
     if not owner_ok:
-        raise HTTPException(403, f"only this gate's owner ({gate.delegate or discipline + ' lead'}) or the manager can hand it off")
+        raise HTTPException(403, f"only this gate's owner ({_ratifier or discipline + ' lead'}) or the Tech Lead can hand it off")
     new = assignee or None
     gate.delegate = new
     # reassign the slice — plan issues always; if any are dispatched Tasks, reassign + reschedule those projects.
@@ -1921,7 +1931,7 @@ async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile 
     await _persist("delta_target", plan_id, {"v": project_id})
     await _persist("delta_priority", plan_id, {"v": req.priority})
     # No pre-ratification draft tasks (see make_plan): the delta's tasks materialize at _finalize_scaffold.
-    await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
+    # (Subteam pacts CUT 2026-06-09 — interface contracts stay JIT.)
     return {"plan_id": plan_id, "project_id": project_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
 

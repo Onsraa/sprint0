@@ -22,18 +22,23 @@ def lead_of(discipline: str, members: list[DeveloperProfile]) -> str | None:
     return mgr.username if mgr else None
 
 
-def ratifiers_for(agreement: Agreement, members: list[DeveloperProfile]) -> list[str]:
-    """The MINIMAL set who must consent — never broadcast. interface → both lane leads; subteam/handoff/
-    reuse/assign → the lane lead; priority/reschedule/default → the manager."""
+def ratifiers_for(agreement: Agreement, members: list[DeveloperProfile],
+                  gate_ratifiers: dict[str, str] | None = None) -> list[str]:
+    """The MINIMAL set who must consent — never broadcast. A lane's signer is its GATE RATIFIER when known
+    (delegate ?? owner — the assigned lead, possibly out-of-discipline when availability stretched the work),
+    else the lane lead. interface → both lanes; subteam/handoff/reuse/assign → the producing lane;
+    priority/reschedule/default → the manager."""
     t = agreement.type
+    gr = gate_ratifiers or {}
     out: list[str] = []
     if t == "interface":
         for disc in (agreement.producer_discipline, agreement.consumer_discipline):
-            lead = lead_of(disc, members) if disc else None
+            lead = (gr.get(disc) or lead_of(disc, members)) if disc else None
             if lead and lead not in out:
                 out.append(lead)
     elif t in ("subteam", "handoff", "reuse", "assign"):
-        lead = lead_of(agreement.producer_discipline or agreement.consumer_discipline or "", members)
+        disc = agreement.producer_discipline or agreement.consumer_discipline or ""
+        lead = gr.get(disc) or lead_of(disc, members)
         if lead:
             out.append(lead)
     else:  # priority / reschedule / default → the manager arbitrates

@@ -29,14 +29,16 @@ export function AgreementCard({ a, me, compact = false }: { a: Agreement; me?: a
   });
   const busy = run.isPending;
 
+  // the ACTORS: each side's gate ratifier (delegate ?? owner ?? lane lead — may be out-of-discipline when
+  // availability stretched the work). Username first; discipline fallback for legacy agreements w/o actors.
   const myDisc: string | undefined = me?.discipline;
-  const isProducer = !!myDisc && myDisc === a.producer_discipline;
-  const isConsumer = !!myDisc && myDisc === a.consumer_discipline;
+  const isProducer = a.producer_actor ? me?.username === a.producer_actor : (!!myDisc && myDisc === a.producer_discipline);
+  const isConsumer = a.consumer_actor ? me?.username === a.consumer_actor : (!!myDisc && myDisc === a.consumer_discipline);
   const isRatifier = (a.ratifiers ?? []).includes(me?.username);
   const ratifs: any[] = (a.ratifications ?? []) as any[];
   const lastCounter = [...ratifs].reverse().find((r) => r.kind === "counter");
   const proposals = a.proposals ?? [];
-  const consumerName = a.consumer_discipline ? DISC[a.consumer_discipline]?.label : "the consumer";
+  const consumerName = a.consumer_actor ? `@${a.consumer_actor}` : (a.consumer_discipline ? DISC[a.consumer_discipline]?.label : "the consumer");
 
   // producer's initial pick — a proposal id, or "user" for write-your-own
   const [picked, setPicked] = useState<string | null>(a.chosen_proposal_id ?? proposals[0]?.id ?? null);
@@ -132,9 +134,9 @@ export function AgreementCard({ a, me, compact = false }: { a: Agreement; me?: a
              rejected ? "Declined — no contract here." :
              producerSent ? `Signed by you · sent to ${consumerName} — they agree or counter.` :
              producerPicks ? "Pick a shape (or write your own), then send it to the consumer." :
-             consumerActs ? `${DISC[a.producer_discipline ?? ""]?.label ?? "The producer"} signed — agree, or counter your own.` :
+             consumerActs ? `${a.producer_actor ? `@${a.producer_actor}` : DISC[a.producer_discipline ?? ""]?.label ?? "The producer"} signed — agree, or counter your own.` :
              producerSeesCounter ? "Your move — agree to the counter, or counter back." :
-             "Awaiting the producer."}
+             `Awaiting ${a.producer_actor ? `@${a.producer_actor}` : "the producer"}.`}
           </span>
           {producerPicks && <Button variant="primary" size="sm" icon="check" disabled={busy || !canSign} onClick={sign}>Sign + send</Button>}
           {(consumerActs || producerSeesCounter) && <>

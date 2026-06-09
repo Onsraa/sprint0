@@ -36,6 +36,14 @@ def test_ratifiers_interface_is_both_lane_leads():
     assert A.ratifiers_for(a, ROSTER) == ["be-sr", "fe"]
 
 
+def test_ratifiers_prefer_the_gate_ratifier_over_the_lane_lead():
+    # the gate's ratifier (delegate ?? owner — possibly out-of-discipline) signs the lane's contracts;
+    # lead_of is only the fallback. (The live bug: nobody could act when the owner was out-of-discipline.)
+    a = _agr(producer_discipline="backend", consumer_discipline="frontend")
+    out = A.ratifiers_for(a, ROSTER, gate_ratifiers={"backend": "devops-guy"})
+    assert out == ["devops-guy", "fe"]                  # producer = the gate ratifier; consumer = lead fallback
+
+
 def test_ratifiers_subteam_is_the_lane_lead():
     a = _agr(type="subteam", producer_discipline="backend")
     assert A.ratifiers_for(a, ROSTER) == ["be-sr"]

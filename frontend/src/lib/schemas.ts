@@ -366,6 +366,7 @@ export const Agreement = z.object({
   precedent_id: z.string().nullish(),   // P3: the past ratified agreement it auto-passed from (compounded)
   producer_discipline: z.string().nullish(), consumer_discipline: z.string().nullish(),
   producer_issue_id: z.string().nullish(), consumer_issue_id: z.string().nullish(),
+  producer_actor: z.string().nullish(), consumer_actor: z.string().nullish(),  // the signing actors (gate ratifiers)
 });
 export type Agreement = z.infer<typeof Agreement>;
 export const AgreementList = z.object({ agreements: z.array(Agreement) });

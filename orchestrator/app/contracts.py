@@ -531,6 +531,10 @@ class Agreement(BaseModel):
     consumer_issue_id: Optional[str] = None
     producer_discipline: Optional[str] = None
     consumer_discipline: Optional[str] = None
+    # the ACTORS (usernames): each side's gate ratifier at draft time (delegate ?? owner ?? lane lead) —
+    # the people who pick/sign/counter. Disciplines above stay for display + verify routing.
+    producer_actor: str = ""
+    consumer_actor: str = ""
     created_at: str = ""
     updated_at: str = ""
 
