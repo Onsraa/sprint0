@@ -1624,14 +1624,21 @@ async def dispatch_preview(plan_id: str) -> dict:
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
+    from app import trace
+    bid = plan_id.removeprefix("plan_")  # the wizard polls /trace by brief_id
+    trace.clear(bid); trace.begin(bid)
     await team.ensure_loaded()
+    trace.step("server", "action", "Resolve the project name", plan.project_name)
     issues = [i for e in plan.epics for i in e.issues]
+    trace.step("server", "action", "Count the tasks to scaffold", f"{len(issues)} task(s) across the relay")
     repo_members = sorted({
         i.assignee for i in issues
         if i.assignee and (mb := team.get(i.assignee)) and mb.gitlab_user_id and policy.needs_repo(mb.discipline)
     })
     cap = 5  # GitLab free-tier members-per-group cap
     state = RELAYS.get(plan_id)
+    trace.step("server", "result", f"{len(repo_members)} member invite(s) · cap {cap}",
+               "over the free-tier cap" if len(repo_members) > cap else "ready to reserve on GitLab")
     return {
         "plan_id": plan_id, "project_name": plan.project_name, "is_delta": plan_id in DELTA_TARGET,
         "creates": {"project": 0 if plan_id in DELTA_TARGET else 1, "issues": len(issues)},
@@ -1761,7 +1768,12 @@ async def reserve_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile =
         return {"project_id": r["project_id"], "web_url": r.get("web_url", ""), "relay_open": True}
     if req.project_name and req.project_name.strip():  # the manager validated/edited the AI-filled name
         plan.project_name = req.project_name.strip()[:80]
-    res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))
+    from app import trace
+    bid = plan_id.removeprefix("plan_"); trace.clear(bid); trace.begin(bid)  # the wizard polls /trace by brief_id
+    trace.step("gitlab", "action", "Create the GitLab project", plan.project_name)
+    res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))  # contextvar can't cross the threadpool — bracket the real op here
+    trace.step("gitlab", "result", f"project #{res['project_id']} reserved", res.get("web_url", ""))
+    trace.step("server", "result", "Relay open", "each gate is its lead's to ratify; tasks scaffold to GitLab on close")
     RESERVED[plan_id] = res
     await _persist("reserved", plan_id, res)          # durable: survive a restart between reserve and close
     await _persist_relay(plan_id)                     # the (possibly edited) name lives on the plan snapshot

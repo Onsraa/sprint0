@@ -121,10 +121,10 @@ const KIND_DOT: Record<string, string> = {
   action:  "var(--blue)",
   result:  "var(--green)",
 };
-const PHASE_LABEL: Record<string, string> = { clarify: "clarify", memory: "memory", arch: "architecture", plan: "plan" };
+const PHASE_LABEL: Record<string, string> = { clarify: "clarify", memory: "memory", arch: "architecture", plan: "plan", review: "review", create: "create" };
 
-export function ReActTrace({ runId, phase, fallback, onDone, minDwellMs = 1500 }: {
-  runId: string | null; phase: string; fallback: string[]; onDone: () => void; minDwellMs?: number;
+export function ReActTrace({ runId, phase, onDone, minDwellMs = 1500 }: {
+  runId: string | null; phase: string; onDone: () => void; minDwellMs?: number;
 }) {
   const [steps, setSteps] = useState<TraceStep[]>([]);
 
@@ -147,10 +147,9 @@ export function ReActTrace({ runId, phase, fallback, onDone, minDwellMs = 1500 }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // before any real step lands, show the phase's fallback lines as ghost thoughts so the pane is never empty
-  const shown: TraceStep[] = steps.length
-    ? steps
-    : fallback.map((l, i) => ({ seq: i, actor: "server", kind: "thought" as const, label: l }));
+  // ONLY real steps the gateway emitted — no canned/fake lines. Before the first step lands the pane is just
+  // the pulsing header (honest "thinking"); the real Gemini/MongoDB/GitLab steps stream in row by row.
+  const shown = steps;
   const lastIdx = shown.length - 1;
 
   return (

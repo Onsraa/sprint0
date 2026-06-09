@@ -20,7 +20,7 @@ import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { Icon, ZeroMark, FullLogo } from "../lib/icon";
 import { Button, Badge, DiscDot, DISC } from "../components/ui";
-import { Stepper, SequenceLoader, ReActTrace, ConfirmDraft } from "./WizardMotion";
+import { Stepper, ReActTrace, ConfirmDraft } from "./WizardMotion";
 import { api } from "../lib/api";
 import type {
   ArchitectureCard,
@@ -48,8 +48,8 @@ const DEFAULT_BRIEF = `Build a tenant portal for a freight client. They need: a 
    sequence; the real API call runs in parallel and `onDone` commits + advances once the
    data has landed (see runLoader). */
 type LoaderCfg = { kicker: string; headline: React.ReactNode; lines: string[]; stepMs?: number;
-  // when set, the loader renders the live ReActTrace (polling /trace) instead of the scripted SequenceLoader
-  phase?: "clarify" | "memory" | "arch" | "plan" };
+  // the live ReActTrace phase (polls /trace); every wizard wait is a real phase now
+  phase?: "clarify" | "memory" | "arch" | "plan" | "review" | "create" };
 
 export function WizardBrief() {
   const { setView, members, addDraft } = useApp();
@@ -227,6 +227,7 @@ export function WizardBrief() {
     if (!planId) return;
     runLoader(
       {
+        phase: "review",
         kicker: "sprint0 · review",
         headline: "Building the create preview",
         lines: ["Resolving the GitLab project name", "Counting the tasks to scaffold", "Readying the relay for its owners"],
@@ -355,20 +356,7 @@ export function WizardBrief() {
           <div style={{ flex: 1, overflow: "auto", padding: "32px 0" }}>
             <div style={{ maxWidth: 660, margin: "0 auto", padding: "0 32px" }}>
               {loader ? (
-                loader.phase ? (
-                  <ReActTrace
-                    runId={briefId}
-                    phase={loader.phase}
-                    fallback={loader.lines}
-                    onDone={onLoaderDone} />
-                ) : (
-                  <SequenceLoader
-                    kicker={loader.kicker}
-                    headline={loader.headline}
-                    lines={loader.lines}
-                    stepMs={loader.stepMs}
-                    onDone={onLoaderDone} />
-                )
+                <ReActTrace runId={briefId} phase={loader.phase ?? "plan"} onDone={onLoaderDone} />
               ) : (
                 <>
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
@@ -379,6 +367,7 @@ export function WizardBrief() {
                   {step === 3 && plan && <StepPlan plan={plan} relay={relay} staffing={staffing} members={members} />}
                   {step === 4 && preview && <StepReview
                     preview={preview} projectName={projectName} setProjectName={setProjectName}
+                    briefId={briefId}
                     dispatching={dispatching} dispatched={dispatched}
                     onDispatch={onDispatch}
                     onDone={onLoaderDone}
@@ -703,23 +692,18 @@ function StepPlan({ plan, relay, staffing, members }: {
 }
 
 /* The Contract step — sign each open gate's reuse-or-innovate Contract (the posture auto-passed the rest). */
-function StepReview({ preview, projectName, setProjectName, dispatching, dispatched, onDispatch, onDone, onGoRelays }: {
+function StepReview({ preview, projectName, setProjectName, briefId, dispatching, dispatched, onDispatch, onDone, onGoRelays }: {
   preview: DispatchPreview; projectName: string; setProjectName: (v: string) => void;
-  dispatching: boolean; dispatched: boolean;
+  briefId: string | null; dispatching: boolean; dispatched: boolean;
   onDispatch: () => void; onDone: () => void; onGoRelays: () => void;
 }) {
   const p = preview;
   const name = projectName.trim() || p.project_name;
   const taskN = p.creates.issues;
 
+  // the real create — the gateway streams the actual GitLab ops (create project · push tasks · open relay)
   if (dispatching)
-    return (
-      <SequenceLoader
-        kicker="sprint0 · create"
-        headline={`Reserving ${name}`}
-        lines={["Reserving the GitLab project", "Opening the relay for its owners", "Each gate is the lead's to ratify"]}
-        stepMs={780}
-        onDone={onDone} />);
+    return <ReActTrace runId={briefId} phase="create" onDone={onDone} />;
 
   if (dispatched)
     return (
