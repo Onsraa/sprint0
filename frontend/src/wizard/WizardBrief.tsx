@@ -19,12 +19,13 @@ import { toast } from "sonner";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { Icon, ZeroMark, FullLogo } from "../lib/icon";
-import { Button, Badge, DiscDot, DISC, CapTag } from "../components/ui";
+import { Button, Badge, DiscDot, DISC } from "../components/ui";
 import { Stepper, SequenceLoader, ReActTrace, ConfirmDraft } from "./WizardMotion";
 import { api } from "../lib/api";
 import type {
   ArchitectureCard,
   ClarifiedSpec,
+  MemoryCandidate,
   PlanJSON,
   RelayState,
   StaffingResponse,
@@ -32,25 +33,6 @@ import type {
 } from "../lib/api";
 // DispatchPreview lives in schemas (api.ts consumes it as S.DispatchPreview, does not re-export it).
 import type { DispatchPreview } from "../lib/schemas";
-
-/* §12 graded references — local presentation map (mockup data2.jsx GRADE_META). */
-const GRADE_META: Record<string, { label: string; step: number; proven: boolean; hint: string }> = {
-  proposed: { label: "Proposed", step: 1, proven: false, hint: "not yet proven" },
-  shipped: { label: "Shipped", step: 2, proven: false, hint: "merged, not battle-tested" },
-  prod_survived: { label: "Prod-survived", step: 3, proven: true, hint: "survived in production" },
-  retro_validated: { label: "Retro-validated", step: 4, proven: true, hint: "confirmed in retro" },
-};
-/* panel-local: compact grade chip used by the grounding strip. */
-function GradeChip({ grade, showLabel = true }: { grade: string; showLabel?: boolean }) {
-  const m = GRADE_META[grade];
-  if (!m) return null;
-  return (
-    <Badge tone={m.proven ? "ink" : "outline"} mono>
-      {m.proven && <Icon name="check" size={10} />}
-      {showLabel ? m.label : m.label.split("-")[0]}
-    </Badge>
-  );
-}
 
 const STEPS = [
   { id: "brief", label: "Brief", sub: "Paste or drop" },
@@ -67,7 +49,7 @@ const DEFAULT_BRIEF = `Build a tenant portal for a freight client. They need: a 
    data has landed (see runLoader). */
 type LoaderCfg = { kicker: string; headline: React.ReactNode; lines: string[]; stepMs?: number;
   // when set, the loader renders the live ReActTrace (polling /trace) instead of the scripted SequenceLoader
-  phase?: "clarify" | "arch" | "plan" };
+  phase?: "clarify" | "memory" | "arch" | "plan" };
 
 export function WizardBrief() {
   const { setView, members, addDraft } = useApp();
@@ -85,6 +67,7 @@ export function WizardBrief() {
   const [briefId, setBriefId] = useState<string | null>(null);
   const [spec, setSpec] = useState<ClarifiedSpec | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [used, setUsed] = useState<Record<string, boolean>>({});  // memory-candidate Use/Skip → grounds the architecture
   const [cards, setCards] = useState<ArchitectureCard[]>([]);
   const [aiPick, setAiPick] = useState<{ name: string; why: string }>({ name: "", why: "" });
   const [chosenStack, setChosenStack] = useState<TechStack | null>(null);
@@ -141,7 +124,7 @@ export function WizardBrief() {
   const canNext =
     step === 0 ? brief.trim().length > 20 :
     step === 1 ? ambiguityCount === 0 || Object.keys(answers).length === ambiguityCount :
-    step === 2 ? !!chosenStack :
+    step === 2 ? (cards.length ? !!chosenStack : true) :  // sub-phase A (memory panel) → always; B (cards) → a card picked
     true;
 
   // STEP 0 → 1: createBrief, then clarify (the AI "digest" loader)
@@ -165,29 +148,49 @@ export function WizardBrief() {
     );
   };
 
-  // STEP 1 → 2: resolve ambiguities, then fetch architectures
+  // STEP 1 → 2: resolve the ambiguities, then JUDGE agency memory on the RESOLVED spec (so the answers can
+  // shift the grounding). Architectures are NOT generated yet — the human first toggles Use/Skip (step 2, phase A).
+  const goJudgeMemory = () => {
+    if (!briefId) return;
+    runLoader(
+      {
+        phase: "memory",
+        kicker: "sprint0 · memory",
+        headline: "Weighing agency memory",
+        lines: ["Folding in the calls you made", "Searching agency memory on the resolved spec", "Judging each candidate for reuse fit"],
+      },
+      async () => {
+        const updated = await api.resolveClarify(briefId, answers);  // judges memory on the resolved spec
+        setSpec(updated);
+        // seed the Use/Skip selection from the AI's verdicts (reuse → pre-selected)
+        setUsed(Object.fromEntries((updated.memory_candidates ?? []).map((c) => [c.ref, c.used ?? false])));
+        setCards([]); setSelectedCardName(null); setChosenStack(null);  // cards (re)generate after the human grounds
+        commitRef.current = () => setStep(2);
+      },
+      "Could not weigh the agency memory",
+    );
+  };
+
+  // STEP 2 phase A → B: ground the architecture on the KEPT memory, then draft the stack options (stays on step 2).
   const goArch = () => {
     if (!briefId) return;
+    const grounded = (spec?.memory_candidates ?? []).filter((c) => used[c.ref]).map((c) => c.ref);  // [] = explicit fresh build
     runLoader(
       {
         phase: "arch",
         kicker: "sprint0 · architecture",
         headline: "Grounding the stack",
-        lines: ["Resolving the ambiguities you answered", "Scanning validated modules in memory", "Drafting grounded architecture options"],
+        lines: ["Locking the kept memory", "Scanning validated modules", "Drafting grounded architecture options"],
       },
       async () => {
-        if (Object.keys(answers).length) {
-          const updated = await api.resolveClarify(briefId, answers);
-          setSpec(updated);
-        }
-        const opts = await api.architectures(briefId);
+        const opts = await api.architectures(briefId, undefined, grounded);
         setCards(opts.cards);
         setAiPick({ name: opts.ai_pick_name ?? "", why: opts.ai_pick_why ?? "" });
         // default the choice to the AI's own pick (the badged card), else the first
         { const def = opts.cards.find((c) => c.recommended) ?? opts.cards[0];
           setSelectedCardName(def?.name ?? null);
           setChosenStack(def?.tech_stack ?? null); }
-        commitRef.current = () => setStep(2);
+        commitRef.current = () => {};  // stay on step 2 — the cards now render (phase B)
       },
       "Could not generate architectures",
     );
@@ -242,8 +245,8 @@ export function WizardBrief() {
   const back = () => setStep((s) => Math.max(s - 1, 0));
   const onPrimary = () => {
     if (step === 0) return goClarify();
-    if (step === 1) return goArch();
-    if (step === 2) return goPlan();
+    if (step === 1) return goJudgeMemory();                       // resolve + judge memory → reveal the Memory panel
+    if (step === 2) return cards.length ? goPlan() : goArch();    // phase A: ground on kept memory → cards; B: → plan
     if (step === 3) return goReview();
   };
 
@@ -260,6 +263,7 @@ export function WizardBrief() {
           if (b?.text) setBrief(b.text);
           const s = await api.getSpec(d.briefId).catch(() => null);
           if (s) setSpec(s);
+          if (s?.memory_candidates) setUsed(Object.fromEntries(s.memory_candidates.map((c) => [c.ref, c.used ?? false])));
           if (d.answers) setAnswers(d.answers);
           if ((d.step ?? 0) >= 2) {
             const opts = await api.getArchitectures(d.briefId).catch(() => null);
@@ -369,7 +373,9 @@ export function WizardBrief() {
                 <>
                   {step === 0 && <StepBrief brief={brief} setBrief={setBrief} />}
                   {step === 1 && spec && <StepClarify spec={spec} answers={answers} setAnswers={setAnswers} />}
-                  {step === 2 && <StepArch cards={cards} aiPick={aiPick} selectedCardName={selectedCardName} setSelectedCardName={setSelectedCardName} setChosenStack={setChosenStack} setupOwner={setupOwner} setSetupOwner={setSetupOwner} />}
+                  {step === 2 && (cards.length
+                    ? <StepArch cards={cards} aiPick={aiPick} selectedCardName={selectedCardName} setSelectedCardName={setSelectedCardName} setChosenStack={setChosenStack} setupOwner={setupOwner} setSetupOwner={setSetupOwner} />
+                    : <StepMemory candidates={spec?.memory_candidates ?? []} used={used} setUsed={setUsed} />)}
                   {step === 3 && plan && <StepPlan plan={plan} relay={relay} staffing={staffing} members={members} />}
                   {step === 4 && preview && <StepReview
                     preview={preview} projectName={projectName} setProjectName={setProjectName}
@@ -390,37 +396,13 @@ export function WizardBrief() {
               <div style={{ flex: 1 }} />
               {step < STEPS.length - 1 &&
               <Button variant="primary" size="md" iconRight="arrowRight" disabled={!canNext} style={{ opacity: canNext ? 1 : 0.45 }} onClick={onPrimary}>
-                  {step === 0 ? "Clarify spec" : step === 1 ? "Generate architectures" : step === 2 ? "Generate plan" : "Review & create"}
+                  {step === 0 ? "Clarify spec" : step === 1 ? "Weigh the memory" : step === 2 ? (cards.length ? "Generate plan" : "Generate architectures") : "Review & create"}
                 </Button>}
             </div>
           )}
         </div>
 
         {confirmDraft && <ConfirmDraft name={previewName} onConfirm={saveDraft} onCancel={() => setConfirmDraft(false)} />}
-      </div>
-    </div>);
-
-}
-
-function GroundingStrip({ reuse, delay = 0 }: { reuse: ClarifiedSpec["reuse"]; delay?: number }) {
-  if (!reuse.length) return null;
-  return (
-    <div className="s0-stagger" style={{ "--d": `${delay}ms`, border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", padding: 14, background: "var(--bg-secondary)" } as React.CSSProperties}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <ZeroMark size={15} />
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>Grounded on agency memory</span>
-        <span className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)" }}>§reuse</span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-        {reuse.map((r, i) =>
-        <div key={`${r.from_project}-${r.feature}-${i}`} style={{ display: "flex", alignItems: "center", gap: 9 }}>
-            <CapTag tag={r.feature} />
-            <span style={{ fontSize: 12, color: "var(--text-tertiary)", flex: 1 }}>
-              {r.action} from <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{r.from_project}</b>
-            </span>
-            <GradeChip grade={r.action === "reuse" ? "prod_survived" : r.action === "adapt" ? "shipped" : "proposed"} showLabel={false} />
-          </div>
-        )}
       </div>
     </div>);
 
@@ -494,9 +476,81 @@ function StepClarify({ spec, answers, setAnswers }: {
         )}
       </div>
 
-      <GroundingStrip reuse={spec.reuse} delay={d += 80} />
     </div>);
 
+}
+
+/* ── Memory candidates — reasoned, human-ratified reuse (ported 1:1 from the v5 mockup) ──
+   Each candidate the AI judged on the RESOLVED spec shows a verdict (reuse|maybe|skip) + a one-line WHY +
+   a Use/Skip toggle. `used` is lifted to the wizard so the kept refs ground the architecture
+   (api.architectures(.., grounded)). Empty / all-skip → the "fresh build" state. */
+const VERDICT_META: Record<string, { label: string; fg: string; bg: string }> = {
+  reuse: { label: "reuse", fg: "var(--green)", bg: "color-mix(in srgb, var(--green) 12%, transparent)" },
+  maybe: { label: "maybe", fg: "var(--amber)", bg: "color-mix(in srgb, var(--amber) 12%, transparent)" },
+  skip:  { label: "skip",  fg: "var(--text-quaternary)", bg: "var(--bg-secondary)" },
+};
+
+function StepMemory({ candidates, used, setUsed }: {
+  candidates: MemoryCandidate[];
+  used: Record<string, boolean>;
+  setUsed: (fn: (u: Record<string, boolean>) => Record<string, boolean>) => void;
+}) {
+  const allSkip = candidates.length > 0 && candidates.every((c) => c.verdict === "skip");
+  return (
+    <div style={{ animation: "s0-fade-in var(--t-reg) both" }}>
+      <WizHead title="Ground on agency memory" sub="The AI judged each retrieved candidate against your answers. Keep what fits — your selection grounds the architecture." />
+      <div style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", background: "var(--bg-elevated)", boxShadow: "var(--shadow-1)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderBottom: "0.5px solid var(--border-subtle)", background: "var(--bg-secondary)" }}>
+          <ZeroMark size={14} />
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>Memory candidates</span>
+          <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>· your selection grounds the architecture</span>
+          <div style={{ flex: 1 }} />
+          <span className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)" }}>{candidates.length} retrieved</span>
+        </div>
+        {candidates.length === 0 || allSkip ? (
+          <div style={{ padding: "24px 14px", textAlign: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)" }}>Fresh build — nothing in memory fits.</div>
+            <div style={{ fontSize: 11.5, color: "var(--text-quaternary)", marginTop: 4 }}>{candidates.length ? "All candidates considered and skipped." : "No prior work matched this brief."}</div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {candidates.map((c, i) => {
+              const vm = VERDICT_META[c.verdict] || VERDICT_META.skip;
+              const isUsed = !!used[c.ref];
+              const isSkip = c.verdict === "skip";
+              return (
+                <div key={c.ref} style={{ display: "flex", alignItems: "flex-start", gap: 11, padding: "10px 14px",
+                  borderBottom: i < candidates.length - 1 ? "0.5px solid var(--border-subtle)" : "none", opacity: isSkip ? 0.5 : 1 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", height: 18, padding: "0 7px", borderRadius: "var(--r-xs)",
+                    background: vm.bg, color: vm.fg, fontSize: 9.5, fontWeight: 700, fontFamily: "var(--font-mono)",
+                    letterSpacing: "0.04em", textTransform: "uppercase", flexShrink: 0, marginTop: 2 }}>{vm.label}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 3 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{c.ref}</span>
+                      {c.project && c.project !== c.ref && <span style={{ fontSize: 11, color: "var(--text-quaternary)" }}>· {c.project}</span>}
+                      <span className="mono" style={{ display: "inline-flex", alignItems: "center", height: 15, padding: "0 5px", borderRadius: "var(--r-xs)",
+                        background: "var(--bg-secondary)", border: "0.5px solid var(--border)", fontSize: 9.5, color: "var(--text-quaternary)" }}>{c.kind}</span>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", lineHeight: 1.4 }}>{c.reason}</div>
+                    {isSkip && <div style={{ fontSize: 10.5, color: "var(--text-quaternary)", marginTop: 3, fontStyle: "italic" }}>considered — not relevant</div>}
+                  </div>
+                  {!isSkip && (
+                    <button className="s0-press" onClick={() => setUsed((u) => ({ ...u, [c.ref]: !u[c.ref] }))}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 24, padding: "0 10px", borderRadius: "var(--r-md)",
+                        fontSize: 11.5, fontWeight: 500, flexShrink: 0, cursor: "pointer",
+                        background: isUsed ? "var(--text-primary)" : "var(--bg-elevated)", color: isUsed ? "#fff" : "var(--text-secondary)",
+                        border: isUsed ? "none" : "0.5px solid var(--border-strong)", transition: "background var(--t-quick), color var(--t-quick)" }}>
+                      {isUsed ? <><Icon name="check" size={11} style={{ color: "#fff" }} /> Use</> : "Skip"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 const TECH_ROWS: { key: keyof TechStack; label: string }[] = [

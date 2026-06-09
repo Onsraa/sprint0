@@ -12,11 +12,11 @@ import re
 from datetime import datetime, timezone
 
 from app.agent import (
-    generate_architectures, generate_clarification, generate_contract_options, generate_cv_profile, generate_plan,
-    generate_qa_report, generate_regen, generate_solutions,
+    generate_architectures, generate_clarification, generate_contract_options, generate_cv_profile,
+    generate_memory_judgment, generate_plan, generate_qa_report, generate_regen, generate_solutions,
 )
 from app.assign import assign_developers
-from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
+from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, MemoryCandidate, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
 from app.rag import (
     DEV_COLL, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
     all_profiles, code_search_expanded, cosine_score, decisions_for_project, embed_document, embed_queries, embed_query,
@@ -144,16 +144,49 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
 
 
 async def clarify_brief(brief_text: str, constraints: Constraints | None = None) -> ClarifiedSpec:
-    """Intake step: extract the spec, flag unclear *features* as ambiguity cards, and JUDGE each memory
-    candidate for reuse-fit (CRAG — verdict + reason, no cosine gate). The manager's first panel."""
+    """Intake step: extract the spec and flag unclear *features* as ambiguity cards. Agency-memory reuse is
+    judged LATER (judge_memory), on the RESOLVED spec — so the manager's answers can shift the grounding."""
     from app import trace
     trace.step("gemini", "thought", "Reading the brief", brief_text[:120])
-    qv = embed_query(brief_text)
+    prompt = (
+        f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
+        f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
+        f"Produce the clarified spec: extraction + 2-4 product-level ambiguity cards (never technical/stack)."
+    )
+    trace.step("gemini", "action", "Clarify the brief", "extract goal · users · must-haves · ambiguities")
+    spec = await generate_clarification(prompt)
+    trace.step("gemini", "result", f"{len(spec.ambiguities)} ambiguit(ies) to resolve")
+    return spec
+
+
+def _format_spec_for_memory(spec: ClarifiedSpec) -> str:
+    """A compact view of the RESOLVED spec for the memory judge — goal, features, and the answered calls."""
+    lines = [f"GOAL: {spec.goal}", "MUST-HAVES: " + "; ".join(spec.must_haves)]
+    decided = [f"  - {a.feature}: {a.resolution}" for a in spec.ambiguities if a.resolution]
+    if decided:
+        lines.append("RESOLVED DECISIONS:\n" + "\n".join(decided))
+    return "\n".join(lines)
+
+
+def _resolved_query(spec: ClarifiedSpec) -> str:
+    """The text we ground memory on: goal + must-haves + the manager's RESOLVED ambiguity answers."""
+    decided = [a.resolution for a in spec.ambiguities if a.resolution]
+    return " ".join([spec.goal, *spec.must_haves, *decided]).strip()
+
+
+async def judge_memory(spec: ClarifiedSpec, constraints: Constraints | None = None) -> list[MemoryCandidate]:
+    """CRAG reuse judge, run AFTER the ambiguities are resolved: retrieve agency-memory candidates on the
+    RESOLVED spec and grade each (verdict + reason, no cosine gate). Server pre-selects reuse-verdict ones;
+    the human toggles Use/Skip in the Memory panel, and the kept refs ground the architecture."""
+    from app import trace
+    query = _resolved_query(spec) or spec.goal
+    trace.step("gemini", "thought", "Grounding on the resolved spec", query[:120])
+    qv = embed_query(query)
     async with MongoMCP() as m:
         # retrieve for RECALL only — the LLM judges relevance per candidate (CRAG); no cosine decision-gate
         trace.step("mongodb", "action", "Search agency memory", "$rankFusion ($vectorSearch + $search) over PastProjects")
         past = await m.hybrid_search(
-            PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION,
+            PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, query, k=3, projection=_PP_PROJECTION,
         )
         trace.step("mongodb", "result", f"{len(past)} candidate project(s)", ", ".join(p.get("name", "") for p in past))
         try:
@@ -162,20 +195,18 @@ async def clarify_brief(brief_text: str, constraints: Constraints | None = None)
         except Exception:
             code = []  # code-RAG index not present yet (pre-reseed) → skip the reuse-code section
     prompt = (
-        f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
+        f"CLARIFIED SPEC (resolved):\n{_format_spec_for_memory(spec)}\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
         f"CANDIDATE PAST PROJECTS (agency memory — retrieved by similarity; JUDGE each for fit):\n{_format_past(past)}\n\n"
-        f"CANDIDATE CODE (chunk-level code-RAG over agency repos; JUDGE each for fit):\n{_format_code(code)}\n\n"
-        f"Produce the clarified spec: extraction, 2-4 ambiguity cards, a `memory_candidates` verdict for EVERY "
-        f"candidate above (reuse/maybe/skip + why), and reuse proposals grounded only on the ones you judge relevant."
+        f"CANDIDATE CODE (chunk-level code-RAG over agency repos; JUDGE each for fit):\n{_format_code(code)}\n"
     )
-    trace.step("gemini", "action", "Clarify + judge reuse", "extract the spec; grade each memory candidate reuse/maybe/skip")
-    spec = await generate_clarification(prompt)
-    for c in spec.memory_candidates:  # server default — reuse-verdict candidates pre-selected; the human toggles in the UI
+    trace.step("gemini", "action", "Judge reuse fit", "grade each candidate reuse / maybe / skip on the resolved spec")
+    judgment = await generate_memory_judgment(prompt)
+    for c in judgment.candidates:  # server default — reuse-verdict candidates pre-selected; the human toggles in the UI
         c.used = c.verdict == "reuse"
-    _n = sum(1 for c in spec.memory_candidates if c.verdict == "reuse")
-    trace.step("gemini", "result", f"{len(spec.ambiguities)} ambiguit(ies) · {_n} reuse verdict(s)")
-    return spec
+    _n = sum(1 for c in judgment.candidates if c.verdict == "reuse")
+    trace.step("gemini", "result", f"{_n} reuse verdict(s) of {len(judgment.candidates)}")
+    return judgment.candidates
 
 
 async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None) -> SolutionSet:

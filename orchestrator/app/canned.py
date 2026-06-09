@@ -3,7 +3,7 @@ Phase 3. Kept schema-valid so the frontend + tests exercise the real contract.
 """
 from app.contracts import (
     ArchitectureOptions, ClarifiedSpec, ConflictVerdict, ContractProposalSet, Decision, DecisionCardPass1,
-    DeveloperProfile, InterfaceDraft, InterfaceProposal, Notification, ParsedCV, PlanJSON,
+    DeveloperProfile, InterfaceDraft, InterfaceProposal, MemoryCandidate, MemoryJudgment, Notification, ParsedCV, PlanJSON,
     ProjectRecord, QAReport, RegeneratedSlice, RescheduleStrategy, SchemaField, SolutionSet,
 )
 
@@ -299,6 +299,18 @@ CANNED_SPEC = ClarifiedSpec.model_validate(
             {"from_project": "BudgetBuddy (2023)", "feature": "Plaid webhook ingestion", "action": "adapt"},
         ],
     }
+)
+
+# Demo judgment for judge_memory — graded on the RESOLVED spec (after ambiguities). Mirrors CANNED_SPEC.reuse.
+CANNED_MEMORY = MemoryJudgment(
+    candidates=[
+        MemoryCandidate(ref="LedgerLite (2024)", kind="project", project="LedgerLite (2024)", verdict="reuse",
+                        reason="Personal-finance domain match — its JWT auth + refresh fits secure login as-is.", used=True),
+        MemoryCandidate(ref="BudgetBuddy (2023)", kind="project", project="BudgetBuddy (2023)", verdict="maybe",
+                        reason="Plaid webhook ingestion is adaptable, but its budgets model differs from this brief.", used=False),
+        MemoryCandidate(ref="src/auth/jwt.ts", kind="code", project="LedgerLite (2024)", verdict="reuse",
+                        reason="Battle-tested JWT issue/refresh — a drop-in starting point for the login feature.", used=True),
+    ]
 )
 
 CANNED_SOLUTIONS = SolutionSet.model_validate(

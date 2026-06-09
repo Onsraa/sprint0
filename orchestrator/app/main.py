@@ -57,7 +57,7 @@ from app.rag import (
     save_state, delete_state, load_states, reset_demo_session,
 )
 from app.reason import (
-    clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
+    clarify_brief, close_project, delta_brief, judge_memory, link_gitlab, onboard_developer, propose_architectures,
     propose_contract_options, propose_solutions, qa_review, reconcile_links, regenerate_slice, run_brief,
 )
 
@@ -831,30 +831,38 @@ async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
 
 @app.post("/api/briefs/{brief_id}/clarify/resolve", response_model=ClarifiedSpec)
 async def resolve_clarify(brief_id: str, res: ClarifyResolution,
-                          _: DeveloperProfile = Depends(auth.current_manager)) -> ClarifiedSpec:
-    """Manager answers the ambiguity cards (id → resolution); folds into the living spec."""
+                          _: DeveloperProfile = Depends(auth.current_manager),
+                          _t: None = Depends(_ai_throttle)) -> ClarifiedSpec:
+    """Manager answers the ambiguity cards (id → resolution); folds into the living spec, THEN judges agency
+    memory on the RESOLVED spec (CRAG) — so the answers can shift which past work grounds the architecture."""
     spec = SPECS.get(brief_id)
     if spec is None:
         raise HTTPException(404, "clarify the brief first")
     for amb in spec.ambiguities:
         if amb.id in res.answers:
             amb.resolution = res.answers[amb.id]
+    from app import trace
+    trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for the memory-judge phase
+    spec.memory_candidates = await judge_memory(spec)   # reuse judged on the RESOLVED spec, not the raw brief
+    SPECS[brief_id] = spec
     await _persist("specs", brief_id, spec.model_dump())
     return spec
 
 
 @app.post("/api/briefs/{brief_id}/architectures", response_model=ArchitectureOptions)
 async def architectures(brief_id: str, constraints: Optional[Constraints] = None,
-                        grounded: Optional[list[str]] = Query(None),
+                        grounded: Optional[list[str]] = Query(None), decided: bool = Query(False),
                         _: DeveloperProfile = Depends(auth.current_manager),
                         _t: None = Depends(_ai_throttle)) -> ArchitectureOptions:
     """Idea 1: 2-3 grounded Architecture Cards. `grounded` = the human's ratified memory-candidate refs
-    (Use/Skip from the Clarify Memory panel); None → the AI judges all retrieved candidates inline."""
+    (Use/Skip from the Memory panel). `decided` distinguishes a human verdict of "keep none → fresh build"
+    (decided + empty grounded → []) from "no panel shown → the AI judges all retrieved candidates" (None)."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
+    eff_grounded = grounded if grounded is not None else ([] if decided else None)
     from app import trace
     trace.clear(brief_id); trace.begin(brief_id)   # fresh ReAct trace for the architecture phase
-    opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints(), grounded=grounded)
+    opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints(), grounded=eff_grounded)
     ARCHS[brief_id] = opts  # cache for wizard resume
     await _persist("archs", brief_id, opts.model_dump())
     return opts

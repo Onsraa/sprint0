@@ -56,3 +56,37 @@ def test_select_grounded_code_matches_qualified_ref():
     # the ref may arrive as "project · file_path" (how the agent sees it in _format_code)
     past, code = select_grounded(_PAST, _CODE, ["traillog-2025 · app/main.py"])
     assert [c["file_path"] for c in code] == ["app/main.py"]
+
+
+# ── judge_memory: reuse is judged on the RESOLVED spec (after ambiguities), not the raw brief ──
+def test_resolved_query_includes_the_answered_calls():
+    # the manager's resolutions fold into the text we ground memory on → answers can shift the RAG
+    from app.reason import _resolved_query
+    spec = ClarifiedSpec.model_validate({
+        "goal": "personal-finance SaaS", "must_haves": ["secure login"],
+        "ambiguities": [{"id": "amb-1", "feature": "Bank sync", "question": "q",
+                         "options": ["Plaid production", "Manual CSV"], "resolution": "Plaid production"}],
+    })
+    q = _resolved_query(spec)
+    assert "personal-finance SaaS" in q and "secure login" in q and "Plaid production" in q
+
+
+def test_judge_memory_grades_and_presets_used(monkeypatch):
+    # judge_memory retrieves (stubbed) then grades via the memory-judge agent (demo → CANNED_MEMORY);
+    # the server pre-selects reuse-verdict candidates (used=True), maybe/skip stay off.
+    import asyncio
+    from app import reason
+
+    class _M:  # async-ctx MongoMCP — retrieval is stubbed; we're asserting the verdict→used rule
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def hybrid_search(self, *a, **k): return []
+        async def code_search(self, *a, **k): return []
+    monkeypatch.setattr(reason, "MongoMCP", _M)
+    monkeypatch.setattr(reason, "embed_query", lambda q: [])
+
+    spec = ClarifiedSpec(goal="personal-finance SaaS", must_haves=["secure login"])
+    cands = asyncio.run(reason.judge_memory(spec))
+    assert cands, "demo judge returns graded candidates"
+    assert all(c.used == (c.verdict == "reuse") for c in cands)   # the used-default rule
+    assert any(c.used for c in cands)                              # at least one reuse pre-selected

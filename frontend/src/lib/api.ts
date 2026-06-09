@@ -49,6 +49,7 @@ import type {
   LoginResponse,
   Member,
   MemberRole,
+  MemoryCandidate,
   MyIssue,
   MyIssuesResponse,
   NotificationItem,
@@ -131,6 +132,7 @@ export type {
   LoginResponse,
   Member,
   MemberRole,
+  MemoryCandidate,
   MyIssue,
   MyIssuesResponse,
   NotificationItem,
@@ -515,8 +517,10 @@ export const api = {
     return jpost(`/api/briefs/${briefId}/clarify/resolve`, { answers });
   },
   architectures(briefId: string, constraints?: Constraints | null, grounded?: string[]): Promise<ArchitectureOptions> {
-    // grounded = the human-ratified memory-candidate refs (Use/Skip); omit → the AI judges all candidates
-    const qs = grounded ? "?" + grounded.map((r) => `grounded=${encodeURIComponent(r)}`).join("&") : "";
+    // grounded = the human-ratified memory-candidate refs (Use/Skip). `decided=true` lets the server tell
+    // "kept none → fresh build" (grounded=[]) apart from "no panel shown → AI judges all" (grounded omitted).
+    let qs = "";
+    if (grounded) qs = "?decided=true" + grounded.map((r) => `&grounded=${encodeURIComponent(r)}`).join("");
     return jpost(`/api/briefs/${briefId}/architectures${qs}`, constraints ?? null);
   },
   plan(

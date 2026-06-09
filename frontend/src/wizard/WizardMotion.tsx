@@ -121,7 +121,7 @@ const KIND_DOT: Record<string, string> = {
   action:  "var(--blue)",
   result:  "var(--green)",
 };
-const PHASE_LABEL: Record<string, string> = { clarify: "clarify", arch: "architecture", plan: "plan" };
+const PHASE_LABEL: Record<string, string> = { clarify: "clarify", memory: "memory", arch: "architecture", plan: "plan" };
 
 export function ReActTrace({ runId, phase, fallback, onDone, minDwellMs = 1500 }: {
   runId: string | null; phase: string; fallback: string[]; onDone: () => void; minDwellMs?: number;

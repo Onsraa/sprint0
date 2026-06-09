@@ -189,6 +189,12 @@ class MemoryCandidate(BaseModel):
     used: bool = False                                     # the human's pick (server defaults reuse→True; the UI toggles)
 
 
+class MemoryJudgment(BaseModel):
+    """The memory-judge agent's output (judge_memory): a reuse verdict per retrieved candidate, graded on the
+    RESOLVED spec — after the manager answered the ambiguities, so their answers can shift the grounding."""
+    candidates: list[MemoryCandidate] = []
+
+
 class ArchitectureCard(BaseModel):
     name: str = Field(description="≤4 words")
     tech_stack: TechStack
