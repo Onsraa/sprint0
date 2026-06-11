@@ -229,7 +229,7 @@ def test_instructions_declare_retrieved_context_untrusted():
 def test_agents_carry_generation_config():
     from app import agent as a
     agents = [a.planner_agent, a.architect_agent, a.summary_agent, a.clarify_agent, a.memjudge_agent,
-              a.onboard_agent, a.qa_agent, a.strategist_agent, a.card_agent, a.conflict_agent,
+              a.onboard_agent, a.qa_agent, a.strategist_agent,
               a.solutions_agent, a.adapt_agent, a.contract_agent, a.shape_agent, a.regen_agent]
     for ag in agents:
         cfg = ag.generate_content_config

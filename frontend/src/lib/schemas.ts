@@ -150,7 +150,7 @@ export type PlanResponse = z.infer<typeof PlanResponse>;
 export const FeaturePlanResponse = PlanResponse.extend({ project_id: z.number() });
 export type FeaturePlanResponse = z.infer<typeof FeaturePlanResponse>;
 
-/* ── decisions (portfolio + cards + grades) ──────────────────────────── */
+/* ── decisions (portfolio + grades) ──────────────────────────────────── */
 export const Decision = z.object({
   id: z.string(), owner_id: z.string(), domain: Discipline, context_tags: z.array(z.string()),
   recommendation: z.string(), reasoning: z.string(), project_id: z.string(), project_name: z.string(),
@@ -161,24 +161,6 @@ export const Decision = z.object({
   created_at: z.string(), updated_at: z.string(),
 });
 export type Decision = z.infer<typeof Decision>;
-
-export const DecisionCard = z.object({
-  domain: z.string(), context: z.string(), recommendation: z.string(), confidence: z.number(),
-  pros: z.array(z.string()), cons: z.array(z.string()), conflict: z.boolean(),
-  conflict_reason: z.string().nullable(),
-});
-export type DecisionCard = z.infer<typeof DecisionCard>;
-
-export const DecisionCardResponse = z.object({
-  card: DecisionCard.nullable(), signal: z.enum(["green", "orange", "grey"]),
-  low_confidence: z.boolean(), past: z.object({ own: z.array(Decision), team: z.array(Decision) }),
-  // spine (P1): the gate's tier given this card's confidence + grounding
-  routing: z.object({
-    tier: RoutingTier, expected_cost: z.number().nullable(), blast_radius: z.number(), note: z.string(),
-  }).nullish(),
-  error: z.string().optional(),
-});
-export type DecisionCardResponse = z.infer<typeof DecisionCardResponse>;
 
 /* ── capability profiles (spine P2 — net-new endpoint) ───────────────── */
 export const CapabilityProfile = z.object({

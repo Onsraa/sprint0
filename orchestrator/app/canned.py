@@ -2,7 +2,7 @@
 Phase 3. Kept schema-valid so the frontend + tests exercise the real contract.
 """
 from app.contracts import (
-    ArchitectureOptions, ClarifiedSpec, ConflictVerdict, ContractProposalSet, Decision, DecisionCardPass1,
+    ArchitectureOptions, ClarifiedSpec, ContractProposalSet, Decision,
     DeveloperProfile, InterfaceDraft, InterfaceProposal, MemoryCandidate, MemoryJudgment, Notification, ParsedCV, PlanJSON,
     ProjectRecord, QAReport, RegeneratedSlice, RescheduleStrategy, SchemaField, SolutionSet,
 )
@@ -482,19 +482,6 @@ CANNED_STRATEGY = RescheduleStrategy(
     confidence=74,
     impact_summary="The dashboard chart shifts about two days; no owner or scope change.",
 )
-
-CANNED_DECISION_CARD = DecisionCardPass1.model_validate(
-    {
-        "domain": "backend",
-        "context": "JWT auth for payment data",
-        "recommendation": "Reuse LedgerLite JWT with refresh rotation",
-        "confidence": 78,
-        "pros": ["Battle-tested in prod", "Fastest secure path", "Already security reviewed"],
-        "cons": ["Slightly dated deps", "Less modern UX"],
-    }
-)
-
-CANNED_CONFLICT = ConflictVerdict(conflict=False, conflict_reason="")
 
 CANNED_REGEN = RegeneratedSlice.model_validate(
     {

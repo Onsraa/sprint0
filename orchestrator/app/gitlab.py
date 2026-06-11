@@ -169,16 +169,46 @@ def create_labels(project_id: int, labels: dict[str, str]) -> None:
 
 
 def commit_files(
-    project_id: int, files: list[dict], branch: str = "main", message: str = "chore: scaffold boilerplate"
+    project_id: int, files: list[dict], branch: str = "main", message: str = "chore: scaffold boilerplate",
+    author_email: str | None = None, author_name: str | None = None,
 ) -> dict:
     actions = [{"action": f.get("action", "create"), "file_path": f["path"], "content": f["content"]} for f in files]
+    payload: dict = {"branch": branch, "commit_message": message, "actions": actions}
+    if author_email:  # attribute the commit to the assignee (drives the demo's attribution + a believable MR author)
+        payload["author_email"] = author_email
+    if author_name:
+        payload["author_name"] = author_name
     with _client() as c:
-        r = c.post(
-            f"/projects/{project_id}/repository/commits",
-            json={"branch": branch, "commit_message": message, "actions": actions},
-        )
+        r = c.post(f"/projects/{project_id}/repository/commits", json=payload)
         r.raise_for_status()
         return {"commit_sha": r.json().get("id"), "files": len(files)}
+
+
+def create_merge_request(project_id: int, source_branch: str, target_branch: str = "main",
+                         title: str = "", labels: list[str] | None = None) -> dict:
+    """Open an MR source→target. `labels` (e.g. ["runner:<assignee>"]) drive the merge-time attribution chain."""
+    with _client() as c:
+        r = c.post(f"/projects/{project_id}/merge_requests", json={
+            "source_branch": source_branch, "target_branch": target_branch,
+            "title": title or source_branch, "labels": ",".join(labels or []),
+        })
+        r.raise_for_status()
+        return r.json()
+
+
+def merge_merge_request(project_id: int, mr_iid: int, retries: int = 8) -> dict:
+    """Merge an MR. GitLab returns 405/422 until it has finished the mergeability check, so retry briefly."""
+    import time
+    with _client() as c:
+        for _ in range(retries):
+            r = c.put(f"/projects/{project_id}/merge_requests/{mr_iid}/merge", json={})
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code not in (405, 406, 409, 422):
+                r.raise_for_status()
+            time.sleep(1.5)
+        r.raise_for_status()
+        return r.json()
 
 
 def create_issues(project_id: int, issues: list[dict]) -> list[dict]:

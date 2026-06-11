@@ -11,7 +11,7 @@ import { useMe, useLogin } from "../features/auth/useAuth";
 import { useView, memberToRole } from "../features/nav/nav";
 import { useUI } from "../lib/store";
 import { useInbox, useMarkAllRead } from "../features/notify/useNotifications";
-import { useRelay, useRatifyGate, useDecisionCard } from "../features/relay/useRelay";
+import { useRelay, useRatifyGate } from "../features/relay/useRelay";
 import { useProjects } from "../features/projects/useProjects";
 import { useRoster } from "../features/roster/useRoster";
 import { useWork } from "../features/work/useWork";
@@ -142,10 +142,6 @@ export function useApp() {
   // reuse-or-innovate: ratify a gate by SELECTING a solution (or a write-your-own). The backend records
   // the choice on the Decision + (for a user solution) regenerates the gate's issue + flags cross-gate overlap.
   const ratifyWith = (disc: string, chosen_solution: any, note = "") => ratifyGate.mutate({ discipline: disc as never, body: { approve: true, note, reasoning: note, chosen_solution } as never });
-  // per-gate Decision Cards (5 fixed disciplines)
-  const cBack = useDecisionCard(planId, "backend"); const cFront = useDecisionCard(planId, "frontend");
-  const cUiux = useDecisionCard(planId, "uiux"); const cQa = useDecisionCard(planId, "qa"); const cDev = useDecisionCard(planId, "devops");
-  const cards: Record<string, unknown> = useMemo(() => ({ backend: cBack.data, frontend: cFront.data, uiux: cUiux.data, qa: cQa.data, devops: cDev.data }), [cBack.data, cFront.data, cUiux.data, cQa.data, cDev.data]);
   // staffing/coverage for the active plan
   const { data: staffing } = useQuery({ queryKey: qk.staffing(planId ?? ""), queryFn: () => api.staffing(planId as string), enabled: !!planId });
 
@@ -247,7 +243,7 @@ export function useApp() {
     me, role, chrome, view, setView, goTo, navPayload, switchPersona, members,
     notifs, unread, dismissNotif, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
     agreements, ratifyPending: ratifyGate.isPending,
-    gates, actGate, ratifyWith, cards, staffing, planId, integration, relay,
+    gates, actGate, ratifyWith, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,
     profiles, confirmProfile,

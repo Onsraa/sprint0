@@ -126,7 +126,8 @@ def test_focus_script_inlines_payload_and_is_swap_safe():
 def test_issue_body_carries_the_gateway_bootstrap_command():
     from app import execute
     body = execute._issue_body(_iss("B1", "code", ["api/auth.py"]))
-    assert "git checkout feat/b1 &&" in body and "curl -fsS" in body and "/api/focus/B1?t=" in body
+    assert "git worktree add ../b1 feat/b1" in body and "curl -fsS" in body and "/api/focus/B1?t=" in body
+    assert "code ." not in body                          # editor auto-open removed
 
 
 # ── stubs: create missing, header-prepend existing (never overwrite), idempotent ──

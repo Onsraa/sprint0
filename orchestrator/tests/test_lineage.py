@@ -63,6 +63,22 @@ def test_build_reuse_lineage_dedups_identical_source():
     assert any(n["ref_project_id"] is None for n in n3)                        # distinct content → new feature
 
 
+def test_build_reuse_lineage_prefers_human_feature_title():
+    # The ratified pick's human label lands on the canonical node…
+    n1, _ = L.build_reuse_lineage(project_id=4201, project_name="Atlas", discipline="backend",
+                                  source_project="quantapay-2024", source_text="def auth(): return 1",
+                                  now="2026-06-11T00:00:00Z", existing_features=[],
+                                  feature_title="Reuse QuantaPay JWT auth (quantapay-2024)")
+    feat = next(n for n in n1 if n["ref_project_id"] is None)
+    assert feat["title"] == "Reuse QuantaPay JWT auth (quantapay-2024)"
+    # …and an empty title falls back to the coarse "source · discipline"
+    n2, _ = L.build_reuse_lineage(project_id=4187, project_name="LedgerLite", discipline="backend",
+                                  source_project="traillog-2025", source_text="def track(): return 2",
+                                  now="2026-06-11T01:00:00Z", existing_features=[])
+    feat2 = next(n for n in n2 if n["ref_project_id"] is None)
+    assert feat2["title"] == "traillog-2025 · backend"
+
+
 def test_propagate_ignores_non_derived_edges_and_unknown_feature():
     nodes, edges = _lineage()
     edges.append(GraphEdge(from_path="x", to_path="feat:qpauth0001", edge_type="import", project_id="lineage"))

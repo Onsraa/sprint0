@@ -38,12 +38,14 @@ def propagate_source_change(ev: ChangeEvent, nodes: list[GraphNode], edges: list
 
 
 def build_reuse_lineage(*, project_id: int, project_name: str, discipline: str, source_project: str,
-                        source_text: str, now: str, existing_features: list[dict]) -> tuple[list[dict], list[dict]]:
+                        source_text: str, now: str, existing_features: list[dict],
+                        feature_title: str = "") -> tuple[list[dict], list[dict]]:
     """Pure: a project reused `source_text` (from `source_project`, for `discipline`) → the lineage records to
     persist. CONTENT-ADDRESSED: identical source_text → the SAME feature node (dedup by construction) — a new
     feature node is emitted ONLY when its content_hash isn't already among `existing_features`. The reusing
-    project always gets its own instance node + a `derived_from` edge to the (shared) feature. Bitemporally
-    stamped (valid_from=now, open-ended). Returns (new_nodes, new_edges)."""
+    project always gets its own instance node + a `derived_from` edge to the (shared) feature. The canonical
+    node carries `feature_title` (the ratified pick's human label) when given, else the coarse
+    "source · discipline". Bitemporally stamped (valid_from=now, open-ended). Returns (new_nodes, new_edges)."""
     chash = normalize_and_hash(source_text)
     feat = next((f for f in existing_features
                  if f.get("content_hash") == chash and f.get("ref_project_id") in (None, 0)
@@ -54,7 +56,7 @@ def build_reuse_lineage(*, project_id: int, project_name: str, discipline: str, 
     else:
         feat_path = f"feat:{chash.split(':')[-1][:12]}"
         new_nodes.append({"path": feat_path, "node_type": "feature", "project_id": "lineage", "domain": discipline,
-                          "title": f"{source_project} · {discipline}", "content_hash": chash, "ref_project_id": None,
+                          "title": feature_title or f"{source_project} · {discipline}", "content_hash": chash, "ref_project_id": None,
                           "valid_from": now, "valid_to": None, "tx_time": now})
     inst_path = f"proj:{project_id}/{discipline}"
     new_nodes.append({"path": inst_path, "node_type": "feature", "project_id": "lineage", "domain": discipline,

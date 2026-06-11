@@ -754,64 +754,9 @@ class ClarifyResolution(BaseModel):
     answers: dict[str, str]  # ambiguity id → resolution text
 
 
-# ── Decision Cards (roadmap System 2): two-pass adversarial AI evaluation ──
+# ── shared word-truncation helper (validators across SolutionCard & co.) ──
 def _trunc_words(s: str, n: int) -> str:
     return " ".join((s or "").split()[:n])
-
-
-class DecisionCardPass1(BaseModel):
-    """Pass 1 — independent domain evaluation. NEVER sees the past decision (anti-anchoring).
-    Validators truncate to force concision (the AI cannot leak a paragraph into the UI)."""
-    domain: str = ""
-    context: str = ""
-    recommendation: str = ""
-    confidence: int = 50
-    pros: list[str] = Field(default_factory=list)
-    cons: list[str] = Field(default_factory=list)
-
-    @field_validator("context")
-    @classmethod
-    def _ctx(cls, v: str) -> str:
-        return (v or "")[:50]
-
-    @field_validator("recommendation")
-    @classmethod
-    def _rec(cls, v: str) -> str:
-        return _trunc_words(v, 10)
-
-    @field_validator("confidence")
-    @classmethod
-    def _conf(cls, v: int) -> int:
-        return max(0, min(100, int(v)))
-
-    @field_validator("pros", "cons")
-    @classmethod
-    def _items(cls, v: list[str]) -> list[str]:
-        return [_trunc_words(x, 8) for x in (v or [])[:3]]
-
-
-class ConflictVerdict(BaseModel):
-    """Pass 2 — adversarial compare of the AI recommendation vs the user's past decision."""
-    conflict: bool = False
-    conflict_reason: str = ""
-
-    @field_validator("conflict_reason")
-    @classmethod
-    def _cr(cls, v: str) -> str:
-        return _trunc_words(v, 15)
-
-
-class DecisionCard(BaseModel):
-    """The assembled card the UI renders: Pass-1 fields + Pass-2 conflict. AI emits structured data
-    only — no AI prose appears in the interface."""
-    domain: str
-    context: str = ""
-    recommendation: str = ""
-    confidence: int = 50
-    pros: list[str] = Field(default_factory=list)
-    cons: list[str] = Field(default_factory=list)
-    conflict: bool = False
-    conflict_reason: Optional[str] = None
 
 
 # ── Reuse-or-Innovate solutions (the Contract spine): per-gate choice the lead ratifies ──

@@ -26,16 +26,16 @@ from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import agreements, auth, canned, const, corpus, dedup, demo, eventlog, gitlab, gitlab_hooks, grading, graph, handoff, lineage, policy, relay, routing, runtime, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
+from app import agreements, auth, canned, const, corpus, dedup, demo, eventlog, gitlab, gitlab_hooks, grading, graph, handoff, lineage, policy, relay, runtime, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, Agreement, InterfaceDraft, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, NotificationType, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
-    ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
+    ContextScope, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
-from app.agent import AIOutputError, AITimeoutError, DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card, generate_shape
+from app.agent import AIOutputError, AITimeoutError, generate_shape
 from app.execute import execute_plan, extend_project, focus_command_for, reserve_project, scaffold_project
 from app.graphstore import store
 from app.rag import (
@@ -2926,56 +2926,6 @@ async def surface_decisions(domain: str = "", tags: str = "",
     return {"own": own, "team": team}
 
 
-@app.get("/api/relays/{plan_id}/gates/{discipline}/card")
-async def decision_card_for_gate(plan_id: str, discipline: str,
-                                 member: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    """Decision Card (System 2): two-pass adversarial AI for a relay gate. Pass 1 (domain persona, no
-    past in context → no anchoring) proposes; we surface the team's past validated decisions (System 3);
-    Pass 2 fires only if a past exists → conflict. Signal: orange=conflict, green=past+agree, grey=new.
-    AI emits structured fields only; best-effort (card=null on AI failure — never blocks ratify)."""
-    plan = PLANS.get(plan_id)
-    if plan is None:
-        raise HTTPException(404, "plan not found")
-    if not await _can_read_contract(member, discipline, plan_id):  # Contract is private — redacted for non-ratifier/manager/watcher
-        return {"card": None, "signal": "grey", "low_confidence": True, "past": {"own": [], "team": []}, "error": "private"}
-    sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
-    tags = sorted({i.required_skill for i in sl if i.required_skill})
-    ctx = (sl[0].title if sl else discipline)[:50]
-    surfaced = await surface_decisions(domain=discipline, tags=",".join(tags), member=member)
-    best_past = next((d for d in surfaced["own"] + surfaced["team"] if d.get("reasoning")), None)
-    try:
-        p1 = await generate_decision_card(
-            f"DOMAIN: {discipline}\n"
-            f"YOUR CONSTRAINTS: {DECISION_DOMAIN_CONSTRAINTS.get(discipline, discipline)}\n"
-            f"DECISION CONTEXT: {ctx}\n"
-            f"RELEVANT SKILLS/TAGS: {', '.join(tags) or '—'}\n"
-            f"THE SLICE BEING RATIFIED: {('; '.join(i.title for i in sl))[:300] or '(empty)'}")
-        conflict, reason = False, ""
-        if best_past and grading.carries_routing_weight(best_past):  # only a proven past can route (decision 4)
-            v = await generate_conflict(
-                f"DECISION CONTEXT: {ctx}\n"
-                f"Position A — AI recommendation: {p1.recommendation}\n"
-                f"Position B — past decision by @{best_past.get('owner_id')} "
-                f"({best_past.get('project_name')}): {best_past.get('recommendation', '')} — "
-                f"{best_past.get('reasoning', '')}")
-            conflict, reason = v.conflict, v.conflict_reason
-        card = DecisionCard(domain=discipline, context=ctx, recommendation=p1.recommendation,
-                            confidence=p1.confidence, pros=p1.pros, cons=p1.cons,
-                            conflict=conflict, conflict_reason=reason or None)
-        signal = "orange" if conflict else ("green" if best_past else "grey")
-        # Spine: fold the real AI confidence + grounding signal into this gate's routing tier (zero
-        # extra LLM cost — both are already computed here). Returned for the panel; not persisted.
-        tier, cost, blast, note = routing.route_gate(
-            sl, await _routing_edges(), _dev_trust(), _DEFAULT_DIAL,
-            confidence=p1.confidence, signal=signal)
-        return {"card": card.model_dump(), "signal": signal,
-                "routing": {"tier": tier, "expected_cost": cost, "blast_radius": blast, "note": note},
-                "low_confidence": p1.confidence < 60, "past": surfaced}
-    except Exception as e:
-        return {"card": None, "signal": "grey", "routing": None,
-                "low_confidence": False, "past": surfaced, "error": str(e)[:200]}
-
-
 # ── Capability profiles (spine refactor P2): the growing, manager-confirmed lane vocabulary ──
 @app.get("/api/profiles")
 async def list_profiles(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
@@ -3194,9 +3144,11 @@ async def record_reuse_lineage(plan_id: str, plan: PlanJSON, project_id: int) ->
         if not source_text:
             continue
         src = chosen.grounded_on[0]
+        title = f"{chosen.title.strip()} ({src})" if chosen.title and chosen.title.strip() else ""
         new_nodes, new_edges = lineage.build_reuse_lineage(
             project_id=project_id, project_name=plan.project_name, discipline=disc,
-            source_project=src, source_text=source_text, now=now, existing_features=existing)
+            source_project=src, source_text=source_text, now=now, existing_features=existing,
+            feature_title=title)
         try:
             await store.add_nodes(new_nodes)
             await store.add_edges(new_edges)

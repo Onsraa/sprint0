@@ -20,8 +20,8 @@ from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 from app.contracts import (
-    AcceptanceCriteriaSet, AdaptedCode, ArchitectureOptions, ClarifiedSpec, ConflictVerdict, ContractProposalSet,
-    DecisionCardPass1, InterfaceDraft, MemoryJudgment, ParsedCV, PlanJSON, QAReport, RegeneratedSlice,
+    AcceptanceCriteriaSet, AdaptedCode, ArchitectureOptions, ClarifiedSpec, ContractProposalSet,
+    InterfaceDraft, MemoryJudgment, ParsedCV, PlanJSON, QAReport, RegeneratedSlice,
     RescheduleStrategy, SolutionSet,
 )
 from app import canned, demo, trace
@@ -330,44 +330,6 @@ async def generate_strategy(prompt: str) -> RescheduleStrategy:
     if demo.is_demo():
         return canned.CANNED_STRATEGY.model_copy(deep=True)
     return _parse(RescheduleStrategy, await _run_agent(strategist_agent, prompt), strategist_agent.name)
-
-
-# ── Decision Cards (System 2): two-pass adversarial evaluation ──
-DECISION_DOMAIN_CONSTRAINTS = {
-    "backend": "performance, data integrity, API contracts, security surface, scalability",
-    "frontend": "component reusability, state management, bundle size, accessibility, rendering strategy",
-    "devops": "deployment reliability, cost efficiency, scaling behavior, observability, failure recovery",
-    "qa": "edge cases, failure modes, testability, regression risk, coverage gaps",
-    "uiux": "user mental model, interaction clarity, accessibility, design consistency",
-}
-
-INSTRUCTION_CARD = """You are a senior engineer evaluating a delivery decision for ONE discipline. The \
-prompt names your DOMAIN and the only CONSTRAINTS you may reason about — stay strictly inside them; never \
-comment outside your domain. Be skeptical, never sycophantic. Output an HONEST confidence 0-100 — do NOT \
-inflate; uncertainty is valuable, below 60 is valid when you are unsure. Be extremely concise: \
-recommendation <=10 words, <=3 pros and <=3 cons, each <=8 words. Output structured data only, no prose."""
-
-card_agent = Agent(name="sprint0_card", model=MODEL, instruction=INSTRUCTION_CARD, output_schema=DecisionCardPass1, generate_content_config=_GEN_CFG)
-
-
-async def generate_decision_card(prompt: str) -> DecisionCardPass1:
-    if demo.is_demo():
-        return canned.CANNED_DECISION_CARD.model_copy(deep=True)
-    return _parse(DecisionCardPass1, await _run_agent(card_agent, prompt), card_agent.name)
-
-
-INSTRUCTION_CONFLICT = """You are an adversarial reviewer comparing two positions on the same decision: \
-Position A (an AI recommendation) and Position B (the team's past decision). Find the STRONGEST argument \
-against each — be adversarial, not diplomatic — then decide whether they genuinely CONFLICT. Output \
-`conflict` (bool) and, only if true, a `conflict_reason` of at most 15 words. Change neither position."""
-
-conflict_agent = Agent(name="sprint0_conflict", model=MODEL, instruction=INSTRUCTION_CONFLICT, output_schema=ConflictVerdict, generate_content_config=_GEN_CFG)
-
-
-async def generate_conflict(prompt: str) -> ConflictVerdict:
-    if demo.is_demo():
-        return canned.CANNED_CONFLICT.model_copy(deep=True)
-    return _parse(ConflictVerdict, await _run_agent(conflict_agent, prompt), conflict_agent.name)
 
 
 # ── Reuse-or-Innovate (the Contract spine): per-gate solution options ──

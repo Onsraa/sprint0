@@ -24,8 +24,6 @@ import type {
   ContextScope,
   CoverageRow,
   Decision,
-  DecisionCard,
-  DecisionCardResponse,
   DeveloperProfile,
   Discipline,
   DispatchResult,
@@ -107,8 +105,6 @@ export type {
   ContextScope,
   CoverageRow,
   Decision,
-  DecisionCard,
-  DecisionCardResponse,
   DeveloperProfile,
   Discipline,
   DispatchResult,
@@ -575,10 +571,6 @@ export const api = {
   ): Promise<RelayState> {
     return jpost(`/api/plans/${planId}/ratify/${discipline}`, body);
   },
-  /** Decision Card (System 2): two-pass adversarial AI evaluation for a relay gate. */
-  decisionCard(planId: string, discipline: Discipline): Promise<DecisionCardResponse> {
-    return jget(`/api/relays/${planId}/gates/${discipline}/card`, S.DecisionCardResponse);
-  },
   /* Code Graph (roadmap System 4) */
   buildGraph(): Promise<{ project_id: string; root: string; nodes: number; edges: number }> {
     return jpost(`/api/graph/build`, {});
@@ -606,11 +598,6 @@ export const api = {
   simulateSourceChange(body: { feature_node: string; new_hash?: string; summary?: string }):
     Promise<{ event: unknown; dependents: number; proposed: WorkTask[] }> {
     return jpost(`/api/lineage/simulate-change`, body);
-  },
-  /* Semantic near-duplicate detection (P5): same-intent / different-code features flagged by embedding similarity. */
-  lineageDuplicates(threshold = 0.82): Promise<{ threshold: number; note?: string;
-    pairs: { a: string; a_title?: string; b: string; b_title?: string; similarity: number }[] }> {
-    return jget(`/api/lineage/duplicates?threshold=${threshold}`);
   },
   /* Subscriptions + live notifications (roadmap System 5) */
   subscribe(subjectId: string, events: string[] = ["assigned", "qa_failed"]): Promise<UserSubscription> {

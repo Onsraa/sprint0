@@ -23,14 +23,17 @@ def _gateway_url() -> str:
 
 
 def focus_command_for(issue_id: str, title: str, clone_url: str = "") -> str:
-    """The dev's copy/paste: checkout the conventional `feat/<title>` branch, then fetch + run the focus
-    bootstrap from the gateway (writes the agent docs + reused code locally, UNTRACKED). Nothing is committed."""
+    """The dev's copy/paste: a DEDICATED git worktree per task (`feat/<title>` in its own dir, so two tasks
+    never collide and a swap is impossible), then fetch + run the focus bootstrap from the gateway (writes the
+    agent docs + reused code locally, UNTRACKED). Nothing is committed. `git worktree remove ../<slug>` when done."""
     branch = handoff.branch_for(title, issue_id)
+    slug = branch.split("/", 1)[-1]
     boot = f'curl -fsS "{_gateway_url()}/api/focus/{issue_id}?t={handoff.focus_token(issue_id)}" | bash'
+    tree = f"git worktree add ../{slug} {branch} && cd ../{slug} && {boot}"
     if clone_url:
         repo_dir = clone_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
-        return f"git clone {clone_url} && cd {repo_dir} && git checkout {branch} && {boot} && code ."
-    return f"git checkout {branch} && {boot} && code ."
+        return f"git clone {clone_url} {repo_dir} && cd {repo_dir} && {tree}"
+    return f"git fetch -q && {tree}"
 
 
 def focus_command(issue: Issue, clone_url: str = "") -> str:
@@ -46,6 +49,96 @@ test:
   script: ['echo "sprint0 CI · acceptance tests run here; the QA relay adjudicates downstream"']
 """
 
+# ── per-stack project skeleton: a REAL buildable repo so a .tsx/.py stub resolves its imports (no ts2307).
+# Static, known-good, committed at scaffold on the default branch. node_modules is NOT committed → `npm install`. ──
+_VITE_PACKAGE_JSON = """{
+  "name": "sprint0-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "tsc -b && vite build", "preview": "vite preview" },
+  "dependencies": { "react": "^18.3.1", "react-dom": "^18.3.1" },
+  "devDependencies": {
+    "@types/react": "^18.3.3", "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1", "typescript": "^5.5.3", "vite": "^5.4.0"
+  }
+}
+"""
+_TSCONFIG_JSON = """{
+  "compilerOptions": {
+    "target": "ES2020", "useDefineForClassFields": true, "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext", "skipLibCheck": true, "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true, "resolveJsonModule": true, "isolatedModules": true,
+    "noEmit": true, "jsx": "react-jsx", "strict": true
+  },
+  "include": ["src"]
+}
+"""
+_VITE_CONFIG = """import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({ plugins: [react()] })
+"""
+_INDEX_HTML = """<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><title>sprint0 app</title></head>
+  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+</html>
+"""
+_MAIN_TSX = """import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode><App /></React.StrictMode>,
+)
+"""
+_APP_TSX = """import React from 'react'
+
+export default function App() {
+  return <h1>sprint0 scaffolded app</h1>
+}
+"""
+_REQUIREMENTS = """fastapi>=0.110
+uvicorn[standard]>=0.29
+"""
+_BACKEND_MAIN = '''from fastapi import FastAPI
+
+app = FastAPI(title="sprint0 app")
+
+
+@app.get("/")
+def root() -> dict:
+    return {"status": "ok", "service": "sprint0 scaffolded app"}
+'''
+
+
+def _frontend_skeleton(stack) -> list[dict]:
+    """A minimal React + Vite + TS project (demo stack) so `import React from 'react'` resolves after npm install."""
+    fe = (stack.frontend or "").lower()
+    if not any(k in fe for k in ("react", "vite", "next", "typescript")):
+        return []
+    return [
+        {"path": "package.json", "content": _VITE_PACKAGE_JSON},
+        {"path": "tsconfig.json", "content": _TSCONFIG_JSON},
+        {"path": "vite.config.ts", "content": _VITE_CONFIG},
+        {"path": "index.html", "content": _INDEX_HTML},
+        {"path": "src/main.tsx", "content": _MAIN_TSX},
+        {"path": "src/App.tsx", "content": _APP_TSX},
+    ]
+
+
+def _backend_skeleton(stack) -> list[dict]:
+    """A minimal FastAPI project (demo stack) so `from fastapi import FastAPI` resolves after pip install."""
+    be = (stack.backend or "").lower()
+    if not any(k in be for k in ("fastapi", "python", "uvicorn", "flask")):
+        return []
+    return [
+        {"path": "requirements.txt", "content": _REQUIREMENTS},
+        {"path": "app/__init__.py", "content": ""},
+        {"path": "app/main.py", "content": _BACKEND_MAIN},
+    ]
+
 
 def _issue_body(issue: Issue, clone_url: str = "") -> str:
     """Body is polymorphic on kind — the execution surface, not the workflow, changes."""
@@ -60,7 +153,8 @@ def _issue_body(issue: Issue, clone_url: str = "") -> str:
         fetch = focus_command(issue, clone_url)
         body = (
             f"🎯 **Micro-context** — you only need:\n{files}\n\n> {issue.context_scope.note}\n\n"
-            f"**Fetch → focus → open** (VSCode; swap `code .` for your editor):\n```sh\n{fetch}\n```"
+            f"**Get your task** (a dedicated git worktree + the focus context; run `npm install` once for deps):"
+            f"\n```sh\n{fetch}\n```"
         )
         if issue.api_contract:
             body += f"\n\n**API contract (mock payload) — produced here:**\n```json\n{issue.api_contract}\n```"
@@ -168,9 +262,14 @@ def scaffold_project(plan: PlanJSON, project_id: int, *, web_url: str = "", clon
         n = sum(len(e.issues) for e in plan.epics)
         return {"issues_created": n, "context_branches": n, "qa_issue_iid": None, "demo_stub": True}
     ts = plan.tech_stack
+    skeleton = _frontend_skeleton(ts) + _backend_skeleton(ts)  # real deps so a stub resolves its imports (no ts2307)
+    develop = ("## Develop\n```sh\nnpm install && npm run dev          # frontend (Vite)\n"
+               "pip install -r requirements.txt && uvicorn app.main:app --reload   # backend (FastAPI)\n```\n\n"
+               if skeleton else "")
     readme = (
         f"# {plan.project_name}\n\n{plan.client_summary}\n\n"
         f"## Stack\n- frontend: {ts.frontend}\n- backend: {ts.backend}\n- db: {ts.db}\n- infra: {ts.infra}\n\n"
+        f"{develop}"
         f"## Grounded on (agency memory)\n{', '.join(plan.grounded_on) or '—'}\n\n"
         f"_Scaffolded by sprint0 — {plan.timeline_weeks}-week plan, "
         f"{sum(len(e.issues) for e in plan.epics)} issues._\n"
@@ -180,6 +279,7 @@ def scaffold_project(plan: PlanJSON, project_id: int, *, web_url: str = "", clon
         [
             {"path": "README.md", "action": "update", "content": readme},
             {"path": ".gitlab-ci.yml", "content": _CI_YML},
+            *skeleton,
         ],
         branch=default_branch,
     )
