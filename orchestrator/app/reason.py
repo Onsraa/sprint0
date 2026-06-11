@@ -164,18 +164,27 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
         except Exception:
             code = []
     past, code = select_grounded(past, code, grounded)  # the human ratified WHICH candidates to ground on (Use/Skip)
+    has_memory = bool(past or code)  # the human SELECTED memory to reuse → at least one card must honor it
+    if has_memory:
+        memory_note = ("the human already SELECTED this memory as a fit — treat it as relevant, do not re-judge it away")
+        cards_rule = (
+            f"  1) one ORIGINAL from-scratch stack — your best clean-slate design from the BRIEF ALONE, with an "
+            f"EMPTY `reuse` block (ignore the memory for this card); the no-bias baseline.\n"
+            f"  2) one REUSE-LED stack — AT LEAST one card MUST ground its `reuse` block on the selected memory "
+            f"above (cite the project + feature); the human chose it, so honor it.\n"
+            f"  3) one more distinct approach — a different fresh or managed-services take.")
+    else:
+        memory_note = "none was selected — leave every `reuse` block EMPTY"
+        cards_rule = (
+            f"  1) one ORIGINAL from-scratch stack (empty `reuse`) — the no-bias baseline.\n"
+            f"  2-3) two more distinct approaches (fresh or managed); no memory was selected, so `reuse` stays empty.")
     prompt = (
         f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"CANDIDATE PAST PROJECTS (agency memory — JUDGE each for fit; reuse a card's `reuse` block ONLY from a "
-        f"project that genuinely fits this brief's domain; if none fit, design a fresh stack):\n{_format_past(past)}\n\n"
-        f"REUSABLE CODE (chunk-level — cite the project + feature in each card's `reuse`, only if listed):\n{_format_code(code)}\n\n"
+        f"SELECTED AGENCY MEMORY ({memory_note}):\n{_format_past(past)}\n\n"
+        f"REUSABLE CODE (chunk-level — cite the project + feature in a card's `reuse`, only from what's listed):\n{_format_code(code)}\n\n"
         f"DEV ROSTER:\n{_format_roster(roster)}\n\n"
-        f"Propose EXACTLY 3 distinct architecture cards + your own ai_pick:\n"
-        f"  1) one ORIGINAL from-scratch stack — your best clean-slate design from the BRIEF ALONE, with an "
-        f"EMPTY `reuse` block (ignore the memory above for this card); it is the no-bias baseline.\n"
-        f"  2-3) memory-grounded alternatives — cite a card's `reuse` block ONLY from a past project that "
-        f"genuinely fits; if none fit, make them fresh too. Never force reuse onto every card."
+        f"Propose EXACTLY 3 distinct architecture cards + your own ai_pick:\n{cards_rule}"
     )
     from app import trace
     trace.step("gemini", "action", "Design architecture options", "ground the cards on the chosen memory, propose 2-3 stacks")

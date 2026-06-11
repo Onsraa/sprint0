@@ -1,5 +1,5 @@
 /* sprint0 — Landing. Minimal header + split hero: title + the passwordless demo-entry card. Honest demo
- * auth: enter as the manager, or pick any of the 5 fixed demo personas directly — no OAuth/email/password.
+ * auth: enter as the Tech Lead, or pick any of the 3 composable demo personas directly — no OAuth/email/password.
  * The persona switcher in the nav re-chromes from there. */
 import { useNavigate } from "@tanstack/react-router";
 import { useLogin } from "../features/auth/useAuth";
@@ -130,7 +130,7 @@ function DemoEntry({ onEnter }: { onEnter: (username?: string) => void }) {
       </div>
 
       <p style={{ fontSize: 11.5, color: "var(--text-quaternary)", lineHeight: 1.5, marginTop: 16, marginBottom: 0, textAlign: "center" }}>
-        5 fixed demo accounts · switch personas anytime from the workspace header.
+        3 composable demo accounts · switch personas anytime from the workspace header.
       </p>
     </div>
   );
