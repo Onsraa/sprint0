@@ -78,6 +78,30 @@ def get_project(project_id: int) -> dict:
         return r.json()
 
 
+TREE_PAGE_CAP = 20    # list_repo_tree pagination ceiling (~TREE_PAGE_CAP*TREE_PER_PAGE files)
+TREE_PER_PAGE = 100   # GitLab max page size
+
+
+def list_repo_tree(project_id: int, ref: str | None = None) -> set[str]:
+    """Every blob path in the repo (recursive) — the feature repo's CURRENT file set, used to classify a
+    slice file as `modify` (already there) vs `add` (new). Paginated; capped at 20 pages (~2000 files).
+    Best-effort: a non-200 (empty/uninitialized repo) returns what's gathered so far (often nothing → all add)."""
+    paths: set[str] = set()
+    with _client() as c:
+        for page in range(1, TREE_PAGE_CAP + 1):
+            params: dict = {"recursive": "true", "per_page": TREE_PER_PAGE, "page": page}
+            if ref:
+                params["ref"] = ref
+            r = c.get(f"/projects/{project_id}/repository/tree", params=params)
+            if r.status_code != 200:
+                break
+            batch = r.json()
+            paths.update(n["path"] for n in batch if n.get("type") == "blob")
+            if len(batch) < TREE_PER_PAGE:
+                break
+    return paths
+
+
 def get_file_raw(project: str | int, file_path: str, ref: str = "main") -> str:
     """Raw content of one file from ANY project the owner token can read — the cross-repo fetch that
     turns a memory citation into real code (reuse layer-2). `project` is a numeric id or a `group/path`."""

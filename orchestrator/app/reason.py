@@ -13,8 +13,9 @@ import re
 from datetime import datetime, timezone
 
 from app.agent import (
-    generate_architectures, generate_clarification, generate_contract_options, generate_cv_profile,
-    generate_memory_judgment, generate_plan, generate_qa_report, generate_regen, generate_solutions,
+    generate_acceptance, generate_architectures, generate_clarification, generate_contract_options,
+    generate_cv_profile, generate_memory_judgment, generate_plan, generate_qa_report, generate_regen,
+    generate_solutions,
 )
 from app.assign import assign_developers
 from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, MemoryCandidate, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
@@ -34,7 +35,8 @@ _PP_PROJECTION = {"name": 1, "tech_stack": 1, "total_estimate_days": 1, "actual_
 _DEV_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "skills_text": 1, "trust_level": 1}
 # Match needs the scoring fields + the stored vector (we rank locally over the tiny roster, not per-skill in Atlas).
 _DEV_MATCH_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "username": 1, "trust_level": 1, "trust": 1,
-                         "discipline": 1, "load": 1, "role": 1, "seniority": 1, "history": 1, "skill_embedding": 1}
+                         "discipline": 1, "disciplines": 1, "is_manager": 1, "load": 1, "role": 1, "seniority": 1,
+                         "history": 1, "skill_embedding": 1}
 
 
 # Everything retrieved from memory (past projects, code chunks, decisions) or derived from user uploads
@@ -100,6 +102,22 @@ def _normalize_plan_ids(plan: PlanJSON) -> None:
             iss.depends_on = [id_map[d] for d in iss.depends_on if d in id_map]
 
 
+_DISCIPLINE_LANES = {"uiux", "backend", "frontend", "qa", "devops"}  # the valid relay lanes (= relay._LANE_STAGE keys)
+
+
+def _normalize_plan_lanes(plan: PlanJSON) -> None:
+    """Collapse every issue's relay `lane` onto a valid DISCIPLINE so the gate ↔ slice ↔ owner ↔ solutions
+    chain (all keyed on the computed `discipline`) stays consistent. Folds type-lanes (design→uiux, db→
+    backend), keeps the 5 discipline lanes, and rewrites any FREE-STRING lane ("platform"/"security") to the
+    issue's discipline — an open lane has no slice/coverer/solutions, so it would build a phantom, ownerless,
+    unassignable gate (the 'open gate is empty' + 403 bug)."""
+    from app.contracts import _TYPE_TO_DISCIPLINE
+    for epic in plan.epics:
+        for iss in epic.issues:
+            resolved = _TYPE_TO_DISCIPLINE.get(iss.lane or "", iss.lane)
+            iss.lane = resolved if resolved in _DISCIPLINE_LANES else iss.discipline
+
+
 def _safe_username(raw: str) -> str:
     """A server-owned slug from the LLM's proposed handle — the handle is content, not a trusted key.
     Lowercase, kebab, strip anything that isn't [a-z0-9-] so it's safe as an id / GitLab lookup."""
@@ -153,8 +171,11 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
         f"project that genuinely fits this brief's domain; if none fit, design a fresh stack):\n{_format_past(past)}\n\n"
         f"REUSABLE CODE (chunk-level — cite the project + feature in each card's `reuse`, only if listed):\n{_format_code(code)}\n\n"
         f"DEV ROSTER:\n{_format_roster(roster)}\n\n"
-        f"Propose 2-3 distinct architecture cards + your own ai_pick. A fresh-build card with no reuse is a "
-        f"valid, often-correct answer when nothing in memory fits."
+        f"Propose EXACTLY 3 distinct architecture cards + your own ai_pick:\n"
+        f"  1) one ORIGINAL from-scratch stack — your best clean-slate design from the BRIEF ALONE, with an "
+        f"EMPTY `reuse` block (ignore the memory above for this card); it is the no-bias baseline.\n"
+        f"  2-3) memory-grounded alternatives — cite a card's `reuse` block ONLY from a past project that "
+        f"genuinely fits; if none fit, make them fresh too. Never force reuse onto every card."
     )
     from app import trace
     trace.step("gemini", "action", "Design architecture options", "ground the cards on the chosen memory, propose 2-3 stacks")
@@ -284,8 +305,7 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
             code = []
     try:  # #33 — feed past TEAM decisions so the LLM can ground a `conflict` flag (not hallucinate it)
         from app.rag import all_decisions
-        team_decisions = [d for d in await all_decisions()
-                          if d.get("visibility") == "team" and d.get("domain") == discipline]
+        team_decisions = await all_decisions(query={"visibility": "team", "domain": discipline})
     except Exception:
         team_decisions = []
     ts = plan.tech_stack
@@ -319,9 +339,10 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
 
 
 async def propose_contract_options(plan: PlanJSON, prod, cons, chosen=None) -> ContractProposalSet:
-    """JIT contract options for ONE producer→consumer edge, grounded on the producer's CHOSEN gate solution.
-    The AI returns either `needed=false` (no real API boundary — no contract) or 1-2 pickable shape options
-    (reuse/fresh). The server assigns each proposal an id. Called when the producer ratifies its gate."""
+    """Contract options for ONE producer→consumer edge, drafted from the FEATURE (the two slices) — the
+    interface is independent of how either side implements it, so `chosen` is optional and normally omitted
+    (contract-first: drafted at reserve, before any gate choice). The AI returns either `needed=false` (no
+    real API boundary — no contract) or 1-2 pickable shape options. The server assigns each proposal an id."""
     from app import demo, canned
     if demo.is_demo():  # no Vertex on the public tier → the discipline's canned contract options (necessity-aware)
         opts = canned.contract_options_for(prod.discipline)
@@ -341,6 +362,25 @@ async def propose_contract_options(plan: PlanJSON, prod, cons, chosen=None) -> C
         if not p.id:
             p.id = f"p{n + 1}"
     return opts
+
+
+async def propose_acceptance(plan: PlanJSON) -> dict[str, str]:
+    """One specific, testable acceptance criterion per issue — the Tester's definition of done, which they
+    then refine (vs the generic 'works end-to-end' seed). One Gemini call; demo → {} (the generic line stands)."""
+    from app import demo
+    if demo.is_demo():
+        return {}
+    issues = [i for e in plan.epics for i in e.issues]
+    if not issues:
+        return {}
+    lines = [f"- {i.id} [{i.discipline}] {i.title}: {(i.description or '')[:120]}" for i in issues]
+    prompt = (f"FEATURE: {plan.project_name} — {(plan.client_summary or '')[:200]}\nISSUES:\n" + "\n".join(lines) +
+              "\n\nReturn exactly one AcceptanceCriterion per issue (echo its id).")
+    try:
+        res = await generate_acceptance(prompt)
+    except Exception:
+        return {}
+    return {c.issue_id: c.criterion.strip() for c in res.items if c.issue_id and c.criterion.strip()}
 
 
 async def regenerate_slice(issues: list, discipline: str, user_solution) -> RegeneratedSlice:
@@ -399,6 +439,7 @@ async def run_brief(
         trace.step("gemini", "action", "Plan the relay", "map features → epics → issues across the discipline gates")
         plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab, roster))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
+        _normalize_plan_lanes(plan)  # fold any free-string lane → a valid discipline (no phantom gates)
         plan.grounded_on = plan.grounded_on or [p["name"] for p in past]
         trace.step("server", "action", "Assign + schedule", "match each issue to the roster by skill + availability")
         await _match_and_assign(plan, m)
@@ -502,6 +543,7 @@ async def delta_brief(feature_text: str, record: dict, constraints: Constraints 
         )
         plan = await generate_plan(_build_delta_prompt(feature_text, record, existing_titles, manifest, past, stack, constraints, decisions))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
+        _normalize_plan_lanes(plan)  # fold any free-string lane → a valid discipline (no phantom gates)
         plan.grounded_on = plan.grounded_on or [record.get("name", "this project"), *(p["name"] for p in past)]
         await _match_and_assign(plan, m)
     return plan

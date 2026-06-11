@@ -152,8 +152,8 @@ export function WizardBrief() {
       },
       async () => {
         const { brief_id } = await api.createBrief({ text: brief });
+        setBriefId(brief_id);            // BEFORE clarify — else the ReActTrace polls runId=null + the first phase never animates
         const s = await api.clarify(brief_id);
-        setBriefId(brief_id);
         setSpec(s);
         setAnswers({});
         commitRef.current = () => setStep(1);
@@ -758,7 +758,7 @@ function StepPlan({ plan, relay, staffing, members }: {
     const gate = ((relay?.gates ?? []) as any[]).find((g) => g.discipline === disc);
     const isSetup = disc === "setup";
     // owner = the gate's delegate, else its assigned owner (WS1), else an issue-assignee / seated dev (roster).
-    const ownerUser = gate?.delegate ?? gate?.owner ?? (isSetup ? undefined : (leadFor(disc) ?? members.find((m: any) => m.role === "developer" && m.discipline === disc)?.username));
+    const ownerUser = gate?.delegate ?? gate?.owner ?? (isSetup ? undefined : (leadFor(disc) ?? members.find((m: any) => (m.disciplines ?? [m.discipline]).includes(disc))?.username));
     const isGap = isSetup ? false : (cov ? !cov.covered : !ownerUser);
     const leadName = ownerUser ? (byUser(ownerUser)?.name?.split(" ")[0] ?? ownerUser) : "Tech Lead";  // gap routes to the Tech Lead
     return (

@@ -46,12 +46,17 @@ def _earned(grade: str | None) -> bool:
 def grade_for(grounded_on: list[str], decisions: list[dict], discipline: str) -> str | None:
     """Earned strength of a memory-grounded option (server-derived — never an LLM guess). Prefer a TEAM
     decision graded on one of the grounded projects in this discipline (the real P4 grade); else a coarse
-    "shipped" since the agency's seeded past projects all shipped; ungrounded → None."""
+    "shipped" since the agency's seeded past projects all shipped; ungrounded → None.
+    Identities compare via the canonical project_key — grounded_on carries corpus slugs ("quantapay-2024")
+    while Decisions.project_name carries display names ("QuantaPay (2024)"); a raw string match never hit,
+    so every memory card silently degraded to the coarse "shipped"."""
     if not grounded_on:
         return None
+    from app.corpus import project_key
+    keys = {project_key(g) for g in grounded_on if g}
     best = None
     for d in decisions:
-        if (d.get("project_name") in grounded_on and d.get("domain") == discipline
+        if (project_key(d.get("project_name") or "") in keys and d.get("domain") == discipline
                 and d.get("visibility") == "team"):
             g = d.get("grade", "proposed")
             if best is None or _RANK.get(g, 0) > _RANK.get(best, 0):

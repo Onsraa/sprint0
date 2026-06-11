@@ -91,18 +91,34 @@ def test_prompts_wrap_untrusted_input_in_tags():
     assert "<feature_request>" in d and "</feature_request>" in d and "NEW FEAT" in d
 
 
-# ── G1 public-endpoint rate-limit ──
-def test_ai_throttle_caps_per_ip():
+# ── G1 public-endpoint rate-limit (two layers: per-(ip,user) fairness under a per-IP hard ceiling) ──
+def _throttle_req(ip: str, user: str = ""):
+    headers = {"X-Sprint0-User": user} if user else {}
+    return types.SimpleNamespace(client=types.SimpleNamespace(host=ip), headers=headers)
+
+
+def test_ai_throttle_caps_per_user_bucket():
     from app import main
-    main._ai_calls.clear()
-    req = types.SimpleNamespace(client=types.SimpleNamespace(host="9.9.9.9"))
+    main._ai_calls.clear(); main._ai_calls_ip.clear()
+    req = _throttle_req("9.9.9.9", "jean")
     for _ in range(main._AI_RATE_MAX):
         main._ai_throttle(req)                       # within budget → allowed
     with pytest.raises(Exception) as ei:             # HTTPException past the budget
         main._ai_throttle(req)
     assert getattr(ei.value, "status_code", None) == 429
-    other = types.SimpleNamespace(client=types.SimpleNamespace(host="8.8.8.8"))
-    main._ai_throttle(other)                          # a different IP is independent
+    main._ai_throttle(_throttle_req("9.9.9.9", "sam"))   # a NAT'd teammate (same IP, own bucket) is NOT starved
+    main._ai_throttle(_throttle_req("8.8.8.8", "jean"))  # a different IP is independent
+
+
+def test_ai_throttle_ip_ceiling_blocks_username_rotation():
+    # auth is header-only (spoofable) — rotating usernames must NOT mint unlimited fresh buckets
+    from app import main
+    main._ai_calls.clear(); main._ai_calls_ip.clear()
+    for n in range(main._AI_RATE_IP_MAX):
+        main._ai_throttle(_throttle_req("7.7.7.7", f"fake{n}"))   # each call a fresh fake user
+    with pytest.raises(Exception) as ei:
+        main._ai_throttle(_throttle_req("7.7.7.7", "fake-next"))  # the per-IP hard ceiling holds
+    assert getattr(ei.value, "status_code", None) == 429
 
 
 # ── G3 bounded retry on transient 429/503 only ──

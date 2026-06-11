@@ -32,7 +32,8 @@ def _domain_of(path: str) -> str:
         return "frontend"
     if "test" in p:
         return "qa"
-    if "deploy" in p or "infra" in p or "docker" in p:
+    if ("deploy" in p or "infra" in p or "docker" in p
+            or p.endswith((".yml", ".yaml", ".tf", ".dockerfile"))):  # compose/CI/k8s manifests = devops lane
         return "devops"
     return "backend"
 

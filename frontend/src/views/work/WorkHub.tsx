@@ -368,7 +368,7 @@ function Board({ tasks, onMove, onOpen, selected, byUser }: {
               <IconButton name="plus" size={20} icon={13} title="Add" />
             </div>
             {colTasks.map((t) => (
-              <TaskCard key={t.id} task={t} onOpen={open} selected={selected === t.id}
+              <TaskCard key={`${t.project_id ?? t.project}-${t.id}`} task={t} onOpen={open} selected={selected === t.id}
                 dragging={drag?.id === t.id} onStartDrag={startDrag} byUser={byUser} />
             ))}
             {colTasks.length === 0 && (
@@ -455,7 +455,7 @@ function ListView({ tasks, onOpen, selected, byUser }: {
                 glyph={<StatusIcon status={col.status} size={14} />} label={col.label} count={rows.length}
                 right={<IconButton name="plus" size={22} icon={13} />} />
             </div>
-            {open[col.status] && rows.map((t) => <ListRow key={t.id} t={t} onOpen={onOpen} selected={selected === t.id} byUser={byUser} />)}
+            {open[col.status] && rows.map((t) => <ListRow key={`${t.project_id ?? t.project}-${t.id}`} t={t} onOpen={onOpen} selected={selected === t.id} byUser={byUser} />)}
           </div>
         );
       })}

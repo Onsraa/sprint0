@@ -68,6 +68,18 @@ def test_grade_for_prefers_team_decision():
     assert grading.grade_for(["QuantaPay (2024)"], decs, "backend") == "prod_survived"
 
 
+def test_grade_for_matches_display_name_against_live_slug():
+    # the live disease: grounded_on carries corpus SLUGS, Decisions carry DISPLAY names — must still match
+    decs = [{"project_name": "QuantaPay (2024)", "domain": "backend", "grade": "prod_survived", "visibility": "team"}]
+    assert grading.grade_for(["quantapay-2024"], decs, "backend") == "prod_survived"
+
+
+def test_grade_for_distinct_projects_do_not_collide():
+    # canonical keys keep distinct projects distinct (no lossy first-token collapse)
+    decs = [{"project_name": "quanta-ledger", "domain": "backend", "grade": "prod_survived", "visibility": "team"}]
+    assert grading.grade_for(["quanta-pay"], decs, "backend") == "shipped"  # different project → coarse fallback
+
+
 def test_grade_for_fallback_shipped_when_grounded_no_decision():
     assert grading.grade_for(["SomeProject"], [], "backend") == "shipped"
 

@@ -9,26 +9,34 @@
    by producer/consumer discipline (the mock's `a.lanes` collapses onto our two-discipline shape). */
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/useApp";
+import { isDone, ownsGate } from "../lib/gate";
 import { Badge, DiscDot, discLabel } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome, type Crumb } from "../components/ViewChrome";
 import { RatifyPanel, GATE_META } from "./RatifyPanel";
 import { AgreementCard } from "./AgreementCard";
+import { Button } from "../components/ui";
+import { useUI } from "../lib/store";
 
 const lanesOf = (a: any): string[] => [a.producer_discipline, a.consumer_discipline].filter(Boolean);
 
 export function GateContract() {
-  const { gates, navPayload, agreements, me, chrome, personFilter, members, planId, relaySummaries, goTo, ratifyPending }: any = useApp();
+  const { gates, navPayload, agreements, me, personFilter, members, planId, relaySummaries, goTo }: any = useApp();
+  const shippedRelay = useUI((s) => s.shippedRelay);
+  const setShippedRelay = useUI((s) => s.setShippedRelay);
+  // a live gate is in play → drop any stale "just shipped" latch so the gate shows, not the done-state.
+  useEffect(() => { if (shippedRelay && (gates as any[]).length) setShippedRelay(null); }, [gates, shippedRelay, setShippedRelay]);
   // the disciplines that actually have a gate in this relay, in relay order
   const present = useMemo(() => (gates as any[]).map((g) => g.discipline), [gates]);
-  // Scope the lanes to the viewer: the manager sees every lane (oversight); a dev/lead sees only the gate(s)
-  // they own (their discipline, or a gate handed to them). Reviewing a watched person shows THEIR lanes.
+  // Scope the lanes to the viewer: each gate belongs to ONE user (its owner) — the viewer sees only the
+  // gate(s) they own (ownsGate: ratifier ?? a coverer ?? the manager for a true orphan). No role see-all.
+  // Reviewing a watched person shows THEIR owned lanes.
   const watched = personFilter ? members.find((m: any) => m.username === personFilter) : null;
-  const viewerDisc: string | undefined = watched ? watched.discipline : me.discipline;
-  const viewerUser: string | undefined = watched ? watched.username : me.username;
-  const seesAll = !watched && chrome.seesAllGates;
-  const owns = (d: string) => { const g = (gates as any[]).find((x) => x.discipline === d); const ratifier = g?.delegate ?? g?.owner; return ratifier ? ratifier === viewerUser : d === viewerDisc; };
-  const lanes = useMemo(() => (seesAll ? present : present.filter(owns)), [present, seesAll, gates, viewerDisc, viewerUser]);
+  const viewerMember: any = watched ?? me;
+  const viewerDiscs: string[] = viewerMember?.disciplines?.length ? viewerMember.disciplines : [viewerMember?.discipline].filter(Boolean);
+  const viewerDisc: string | undefined = viewerDiscs[0];
+  const owns = (d: string) => ownsGate((gates as any[]).find((x) => x.discipline === d), viewerMember, members);
+  const lanes = useMemo(() => present.filter(owns), [present, gates, viewerMember, members]);
   const pick = (d?: string | null) => (d && lanes.includes(d) ? d : null);
   // a Contract redirect may carry only { agr } — derive its lane from the agreement's two disciplines
   const agrDisc = useMemo(() => {
@@ -47,11 +55,14 @@ export function GateContract() {
   // live only — a regenerate (a changed gate choice) supersedes the old contract; never show both (no dup)
   const contracts = (agreements as any[]).filter((a) => lanesOf(a).includes(disc as string) && a.state !== "superseded" && a.state !== "rejected");
   const pending = contracts.filter((a) => a.state === "proposed").length;
-  const ratifiedN = (gates as any[]).filter((g) => g.status === "ratified" || g.status === "auto_passed").length;
+  const ratifiedN = (gates as any[]).filter((g) => isDone(g.status)).length;
   const title = relaySummaries.find((r: any) => r.plan_id === planId)?.project ?? "This relay";
   // breadcrumb: Studio > Relays(click→back) > Project > Feature (project/feature deep-linked from Relays)
   const crumbs: Crumb[] = ["Studio", { label: "Relays", onClick: () => goTo("relays") },
     navPayload?.project ?? title, navPayload?.feature ?? "Gate × Contract"];
+
+  // the tester just shipped → a done-state with a "Go to tasks" button (NOT the stale "no gate here").
+  if (shippedRelay) return <ShippedDone relay={shippedRelay} onTasks={() => { setShippedRelay(null); goTo("work"); }} onClose={() => { setShippedRelay(null); goTo("relays"); }} />;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -79,34 +90,58 @@ export function GateContract() {
             )}
           </div>
 
-          {/* the two halves, side by side */}
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(330px, 400px)", gap: 22, alignItems: "start" }}>
+          {/* the two halves — but a gate with NO contract (the acceptance gate, or a slice that exchanges
+              no API, e.g. devops) gets NO contracts column: the gate takes the full width. */}
+          <div style={{ display: "grid", gridTemplateColumns: gate?.is_acceptance || !contracts.length ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(330px, 400px)", gap: 22, alignItems: "start" }}>
             {/* the gate — slice pick */}
             <div style={{ minWidth: 0 }}>
-              <SideLabel icon="ratify" title="The gate" hint="reuse or innovate — pick the slice" />
+              <SideLabel icon="ratify" title="The gate" hint={gate?.is_acceptance ? "the definition of done — ratify to ship" : "reuse or innovate — pick the slice"} />
               {gate ? <RatifyPanel key={disc} g={gate} layout="page" /> : <Empty text={lanes.length ? "No gate for this lane." : "No gate here is yours to ratify."} />}
             </div>
 
-            {/* the lane's Contracts */}
-            <div style={{ minWidth: 0, position: "sticky", top: 0 }}>
+            {/* the lane's Contracts — only when the slice actually has some */}
+            {!gate?.is_acceptance && contracts.length > 0 && <div style={{ minWidth: 0, position: "sticky", top: 0 }}>
               <SideLabel icon="relay" title="Its Contracts"
-                hint={contracts.length ? `${contracts.length} this slice produces / consumes` : "none on this slice"}
+                hint={`${contracts.length} this slice produces / consumes`}
                 badge={pending > 0 ? `${pending} to sign` : null} />
-              {ratifyPending && (
-                <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "11px 13px", marginBottom: 12,
-                  border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", background: "var(--bg-secondary)", animation: "s0-fade-in var(--t-reg) both" }}>
-                  <span style={{ display: "inline-flex", gap: 4 }}>
-                    {[0, 1, 2].map((i) => <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-primary)", animation: `s0-dot-pulse 1.1s ${i * 0.16}s infinite` }} />)}
-                  </span>
-                  <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>Gemini is drafting this slice's contracts…</span>
-                </div>
-              )}
-              {contracts.length
-                ? <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {contracts.map((a) => <AgreementCard key={a.id} a={a} me={me} compact />)}
+              {(() => {
+                // group by DIRECTION relative to THIS lane, so a hub lane (backend touches many edges)
+                // reads as structure, not a pile: produces (you sign) vs consumes (you agree/counter).
+                const produces = contracts.filter((a) => a.producer_discipline === disc);
+                const consumes = contracts.filter((a) => a.consumer_discipline === disc && a.producer_discipline !== disc);
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    {produces.length > 0 && <ContractGroup label="This lane produces · you sign" items={produces} me={me} />}
+                    {consumes.length > 0 && <ContractGroup label="This lane consumes · you agree" items={consumes} me={me} />}
                   </div>
-                : !ratifyPending && <EmptyContracts disc={disc as string} />}
-            </div>
+                );
+              })()}
+            </div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* terminal done-state after the tester ships the relay — replaces the stale "no gate here" redirect. */
+function ShippedDone({ relay, onTasks, onClose }: { relay: { project: string; tasks: number }; onTasks: () => void; onClose: () => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <ViewChrome breadcrumb={["Studio", "Relays", relay.project, "Shipped"]} />
+      <div style={{ flex: 1, display: "grid", placeItems: "center", padding: 28 }}>
+        <div style={{ maxWidth: 460, textAlign: "center", animation: "s0-pop-in var(--t-slow) var(--ease-out) both" }}>
+          <div style={{ width: 56, height: 56, borderRadius: "50%", margin: "0 auto 18px", display: "grid", placeItems: "center",
+            background: "color-mix(in srgb, var(--green) 14%, transparent)", border: "0.5px solid var(--green)" }}>
+            <Icon name="check" size={26} style={{ color: "var(--green)" }} />
+          </div>
+          <h1 style={{ fontSize: 21, fontWeight: 600, letterSpacing: "-0.4px", margin: "0 0 8px" }}>Relay shipped</h1>
+          <p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: "0 0 22px", lineHeight: 1.55 }}>
+            <b style={{ color: "var(--text-primary)" }}>{relay.project}</b> dispatched to GitLab — {relay.tasks} task{relay.tasks === 1 ? "" : "s"} created on the board, the team notified.
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <Button variant="primary" size="md" icon="board" onClick={onTasks}>Go to tasks</Button>
+            <Button variant="secondary" size="md" onClick={onClose}>Back to relays</Button>
           </div>
         </div>
       </div>
@@ -147,12 +182,13 @@ function Empty({ text }: { text: string }) {
     <div style={{ border: "0.5px dashed var(--border-strong)", borderRadius: "var(--r-lg)", padding: "26px 18px", textAlign: "center", background: "var(--bg-elevated)", fontSize: 12.5, color: "var(--text-tertiary)" }}>{text}</div>);
 }
 
-function EmptyContracts({ disc }: { disc: string }) {
+/* a labeled group of contracts in one direction relative to the viewed lane (produces / consumes) */
+function ContractGroup({ label, items, me }: { label: string; items: any[]; me: any }) {
   return (
-    <div style={{ border: "0.5px dashed var(--border-strong)", borderRadius: "var(--r-lg)", padding: "26px 18px", textAlign: "center", background: "var(--bg-elevated)" }}>
-      <Icon name="relay" size={20} style={{ color: "var(--border-strong)" }} />
-      <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 9, lineHeight: 1.5, textWrap: "pretty" }}>
-        No contract here yet. A contract is <b style={{ color: "var(--text-secondary)" }}>drafted from your gate choice</b> — ratify the <b style={{ color: "var(--text-secondary)" }}>{discLabel(disc)}</b> gate to generate the API the consumer builds against. If this slice produces no API for another discipline, none is needed.
-      </div>
-    </div>);
+    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+      <div className="mono" style={{ fontSize: 9.5, color: "var(--text-quaternary)", letterSpacing: "0.05em", textTransform: "uppercase" }}>{label}</div>
+      {items.map((a) => <AgreementCard key={a.id} a={a} me={me} compact />)}
+    </div>
+  );
 }
+

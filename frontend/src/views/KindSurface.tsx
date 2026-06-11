@@ -36,20 +36,16 @@ const trustScoreFor = (m: Member | undefined, disc: string | null | undefined): 
   return TRUST_SCORE[lvl] ?? 40;
 };
 
-const REPO_CLONE = "git@gitlab.com:harbor/harbor-portal.git";
-const focusCommand = (id: string) => `git checkout sprint0/${id} && bash .sprint0/focus.sh && code .`;
-
 /* the real WorkTask already carries { kind, context_scope, api_contract, context }, so the "exec view"
    is the work itself — with the same generic fallback the mock's execFor used for un-scoped slices. */
 type Exec = {
-  kind?: string; branch?: string; repo?: string; estimate_days?: number;
+  kind?: string; branch?: string; estimate_days?: number;
   context_scope?: { files?: string[]; note?: string }; api_contract?: string | null;
   context?: Record<string, unknown>;
 };
 const execFor = (t: AnyTask): Exec => ({
   kind: t.kind ?? (t.discipline === "uiux" ? "design" : t.discipline === "qa" ? "audit" : "code"),
-  branch: `sprint0/${t.id}`,
-  repo: undefined,
+  branch: t.branch ?? `feat/${t.id}`,
   context_scope: t.context_scope ?? { files: [], note: "Scoped context not yet computed for this slice." },
   api_contract: (t.api_contract as string | null | undefined) ?? null,
   context: (t.context as Record<string, unknown> | undefined) ?? {},
@@ -76,9 +72,12 @@ const depOf = (t: AnyTask): string[] => t.dep ?? t.depends_on ?? [];
 export function KindSurface({ work, onBack }: { work: AnyTask; onBack?: () => void }) {
   // spec mandates the prop be named `work`; the mockup called it `task`. Bridge once.
   const task = work;
-  const { setToast, members } = useApp();
+  const { setToast, members, projects } = useApp();
   const byUser = (u: string | null | undefined) => members.find((m) => m.username === u);
   const ex = execFor(task);
+  // resolve the real repo for the terminal label from the task's project (no more hardcoded "harbor-portal")
+  const project = projects.find((p: { project_id?: number }) => p.project_id === task.project_id) as { web_url?: string; name?: string } | undefined;
+  const repoLabel: string = project?.web_url?.split("/").slice(3).join("/") || project?.name || "";
   const kind = ex.kind || "code";
   const km = KIND_META[kind] || KIND_META.code;
   const prov = provenanceOf(task);
@@ -133,7 +132,7 @@ export function KindSurface({ work, onBack }: { work: AnyTask; onBack?: () => vo
 
           {/* kind-specific body */}
           <div style={{ marginTop: 22 }}>
-            {(kind === "code" || kind === "infra") && <CodeFocus task={task} ex={ex} onCopy={(c) => copy(c, setToast)} />}
+            {(kind === "code" || kind === "infra") && <CodeFocus task={task} ex={ex} repoLabel={repoLabel} onCopy={(c) => copy(c, setToast)} />}
             {kind === "design" && <DesignFocus ex={ex} />}
             {kind === "audit" && <AuditFocus ex={ex} />}
             {(kind === "content" || kind === "runbook") && <BriefFocus ex={ex} />}
@@ -184,10 +183,10 @@ function Provenance({ prov, assignee }: { prov: Prov; assignee: Member | undefin
 }
 
 /* ───────── code / infra: the dev's real workspace ───────── */
-function CodeFocus({ task, ex, onCopy }: { task: AnyTask; ex: Exec; onCopy: (c: string) => void }) {
+function CodeFocus({ task, ex, repoLabel, onCopy }: { task: AnyTask; ex: Exec; repoLabel: string; onCopy: (c: string) => void }) {
   const cs = ex.context_scope || {};
   const files = cs.files || [];
-  const cmd = focusCommand(task.id);
+  const cmd = task.focus_command ?? `git checkout ${ex.branch} && code .`;  // server-built; fallback pre-dispatch
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
       {/* scoped files */}
@@ -218,7 +217,7 @@ function CodeFocus({ task, ex, onCopy }: { task: AnyTask; ex: Exec; onCopy: (c: 
         <div style={{ borderRadius: "var(--r-lg)", overflow: "hidden", border: "0.5px solid var(--border-strong)", background: "#1A1714" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "0.5px solid rgba(255,255,255,0.08)" }}>
             <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#57514A" }} />
-            <span className="mono" style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", flex: 1 }}>terminal · {(ex.repo || REPO_CLONE).split(":")[1] || "harbor-portal"}</span>
+            <span className="mono" style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", flex: 1 }}>terminal{repoLabel ? ` · ${repoLabel}` : ""}</span>
             <span className="mono" style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)" }}>{ex.branch}</span>
           </div>
           <div style={{ padding: "13px 14px" }}>
@@ -231,7 +230,7 @@ function CodeFocus({ task, ex, onCopy }: { task: AnyTask; ex: Exec; onCopy: (c: 
           <Button variant="primary" size="sm" icon="merges" onClick={() => onCopy(cmd)}>Copy command</Button>
           <Button variant="secondary" size="sm" icon="gitlab" onClick={() => onCopy(cmd)}>Open in VS Code</Button>
           <div style={{ flex: 1 }} />
-          <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", alignSelf: "center" }}>writes .sprint0/focus.json + .vscode/settings.json</span>
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", alignSelf: "center" }}>materializes AGENTS.md + your files locally</span>
         </div>
       </section>
 

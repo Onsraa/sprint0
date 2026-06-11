@@ -65,6 +65,7 @@ def _stub_run_brief_deps(monkeypatch):
     monkeypatch.setattr(reason, "generate_plan", _gen)
     monkeypatch.setattr(reason, "_build_plan_prompt", lambda *a, **k: "")
     monkeypatch.setattr(reason, "_normalize_plan_ids", lambda plan: None)
+    monkeypatch.setattr(reason, "_normalize_plan_lanes", lambda plan: None)
     monkeypatch.setattr(reason, "_match_and_assign", _noop_async)
     monkeypatch.setattr(reason, "_discover_profiles", _noop_async)
 

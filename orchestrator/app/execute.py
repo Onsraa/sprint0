@@ -7,6 +7,8 @@ appends to an existing project instead of scaffolding a new one.
 """
 from __future__ import annotations
 
+import os
+
 from app import gitlab as gl
 from app import demo, handoff, policy, team
 from app.contracts import Issue, PlanJSON
@@ -14,16 +16,25 @@ from app.contracts import Issue, PlanJSON
 _TYPE_COLOR = {"backend": "#2A6FDB", "frontend": "#F4511E", "db": "#0F8E5C", "devops": "#7C3AED", "design": "#D97706"}
 _RISK_COLOR = {"low": "#2F8A4E", "medium": "#D97706", "high": "#D63E0E"}
 
-_FOCUS_SH = """#!/usr/bin/env bash
-# sprint0 focus — collapse the working tree to ONLY this issue's files (real micro-context).
-# Usage: git checkout sprint0/<issue> && bash .sprint0/focus.sh
-set -e
-[ -f .sprint0/focus.json ] || { echo "no .sprint0/focus.json — checkout a sprint0/<issue> branch first"; exit 1; }
-FILES=$(python3 -c "import json;print(' '.join('/'+f for f in json.load(open('.sprint0/focus.json'))['files']))")
-git sparse-checkout init --no-cone
-git sparse-checkout set $FILES /.sprint0 /.vscode
-echo "sprint0: working tree focused on:"; echo "$FILES" | tr ' ' '\\n' | sed 's/^/  - /'
-"""
+def _gateway_url() -> str:
+    """The orchestrator's own public base, embedded into the dev's bootstrap command. Must be the Cloud Run
+    URL in the hosted demo; defaults to localhost for local dev."""
+    return os.getenv("ORCHESTRATOR_PUBLIC_URL", "http://localhost:8000").rstrip("/")
+
+
+def focus_command_for(issue_id: str, title: str, clone_url: str = "") -> str:
+    """The dev's copy/paste: checkout the conventional `feat/<title>` branch, then fetch + run the focus
+    bootstrap from the gateway (writes the agent docs + reused code locally, UNTRACKED). Nothing is committed."""
+    branch = handoff.branch_for(title, issue_id)
+    boot = f'curl -fsS "{_gateway_url()}/api/focus/{issue_id}?t={handoff.focus_token(issue_id)}" | bash'
+    if clone_url:
+        repo_dir = clone_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
+        return f"git clone {clone_url} && cd {repo_dir} && git checkout {branch} && {boot} && code ."
+    return f"git checkout {branch} && {boot} && code ."
+
+
+def focus_command(issue: Issue, clone_url: str = "") -> str:
+    return focus_command_for(issue.id, issue.title, clone_url)
 
 _CI_YML = """# sprint0 CI gate — bad merges blocked here, before the QA-agent + human sign-off.
 stages: [test]
@@ -46,12 +57,7 @@ def _issue_body(issue: Issue, clone_url: str = "") -> str:
     )
     if issue.kind in ("code", "infra"):
         files = "\n".join(f"- `{f}`" for f in issue.context_scope.files)
-        bid = issue.id.lower()
-        if clone_url:
-            repo_dir = clone_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
-            fetch = f"git clone {clone_url} && cd {repo_dir} && git checkout sprint0/{bid} && bash .sprint0/focus.sh && code ."
-        else:
-            fetch = f"git checkout sprint0/{bid} && bash .sprint0/focus.sh && code ."
+        fetch = focus_command(issue, clone_url)
         body = (
             f"🎯 **Micro-context** — you only need:\n{files}\n\n> {issue.context_scope.note}\n\n"
             f"**Fetch → focus → open** (VSCode; swap `code .` for your editor):\n```sh\n{fetch}\n```"
@@ -173,7 +179,6 @@ def scaffold_project(plan: PlanJSON, project_id: int, *, web_url: str = "", clon
         project_id,
         [
             {"path": "README.md", "action": "update", "content": readme},
-            {"path": ".sprint0/focus.sh", "content": _FOCUS_SH},
             {"path": ".gitlab-ci.yml", "content": _CI_YML},
         ],
         branch=default_branch,

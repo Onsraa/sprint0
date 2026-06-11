@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from contextvars import ContextVar
 
-ACTORS = ("gemini", "mongodb", "gitlab", "voyage", "server")   # who acted
+ACTORS = ("gemini", "mongodb", "gitlab", "voyage", "gcp", "server")   # who acted (gcp = Vertex/ADK runtime)
 KINDS = ("thought", "action", "result")                        # the Reason→Action shape
 
 _RUNS: dict[str, list[dict]] = {}

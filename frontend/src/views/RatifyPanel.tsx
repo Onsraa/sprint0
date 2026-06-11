@@ -13,10 +13,13 @@ import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AgreementCard } from "./AgreementCard";
 import { toast } from "sonner";
-import { Avatar, Badge, DiscDot, DISC, StatusIcon, CapTag, Button } from "../components/ui";
+import { Avatar, Badge, DiscDot, DISC, discLabel, StatusIcon, CapTag, Button } from "../components/ui";
+import { isDone, ownsGate } from "../lib/gate";
+import { LiveTrace } from "../components/LiveTrace";
 import { Icon, ZeroMark, type IconName } from "../lib/icon";
 import { useApp } from "../app/useApp";
-import { useGateSolutions } from "../features/relay/useRelay";
+import { useUI } from "../lib/store";
+import { useGateSolutions, useRelay } from "../features/relay/useRelay";
 import { api } from "../lib/api";
 import { qk } from "../lib/query";
 import type { SolutionCard, Discipline, HandoffCandidate } from "../lib/api";
@@ -36,18 +39,20 @@ export const GATE_META: Record<string, { label: string; tone: string; fg: string
   locked:            { label: "Locked",            tone: "neutral", fg: "var(--text-quaternary)" },
   pending:           { label: "Pending",           tone: "outline", fg: "var(--text-tertiary)" },
 };
+/* safe lookup — an unknown status DEGRADES (renders its raw name), never crashes (backend statuses can grow) */
+export const gateMeta = (s: string) => GATE_META[s] ?? { label: s || "—", tone: "neutral", fg: "var(--text-tertiary)" };
 
 const GRADE_META: Record<string, { label: string; step: number; proven: boolean; hint: string }> = {
-  proposed:        { label: "Proposed",        step: 1, proven: false, hint: "not yet proven" },
-  shipped:         { label: "Shipped",         step: 2, proven: false, hint: "merged, not battle-tested" },
+  proposed:        { label: "Proposed",        step: 1, proven: false, hint: "drafted, never shipped from memory yet" },
+  shipped:         { label: "Shipped",         step: 2, proven: false, hint: "merged before, not yet battle-tested" },
   prod_survived:   { label: "Prod-survived",   step: 3, proven: true,  hint: "survived in production" },
-  retro_validated: { label: "Retro-validated", step: 4, proven: true,  hint: "confirmed in retro" },
+  retro_validated: { label: "Retro-validated", step: 4, proven: true,  hint: "confirmed in a retro" },
 };
 
 export function GradeChip({ grade, showLabel = true }: { grade?: string; showLabel?: boolean }) {
   const m = GRADE_META[grade ?? ""] || GRADE_META.proposed;
   return (
-    <span title={`${m.label} · ${m.hint}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 18,
+    <span title={`Track record: ${m.label} — ${m.hint}. This is the option's proven-ness from PAST outcomes, separate from the AI-fit % (how well it suits this brief).`} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 18,
       padding: "0 7px 0 6px", borderRadius: "var(--r-sm)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
       <span style={{ display: "inline-flex", gap: 2 }}>
         {[1, 2, 3, 4].map(i => (
@@ -135,9 +140,11 @@ function FileRow({ fc }: { fc: FileChange }) {
 
 /* §reuse — the cited source files for a chosen memory solution (the reuse agreement made executable):
    link + file list now; the seed-the-focus-branch step lands at dispatch. "built before → here it is." */
-function ReusePack({ projects }: { projects: string[] }) {
-  const { data } = useQuery({ queryKey: ["reusePack", projects.join(",")], queryFn: () => api.reusePack(projects), enabled: projects.length > 0 });
-  const files = (data?.files ?? []).filter((f) => /\.(py|ts|tsx|js|jsx|sql|go|rs|vue)$/.test(f.file_path)).slice(0, 6);
+function ReusePack({ projects, discipline }: { projects: string[]; discipline?: string }) {
+  const { data } = useQuery({ queryKey: ["reusePack", projects.join(","), discipline ?? ""], queryFn: () => api.reusePack(projects, discipline), enabled: projects.length > 0 });
+  // the backend already returns ONLY this discipline's code chunks (strict per-gate) — an extension
+  // whitelist here silently hid devops files (Dockerfile / *.yml never matched).
+  const files = (data?.files ?? []).slice(0, 6);
   if (!files.length) return null;
   return (
     <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: "var(--r-sm)", background: "var(--bg-secondary)", border: "0.5px solid var(--border)" }}>
@@ -155,8 +162,8 @@ function ReusePack({ projects }: { projects: string[] }) {
 }
 
 /* one selectable solution card — collapsed headline, detail on demand */
-function SolutionCardView({ s, selected, recommended, interactive, onSelect }:
-  { s: SolutionCard; selected: boolean; recommended: boolean; interactive: boolean; onSelect: () => void }) {
+function SolutionCardView({ s, selected, recommended, interactive, onSelect, discipline }:
+  { s: SolutionCard; selected: boolean; recommended: boolean; interactive: boolean; onSelect: () => void; discipline?: string }) {
   const [open, setOpen] = useState(false);
   const meta = SOURCE_META[s.source] || SOURCE_META.ai;
   const star = s.source === "memory";
@@ -189,7 +196,7 @@ function SolutionCardView({ s, selected, recommended, interactive, onSelect }:
               <span style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 500 }}>Reuse {s.grounded_on.join(" · ")}</span>
             </div>
           )}
-          {star && s.grounded_on.length > 0 && <ReusePack projects={s.grounded_on} />}
+          {star && s.grounded_on.length > 0 && <ReusePack projects={s.grounded_on} discipline={discipline} />}
           {s.delta_note && (
             <div style={{ marginTop: 7 }}>
               <span className="mono" style={{ fontSize: 10, color: "var(--text-tertiary)", background: "var(--bg-secondary)", padding: "2px 7px", borderRadius: "var(--r-xs)" }}>{s.delta_note}</span>
@@ -203,9 +210,10 @@ function SolutionCardView({ s, selected, recommended, interactive, onSelect }:
             </div>
           )}
         </div>
-        <span style={{ display: "inline-flex", alignItems: "baseline", gap: 3, flexShrink: 0 }}>
+        <span title="AI fit — the model's confidence this option suits THIS brief. Separate from the grade (track record from past outcomes): a high-fit option can still be unproven."
+          style={{ display: "inline-flex", alignItems: "baseline", gap: 3, flexShrink: 0 }}>
           <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: s.confidence >= 75 ? "var(--text-primary)" : s.confidence >= 60 ? "var(--text-secondary)" : "var(--amber)" }}>{s.confidence}</span>
-          <span className="mono" style={{ fontSize: 9.5, color: "var(--text-quaternary)" }}>conf</span>
+          <span className="mono" style={{ fontSize: 9.5, color: "var(--text-quaternary)" }}>AI fit</span>
         </span>
       </div>
       <button onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
@@ -310,7 +318,7 @@ function SolutionsBlock({ planId, disc, interactive, choice, onPick, onWriteOwn,
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
           {sols.map(s => (
-            <SolutionCardView key={s.id} s={s} selected={choice?.solutionId === s.id} recommended={recommended === s.id} interactive={interactive} onSelect={() => onPick(s.id)} />
+            <SolutionCardView key={s.id} s={s} selected={choice?.solutionId === s.id} recommended={recommended === s.id} interactive={interactive} onSelect={() => onPick(s.id)} discipline={disc} />
           ))}
           {interactive && (
             <WriteYourOwn selected={choice?.solutionId === "user"} interactive={interactive} meName={meName}
@@ -355,7 +363,7 @@ function HandoffControl({ planId, disc }: { planId: string; disc: string }) {
 
 /* Read-only review of a DONE gate — the single validated card (the ratified pick, or the sprint0 pick an
    auto-pass cleared), instead of the picker. A decision receipt, not a choice. */
-function GateReview({ set, status }: { set: any; status: string }) {
+function GateReview({ set, status, disc }: { set: any; status: string; disc?: string }) {
   const sols: SolutionCard[] = set?.solutions ?? [];
   const recommended = sols.reduce<SolutionCard | null>((best, s) => (!best || s.confidence > best.confidence ? s : best), null);
   const chosen: SolutionCard | null = set?.chosen ?? recommended;
@@ -367,7 +375,7 @@ function GateReview({ set, status }: { set: any; status: string }) {
         {autoPassed ? "Auto-passed · the sprint0 pick stands" : "Validated · what you chose"}
       </div>
       {chosen
-        ? <SolutionCardView s={chosen} selected recommended={autoPassed} interactive={false} onSelect={() => {}} />
+        ? <SolutionCardView s={chosen} selected recommended={autoPassed} interactive={false} onSelect={() => {}} discipline={disc} />
         : <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", padding: 14, border: "0.5px dashed var(--border-strong)", borderRadius: "var(--r-lg)", textAlign: "center" }}>No recorded choice for this gate.</div>}
     </div>
   );
@@ -429,21 +437,142 @@ function SetupGate({ planId, plan, interactive, done }: { planId: string | null;
   );
 }
 
+/* the terminal acceptance gate — the Tester authors the definition of done (one pass-condition per plan
+   issue, grouped by discipline) then ratifies, which LOCKS the criteria + DISPATCHES the feature (the GitLab
+   issues + the role:qa checklist are built from these very criteria). Mirrors SetupGate's frame. */
+function AcceptanceGate({ g, planId, interactive, done }: { g: any; planId: string | null; interactive: boolean; done: boolean }) {
+  const qc = useQueryClient();
+  const { relaySummaries }: any = useApp();
+  const setShippedRelay = useUI((s) => s.setShippedRelay);
+  const { data } = useQuery({ queryKey: ["acceptance", planId], queryFn: () => api.getAcceptance(planId as string), enabled: !!planId });
+  const criteria = useMemo(() => data?.criteria ?? [], [data]);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const textOf = (c: any) => edits[c.issue_id] ?? c.text;
+  const groups = useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const c of criteria) { const a = m.get(c.discipline) ?? []; a.push(c); m.set(c.discipline, a); }
+    return [...m.entries()];
+  }, [criteria]);
+  const persist = () => { if (planId && criteria.length) api.saveAcceptance(planId, criteria.map((c: any) => ({ issue_id: c.issue_id, text: textOf(c) }))).catch(() => {}); };
+  const accept = useMutation({
+    mutationFn: async () => {
+      await api.saveAcceptance(planId as string, criteria.map((c: any) => ({ issue_id: c.issue_id, text: textOf(c) })));
+      return api.ratify(planId as string, g.discipline as Discipline, { approve: true, note: "Definition of done accepted" });
+    },
+    onSuccess: (next: any) => {
+      const shipped = next?.dispatch === "shipped";
+      toast.success(shipped ? "Relay shipped — tasks created" : "Definition of done accepted — dispatching the feature.");
+      // latch a done-state so the view shows "Shipped · go to tasks" instead of the stale "no gate here"
+      // once the relay leaves the board (it's popped on a clean ship).
+      if (shipped) setShippedRelay({ project: relaySummaries.find((r: any) => r.plan_id === planId)?.project ?? "The feature", tasks: criteria.length });
+      qc.invalidateQueries({ queryKey: qk.relay(planId as string) });
+      qc.invalidateQueries({ queryKey: qk.allRelays() });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Accept failed"),
+  });
+  // dispatch truth comes from the RELAY, not the gate: the gate flips ratified the moment the tester
+  // ratifies, but the feature is only "dispatched" once the validated scaffold ships (relay.dispatch).
+  const { data: relayState } = useRelay(planId);
+  const dispatching = accept.isPending || (relayState as any)?.dispatch === "dispatching";
+  const dispatchFailed = (relayState as any)?.dispatch === "failed";
+  const kicker = dispatching ? " · dispatching" : dispatchFailed ? " · dispatch failed"
+    : done ? " · accepted" : interactive ? " · your call" : " · awaiting the tester";
+  return (
+    /* centered; on validate the content slides LEFT and the dispatch ReAct trace animates in on the right */
+    <div style={{ padding: "22px 26px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: dispatching ? "minmax(0, 1fr) 360px" : "minmax(0, 1fr) 0px",
+        gap: dispatching ? 18 : 0, maxWidth: dispatching ? 1100 : 720, margin: "0 auto",
+        transition: "grid-template-columns 0.45s var(--ease-out), max-width 0.45s var(--ease-out)", alignItems: "start" }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="kicker" style={{ marginBottom: 8 }}>Acceptance{kicker}</div>
+          <h1 style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-0.3px", margin: "0 0 6px" }}>The definition of done</h1>
+          <p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: "0 0 16px", lineHeight: 1.5 }}>
+            This gate isn't a slice — it reviews the whole relay. {interactive
+              ? "Sharpen each issue's acceptance criterion, then accept — which locks them and dispatches the feature (the GitLab issues + the role:qa checklist are built from these)."
+              : "The Tester sharpens each acceptance criterion, then accepts to dispatch."}
+          </p>
+          {/* one drop-list per gate — collapsed by default so a multi-gate relay stays one screen */}
+          {groups.map(([disc, items]) => {
+            const open = !!openGroups[disc];
+            return (
+              <div key={disc} style={{ marginBottom: 10, border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden", background: "var(--bg-elevated)" }}>
+                <button onClick={() => setOpenGroups((p) => ({ ...p, [disc]: !p[disc] }))}
+                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 12px", background: "transparent", textAlign: "left" }}>
+                  <Icon name="chevronRight" size={12} style={{ color: "var(--text-quaternary)", transform: open ? "rotate(90deg)" : "none", transition: "transform var(--t-quick)" }} />
+                  <DiscDot d={disc} size={8} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{DISC[disc]?.label ?? disc}</span>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--text-quaternary)" }}>· {items.length} {items.length === 1 ? "criterion" : "criteria"}</span>
+                </button>
+                <Collapse open={open}>
+                  <div style={{ borderTop: "0.5px solid var(--border-subtle)" }}>
+                    {items.map((c: any, i: number) => (
+                      <div key={c.issue_id} style={{ padding: "9px 11px", borderTop: i ? "0.5px solid var(--border-subtle)" : "none" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                          <Icon name="check" size={11} style={{ color: "var(--text-quaternary)" }} />
+                          <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-primary)" }}>{c.title}</span>
+                        </div>
+                        <input value={textOf(c)} disabled={!interactive} onBlur={persist}
+                          onChange={(e) => setEdits((p) => ({ ...p, [c.issue_id]: e.target.value }))}
+                          placeholder="pass condition…"
+                          style={{ width: "100%", height: 30, padding: "0 9px", fontSize: 12.5, border: "0.5px solid var(--border-strong)", borderRadius: "var(--r-sm)", background: interactive ? "var(--bg-base)" : "var(--bg-secondary)", fontFamily: "inherit", color: "var(--text-secondary)" }} />
+                      </div>
+                    ))}
+                  </div>
+                </Collapse>
+              </div>
+            );
+          })}
+          {!criteria.length && <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", padding: "14px 0" }}>No issues to accept yet.</div>}
+          {interactive && criteria.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <Button variant="primary" size="md" icon="ratify" disabled={accept.isPending} onClick={() => accept.mutate()}>
+                {accept.isPending ? "Dispatching…" : "Ratify · ship the feature"}
+              </Button>
+            </div>
+          )}
+          {/* the truth after ratify: dispatching (pulse) → shipped, or failed — never a premature "done" */}
+          {dispatching && !interactive && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 12.5, color: "var(--text-tertiary)" }}>
+              <span style={{ display: "inline-flex", gap: 3 }}>{[0, 1, 2].map((i) => <span key={i} style={{ width: 4, height: 4, borderRadius: "50%", background: "var(--text-tertiary)", animation: `s0-dot-pulse 1.1s ${i * 0.16}s infinite` }} />)}</span>
+              Dispatching — GitLab issues · focus branches · tasks · Tester checklist
+            </div>
+          )}
+          {dispatchFailed && (
+            <div style={{ display: "flex", gap: 9, padding: "10px 12px", borderRadius: "var(--r-md)", marginTop: 10, background: "var(--bg-secondary)", border: "0.5px solid var(--red)" }}>
+              <Icon name="warn" size={14} style={{ color: "var(--red)", flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45 }}>
+                <b style={{ fontWeight: 600, color: "var(--text-primary)" }}>Dispatch failed — nothing shipped.</b> Your acceptance stands; the manager retries from Relays.
+              </span>
+            </div>
+          )}
+          {done && !dispatching && !dispatchFailed && <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 10 }}>Accepted — the feature was dispatched.</div>}
+        </div>
+        {/* the dispatch is a real, slow process (GitLab issues · branches · checklist) — its ReAct trace, live */}
+        <div style={{ minWidth: 0, overflow: "hidden" }}>
+          {dispatching && <LiveTrace runId={planId} phase="dispatch" title="Dispatching to GitLab" />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" | "page" }) {
-  const { me, chrome, members, planId, ratifyWith, personFilter }: any = useApp();
+  const { me, members, planId, ratifyWith, personFilter }: any = useApp();
   const byUser = (u: string) => members?.find((m: any) => m.username === u);
-  const meta = GATE_META[g.status];
+  const meta = gateMeta(g.status);
+  const preparing = (g.status === "pending" || g.status === "changes_requested") && g.ready === false;  // choices still pre-generating
   // the real slice — this plan's issues for this discipline (shared ["plan", planId] query, cached across gates)
   const { data: plan } = useQuery({ queryKey: ["plan", planId], queryFn: () => api.getPlan(planId), enabled: !!planId });
   const slice = useMemo(() => (plan?.epics ?? [])
     .flatMap((e: any) => e.issues ?? [])
     .filter((i: any) => i.discipline === g.discipline)
     .map((i: any) => ({ id: i.id, t: i.title, s: "planned", tags: i.capability_tags ?? [] })), [plan, g.discipline]);
-  const done = g.status === "ratified" || g.status === "auto_passed";
-  // A dev owns their own discipline's gate; the Tech Lead sees all; a granted Watch (personFilter) is read-only.
-  // a delegated gate is the delegate's to ratify; else the assigned owner's (lane lead); else the discipline lead's.
-  const ratifier = g.delegate ?? g.owner;
-  const ownsThisGate = !personFilter && (chrome.seesAllGates || (ratifier ? ratifier === me.username : me.discipline === g.discipline));
+  const done = isDone(g.status);
+  // Each gate belongs to ONE user (its owner) — ownsGate: the ratifier (delegate ?? owner), else a
+  // discipline coverer (the tester owns qa), else the manager for a true orphan. No role see-all; a
+  // granted Watch (personFilter) is read-only.
+  const ownsThisGate = !personFilter && ownsGate(g, me, members);
   // a gate is actionable only when it's on the baton (deps cleared → relay flips locked→pending). Gating on
   // depends.length wrongly locked every frontend/qa gate (they always have deps) — incl. a handed-off one.
   const locked = !done && g.status !== "pending" && g.status !== "changes_requested";
@@ -454,6 +583,10 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
   // comparison + confirm/override instead of a discipline slice. It gate-0's the whole relay.
   if (g.discipline === "setup")
     return <SetupGate planId={planId} plan={plan} interactive={interactive} done={done} />;
+  // The terminal ACCEPTANCE gate — not a reuse-or-innovate slice. The Tester authors the definition of done
+  // (a pass-condition per plan issue); ratifying LOCKS the criteria and DISPATCHES the feature.
+  if (g.is_acceptance)
+    return <AcceptanceGate g={g} planId={planId} interactive={interactive} done={done} />;
 
   const [choice, setChoice] = useState<Choice | null>(null);
   const { data: set } = useGateSolutions(interactive || done ? planId : null, g.discipline);  // done → for the review
@@ -479,10 +612,16 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
       display: "flex", flexDirection: "column", minHeight: 0, background: "var(--bg-elevated)", animation: "s0-panel-in var(--t-reg) var(--ease-out) both" }} key={g.discipline}>
       <div style={{ height: "var(--topbar-h)", display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderBottom: "0.5px solid var(--border-subtle)" }}>
         <DiscDot d={g.discipline} size={9} />
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{DISC[g.discipline].label} gate</span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{discLabel(g.discipline)} gate</span>
         {g.stretched && <Badge tone="outline" mono style={{ height: 16 }}>▲ stretched</Badge>}
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 11.5, fontWeight: 500, color: meta.fg }}>{meta.label}</span>
+        {/* preparing: a pending gate whose choices are still pre-generating (ready=false) — not "stuck" */}
+        {preparing
+          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 500, color: "var(--text-tertiary)" }}>
+              <span style={{ display: "inline-flex", gap: 3 }}>{[0, 1, 2].map((i) => <span key={i} style={{ width: 4, height: 4, borderRadius: "50%", background: "var(--text-tertiary)", animation: `s0-dot-pulse 1.1s ${i * 0.16}s infinite` }} />)}</span>
+              preparing…
+            </span>
+          : <span style={{ fontSize: 11.5, fontWeight: 500, color: meta.fg }}>{meta.label}</span>}
       </div>
 
       <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
@@ -491,7 +630,7 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
           <span className="kicker">Gate</span>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7 }}>
             <DiscDot d={g.discipline} size={8} />
-            <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>This gate — the <b style={{ fontWeight: 600 }}>{DISC[g.discipline].label}</b> slice. {done ? "The validated choice is shown below." : "The AI proposes solutions; you pick one (or write your own)."}</span>
+            <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>This gate — the <b style={{ fontWeight: 600 }}>{discLabel(g.discipline)}</b> slice. {done ? "The validated choice is shown below." : "The AI proposes solutions; you pick one (or write your own)."}</span>
           </div>
           {g.delegate && (
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 9, height: 20, padding: "0 8px", borderRadius: "var(--r-pill)", background: "var(--bg-active)", border: "0.5px solid var(--text-primary)" }}>
@@ -513,7 +652,7 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
 
         {/* done → a read-only review of the validated choice; else the reuse-or-innovate picker */}
         {done
-          ? <GateReview set={set} status={g.status} />
+          ? <GateReview set={set} status={g.status} disc={g.discipline} />
           : <SolutionsBlock planId={planId} disc={g.discipline} interactive={interactive} choice={choice} meName={me.name}
               onPick={(id) => setChoice({ solutionId: id, custom: null })}
               onWriteOwn={(c) => setChoice({ solutionId: "user", custom: c })} />}
@@ -552,7 +691,7 @@ export function RatifyPanel({ g, layout = "panel" }: { g: any; layout?: "panel" 
         {locked && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--r-md)", background: "var(--bg-secondary)", marginBottom: 16 }}>
             <Icon name="lock" size={14} style={{ color: "var(--text-tertiary)" }} />
-            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Read-ahead — solutions preview here. Selection opens once {g.depends.map((d: string) => DISC[d].label).join(", ")} passes the baton.</span>
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Read-ahead — solutions preview here. Selection opens once {g.depends.map((d: string) => discLabel(d)).join(", ")} passes the baton.</span>
           </div>
         )}
         {!ownsThisGate && !done && (

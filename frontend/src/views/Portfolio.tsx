@@ -7,7 +7,7 @@
 import { useState, useEffect } from "react";
 import { useApp } from "../app/useApp";
 import { Icon } from "../lib/icon";
-import { Button, IconButton, Badge, DiscDot, DISC, CapTag } from "../components/ui";
+import { Button, IconButton, Badge, DiscDot, discLabel, CapTag } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 import type { Decision } from "../lib/schemas";
 
@@ -115,7 +115,7 @@ function DecisionDetail({ d, onClose, onVisibility, onReasoning, onDeprecate, on
       minHeight: 0, background: "var(--bg-elevated)", animation: "s0-panel-in var(--t-reg) var(--ease-out) both" }}>
       <div style={{ height: "var(--topbar-h)", display: "flex", alignItems: "center", gap: 8, padding: "0 8px 0 14px", borderBottom: "0.5px solid var(--border-subtle)" }}>
         <DiscDot d={d.domain} size={9} />
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{DISC[d.domain].label} decision</span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{discLabel(d.domain)} decision</span>
         <div style={{ flex: 1 }} />
         <IconButton name="close" onClick={onClose} />
       </div>

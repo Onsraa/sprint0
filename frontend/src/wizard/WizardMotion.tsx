@@ -114,6 +114,7 @@ const ACTOR_META: Record<string, { label: string; bg: string; fg: string }> = {
   mongodb: { label: "MongoDB", bg: "oklch(0.28 0.13 148)", fg: "#fff" },
   gitlab:  { label: "GitLab",  bg: "oklch(0.28 0.10 22)",  fg: "#fff" },
   voyage:  { label: "Voyage",  bg: "oklch(0.28 0.10 290)", fg: "#fff" },
+  gcp:     { label: "GCP",     bg: "oklch(0.30 0.13 250)", fg: "#fff" },
   server:  { label: "server",  bg: "var(--bg-active)",     fg: "var(--text-secondary)" },
 };
 const KIND_DOT: Record<string, string> = {

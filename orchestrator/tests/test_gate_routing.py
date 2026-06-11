@@ -166,6 +166,48 @@ def test_gate_solutions_prompt_carries_the_feature_context(monkeypatch):
     assert "GET /shipments" in p                            # the signed inbound contract shape
 
 
+def test_spawn_keeps_a_strong_ref_until_done():
+    # asyncio.create_task only weak-refs a task (GC can kill it mid-flight) — _spawn must hold it until done
+    async def _drive():
+        done = asyncio.Event()
+        t = appmain._spawn(done.wait())
+        assert t in appmain._BG_TASKS          # strong ref held while running
+        done.set()
+        await t
+        await asyncio.sleep(0)                 # let the done_callback fire
+        assert t not in appmain._BG_TASKS      # discarded once finished
+    asyncio.run(_drive())
+
+
+def test_gate_generation_never_calls_gitlab_in_demo(monkeypatch, stretched_relay):
+    # SECURITY: a demo delta plan (DELTA_TARGET set) must never fire a real GitLab call
+    from app.contracts import SolutionCard, SolutionSet
+
+    calls = {"tree": 0}
+    monkeypatch.setattr(appmain.gitlab, "list_repo_tree", lambda pid: calls.__setitem__("tree", calls["tree"] + 1) or set())
+    monkeypatch.setattr(appmain, "DELTA_TARGET", {"plan_x": 999})
+
+    async def _sols(*a, **k):
+        return SolutionSet(solutions=[SolutionCard(source="ai", title="T")])
+    async def _none_list(*a, **k):
+        return []
+    async def _noop(*a, **k):
+        return None
+    monkeypatch.setattr(appmain, "propose_solutions", _sols)
+    monkeypatch.setattr(appmain, "graph_edges", _none_list)
+    monkeypatch.setattr(appmain, "all_decisions", _none_list)
+    monkeypatch.setattr(appmain, "agreements_for_plan", _none_list)
+    monkeypatch.setattr(appmain, "_persist", _noop)
+
+    plan = appmain.PLANS["plan_x"]
+    monkeypatch.setattr(appmain.demo, "is_demo", lambda: True)
+    asyncio.run(appmain._generate_gate_solutions("plan_x", plan, "backend"))
+    assert calls["tree"] == 0                  # demo → the real call never fires
+    monkeypatch.setattr(appmain.demo, "is_demo", lambda: False)
+    asyncio.run(appmain._generate_gate_solutions("plan_x", plan, "backend"))
+    assert calls["tree"] == 1                  # live delta → the tree IS fetched
+
+
 def test_contract_visibility_follows_the_ratifier(stretched_relay, monkeypatch):
     async def _no_grants(_u):
         return []
@@ -173,7 +215,11 @@ def test_contract_visibility_follows_the_ratifier(stretched_relay, monkeypatch):
     tony = _member("tony", "devops")
     jean = _member("jean", "backend")
     boss = _member("teddy", None, role="manager")
+    async def _noop():
+        return None
+    monkeypatch.setattr(appmain.team, "ensure_loaded", _noop)
+    monkeypatch.setattr(appmain.team, "all_members", lambda: [tony, jean, boss])
     can = lambda m: asyncio.run(appmain._can_read_contract(m, "backend", "plan_x"))  # noqa: E731
     assert can(tony) is True    # the OWNER reads his gate's Contract (the live bug: he got "private")
-    assert can(boss) is True    # the Tech Lead always reads
+    assert can(boss) is False   # the manager does NOT read someone else's gate — gates are one user's, no role see-all
     assert can(jean) is False   # not the ratifier (and no granted Watch) → private

@@ -49,6 +49,10 @@ interface UIState {
   setPlanId: (id: string | null) => void;
   activeGate: Discipline | null;
   setActiveGate: (d: Discipline | null) => void;
+  /** A relay that JUST shipped (tester ratified → dispatched). Latches a done-state on Gate×Contract
+   *  instead of the stale "no gate here" once the relay leaves the board. Cleared on navigation. */
+  shippedRelay: { project: string; tasks: number } | null;
+  setShippedRelay: (s: { project: string; tasks: number } | null) => void;
 
   /** The dispatched GitLab project (QA / mid-prod / the dev fetch block). */
   liveProjectId: number | null;
@@ -88,6 +92,7 @@ const SESSION_DEFAULTS = {
   plan: null,
   planId: null,
   activeGate: null,
+  shippedRelay: null,
   liveProjectId: null,
   liveCloneUrl: null,
   projectFilter: null,
@@ -129,6 +134,8 @@ export const useUI = create<UIState>()(persist((set) => ({
   setPlanId: (planId) => set({ planId }),
   activeGate: null,
   setActiveGate: (activeGate) => set({ activeGate }),
+  shippedRelay: null,
+  setShippedRelay: (shippedRelay) => set({ shippedRelay }),
 
   liveProjectId: null,
   setLiveProjectId: (liveProjectId) => set({ liveProjectId }),

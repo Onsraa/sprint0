@@ -5,7 +5,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useLogin } from "../features/auth/useAuth";
 import { Avatar, Button } from "../components/ui";
 import { Icon, ZeroMark, Logo } from "../lib/icon";
-import { DEMO_PERSONAS } from "../app/AppShellNew";
+import { DEMO_PERSONAS, personaLanes } from "../app/AppShellNew";
 
 const DEMO_USER = "Onsraa"; // default entry (the manager)
 
@@ -83,10 +83,10 @@ function HeroCopy() {
   );
 }
 
-/* Passwordless demo entry: enter as the manager, or pick any of the 5 fixed personas directly. */
+/* Passwordless demo entry: enter as the Tech Lead, or pick any of the fixed personas directly. */
 function DemoEntry({ onEnter }: { onEnter: (username?: string) => void }) {
-  const manager = DEMO_PERSONAS.find((p) => p.role === "manager") ?? DEMO_PERSONAS[0];
-  const teammates = DEMO_PERSONAS.filter((p) => p.role !== "manager");
+  const manager = DEMO_PERSONAS.find((p) => p.is_manager) ?? DEMO_PERSONAS[0];
+  const teammates = DEMO_PERSONAS.filter((p) => !p.is_manager);
   return (
     <div style={{ background: "var(--bg-elevated)", border: "0.5px solid var(--border)", borderRadius: "var(--r-xl)", boxShadow: "var(--shadow-2)", padding: 24, animation: "s0-pop-in var(--t-slow) var(--ease-out) both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
@@ -102,7 +102,7 @@ function DemoEntry({ onEnter }: { onEnter: (username?: string) => void }) {
         <Avatar name={manager.name} size={30} tone="ink" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>Enter the demo workspace</div>
-          <div className="mono" style={{ fontSize: 11, color: "rgba(255,255,255,0.66)", marginTop: 1 }}>as {manager.name} · manager</div>
+          <div className="mono" style={{ fontSize: 11, color: "rgba(255,255,255,0.66)", marginTop: 1 }}>as {manager.name} · tech lead · {personaLanes(manager)}</div>
         </div>
         <Icon name="arrowRight" size={16} style={{ color: "rgba(255,255,255,0.8)", flexShrink: 0 }} />
       </button>
@@ -122,7 +122,7 @@ function DemoEntry({ onEnter }: { onEnter: (username?: string) => void }) {
             <Avatar name={p.name} size={26} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
-              <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
+              <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{personaLanes(p)}</div>
             </div>
             <Icon name="arrowRight" size={15} style={{ color: "var(--text-quaternary)", flexShrink: 0 }} />
           </button>

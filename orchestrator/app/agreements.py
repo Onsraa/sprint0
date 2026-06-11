@@ -5,6 +5,7 @@ contract. The caller persists (rag.save_agreement). Pure + deterministic + testa
 """
 from __future__ import annotations
 
+from app import const
 from app.contracts import Agreement, DeveloperProfile, InterfaceDraft, SchemaField, SubteamDraft
 
 _TRUST = {"low": 0, "medium": 1, "high": 2}
@@ -14,11 +15,11 @@ _SENIORITY = {"junior": 0, "mid": 1, "senior": 2}
 def lead_of(discipline: str, members: list[DeveloperProfile]) -> str | None:
     """The lead who signs a discipline's agreements: the highest-trust (then most-senior) developer in that
     lane — deterministic, not roster-order. Falls back to the manager when the lane is an orphan (no dev)."""
-    devs = [m for m in members if m.role == "developer" and m.discipline == discipline]
+    devs = [m for m in members if m.covers(discipline)]
     if devs:
         best = max(devs, key=lambda m: (_TRUST.get(m.trust_in(discipline), 0), _SENIORITY.get(m.seniority, 1)))
         return best.username
-    mgr = next((m for m in members if m.role == "manager"), None)
+    mgr = next((m for m in members if m.is_manager), None)
     return mgr.username if mgr else None
 
 
@@ -42,7 +43,7 @@ def ratifiers_for(agreement: Agreement, members: list[DeveloperProfile],
         if lead:
             out.append(lead)
     else:  # priority / reschedule / default → the manager arbitrates
-        mgr = next((m for m in members if m.role == "manager"), None)
+        mgr = next((m for m in members if m.is_manager), None)
         if mgr:
             out.append(mgr.username)
     return out
@@ -148,7 +149,7 @@ def find_precedent(new: dict, past: list[dict]) -> str | None:
         return None
     sig = _iface_sig(new)
     for p in past:
-        if (p.get("type") == "interface" and p.get("state") in ("ratified", "auto_passed")
+        if (p.get("type") == "interface" and p.get("state") in const.DONE
                 and p.get("id") != new.get("id") and _iface_sig(p) == sig):
             return p.get("id")
     return None

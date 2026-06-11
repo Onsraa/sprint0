@@ -12,6 +12,8 @@ export function useRelay(planId: string | null) {
     queryKey: qk.relay(planId ?? ""),
     queryFn: () => api.getRelay(planId!),
     enabled: !!planId,
+    // live board: gate ready (preparing→open), baton moves and dispatch phases show without a refocus
+    refetchInterval: 4000,
   });
 }
 

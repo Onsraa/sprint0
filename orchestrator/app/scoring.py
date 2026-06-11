@@ -22,6 +22,13 @@ def _trust_in(cand: dict, lane: str) -> str:
     return (cand.get("trust") or {}).get(lane) or cand.get("trust_level", "low")
 
 
+def _covers(cand: dict, lane: str) -> bool:
+    """Whether a candidate row can cover the lane — the composable replacement for `discipline == lane`.
+    Reads the multi `disciplines` list, falling back to the legacy single `discipline` for old rows."""
+    discs = cand.get("disciplines") or ([cand["discipline"]] if cand.get("discipline") else [])
+    return lane in discs
+
+
 def _history_score(cand: dict, tags: list[str]) -> float:
     """Fraction of the candidate's GOOD merges (score ≥ 0.7) whose task_type touches the issue's
     capability tags / lane. 0 when no relevant history."""
@@ -52,7 +59,7 @@ def score(cand: dict, issue: Issue, extra_days: float = 0.0) -> float:
     skill = max(0.0, min(1.0, float(cand.get("score", 0.0) or 0.0)))  # $vectorSearch cosine
     trust = _RANK.get(_trust_in(cand, lane), 0) / 2                   # 0..1
     load = _avail_factor(cand, extra_days)                            # sooner free → higher; running pass-load aware
-    lane_match = 1.0 if cand.get("discipline") == lane else 0.0
+    lane_match = 1.0 if _covers(cand, lane) else 0.0
     sen = _SENIORITY.get(cand.get("seniority", "mid"), 0.7)
     seniority_fit = sen if _RANK.get(issue.risk, 0) <= 1 else sen ** 2  # juniors penalized on high risk
     history = _history_score(cand, [*(issue.capability_tags or []), lane, issue.required_skill])
@@ -63,12 +70,18 @@ def score(cand: dict, issue: Issue, extra_days: float = 0.0) -> float:
 
 def best_assignment(issue: Issue, candidates: list[dict],
                     assigned: dict[str, float] | None = None) -> tuple[dict | None, float, bool]:
-    """(chosen, score, below_floor). Argmax available developer; below_floor flags a weak match (a
-    stretch the manager should eyeball). None when no developer is available. `assigned` is the running
-    per-dev load handed out earlier in THIS pass — so a multi-issue same-discipline slice spreads (P4)."""
+    """(chosen, score, below_floor). Argmax eligible candidate; below_floor flags a weak match the
+    manager should eyeball. None when no one covers the lane. `assigned` is the running per-dev load
+    handed out earlier in THIS pass — so a multi-issue same-lane slice spreads across coverers (P4).
+
+    Eligibility = the candidate COVERS the lane (composable roles: Tony covers backend AND devops, so he
+    gets both; a tester covers only qa, so they never take build work; a pure manager covers nothing).
+    Load/availability stays a SIGNAL (`_avail_factor`), never a gate — a busy in-lane senior outranks a
+    free peer and simply starts when the schedule frees them. An uncovered lane → no assignee → the gate
+    falls to the manager + the staffing advisor's onboard/stretch recommendation."""
     assigned = assigned or {}
-    avail = [c for c in candidates
-             if c.get("role", "developer") == "developer" and int(c.get("load", 0) or 0) < 100]
+    lane = issue.lane or issue.discipline
+    avail = [c for c in candidates if _covers(c, lane)]
     if not avail:
         return None, 0.0, True
     def _extra(c: dict) -> float:

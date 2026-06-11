@@ -9,16 +9,17 @@
    TierBadge + GATE_META are imported from the sibling RatifyPanel.tsx. */
 import { useState, useEffect, Fragment } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Availability, Avatar, Badge, DiscDot, DISC, TrustDot, Button } from "../components/ui";
+import { Availability, Avatar, Badge, DiscDot, DISC, discLabel, TrustDot, Button } from "../components/ui";
+import { isDone } from "../lib/gate";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { api } from "../lib/api";
-import { RatifyPanel, TierBadge, GATE_META } from "./RatifyPanel";
+import { RatifyPanel, TierBadge, gateMeta } from "./RatifyPanel";
 import { AgreementCard } from "./AgreementCard";
 
-const isDone = (g: any) => g.status === "ratified" || g.status === "auto_passed";
+
 
 /* Relay stages mirror relay.py's _LANE_STAGE / _STAGE_ORDER: the build wave runs in parallel,
    then integration (frontend), then acceptance (qa). Gates render per stage, only for disciplines
@@ -308,8 +309,9 @@ function GateCard({ g, active, onClick, mine }: {
 }) {
   const [h, setH] = useState(false);
   if (!g) return null;
-  const meta = GATE_META[g.status];
-  const done = g.status === "ratified" || g.status === "auto_passed";
+  const meta = gateMeta(g.status);
+  const done = isDone(g.status);
+  const preparing = (g.status === "pending" || g.status === "changes_requested") && g.ready === false;  // choices pre-generating
   const spark = g.baton || g.tier === "two_expert";
   return (
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
@@ -328,7 +330,7 @@ function GateCard({ g, active, onClick, mine }: {
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <DiscDot d={g.discipline} size={10} />
-        <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.2px" }}>{DISC[g.discipline].label}</span>
+        <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.2px" }}>{discLabel(g.discipline)}</span>
         {mine && <Badge tone="ink" style={{ height: 15 }}>you</Badge>}
         {g.stretched && <span title="stretched assignment — staffing gap" style={{ color: "var(--text-primary)", fontSize: 12 }}>▲</span>}
       </div>
@@ -337,7 +339,7 @@ function GateCard({ g, active, onClick, mine }: {
           borderRadius: "var(--r-sm)", fontSize: 11.5, fontWeight: 500, whiteSpace: "nowrap",
           background: meta.tone === "neutral" || meta.tone === "outline" ? "var(--bg-secondary)" : `color-mix(in srgb, ${meta.fg} 12%, transparent)`,
           color: meta.fg }}>
-          {done && <Icon name="ratify" size={12} />}{meta.label}
+          {done && <Icon name="ratify" size={12} />}{preparing ? "preparing…" : meta.label}
         </span>
         <TierBadge tier={g.tier} size="sm" />
       </div>
@@ -349,7 +351,7 @@ function GateCard({ g, active, onClick, mine }: {
       )}
       {g.depends.length > 0 && (
         <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", marginTop: 6 }}>
-          waits on {g.depends.map((d: string) => DISC[d].label).join(" · ")}
+          waits on {g.depends.map((d: string) => discLabel(d)).join(" · ")}
         </div>
       )}
     </button>

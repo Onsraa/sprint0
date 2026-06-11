@@ -22,7 +22,7 @@ import type { Member, WorkTask, ProjectSummary, Attribution, Gate, RelayState } 
 
 type MockRole = "manager" | "developer" | "qa";
 const ROLE_CHROME: Record<MockRole, { land: string; canDispatch: boolean; canOnboard: boolean; canGovern: boolean; canRefactor: boolean; seesAllGates: boolean }> = {
-  manager: { land: "relays", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
+  manager: { land: "relays", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: false },
   developer: { land: "relays", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
   qa: { land: "relays", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
 };
@@ -125,8 +125,9 @@ export function useApp() {
   const pushNotif = (_n?: any) => {};
   const toasts: never[] = [];
 
-  // relay + Trust Dial (active plan from the UI store, else first active relay)
-  const { data: relaySummariesRaw } = useQuery({ queryKey: qk.allRelays(), queryFn: () => api.allRelays().then((r) => r.relays) });
+  // relay + Trust Dial (active plan from the UI store, else first active relay). Polled: gate ready flips
+  // (preparing→open), dispatch phases and fresh relays must land WITHOUT a window refocus.
+  const { data: relaySummariesRaw } = useQuery({ queryKey: qk.allRelays(), queryFn: () => api.allRelays().then((r) => r.relays), refetchInterval: 4000 });
   const relaySummaries = useMemo(() => relaySummariesRaw ?? [], [relaySummariesRaw]);
   // Honor the UI's pinned plan ONLY while it's still an in-flight relay. Once dispatched it leaves the
   // board, so drop the stale pin (else useRelay keeps polling a removed relay → 404). Fall back to the top.
@@ -150,7 +151,18 @@ export function useApp() {
 
   // work / projects
   const { data: tasksRaw } = useWork("team");
-  const tasks = useMemo(() => (tasksRaw ?? []).map(toMockTask), [tasksRaw]);
+  // dedup by (project_id, id) — one card per task, so a stray duplicate row never renders twice on the
+  // Work board (the kanban-drag duplicate). project+id is the task identity; a shared canned id across
+  // two projects is two DIFFERENT tasks and both rightly survive.
+  const tasks = useMemo(() => {
+    const seen = new Set<string>();
+    return (tasksRaw ?? []).filter((t: any) => {
+      const k = `${t.project_id ?? t.project}::${t.id}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }).map(toMockTask);
+  }, [tasksRaw]);
   const { projects: projectsRaw } = useProjects();
   const projects = useMemo(() => projectsRaw.map(toMockProject), [projectsRaw]);
   const liveProjectId = useUI((s) => s.liveProjectId);

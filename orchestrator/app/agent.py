@@ -20,8 +20,9 @@ from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 from app.contracts import (
-    AdaptedCode, ArchitectureOptions, ClarifiedSpec, ConflictVerdict, ContractProposalSet, DecisionCardPass1,
-    InterfaceDraft, MemoryJudgment, ParsedCV, PlanJSON, QAReport, RegeneratedSlice, RescheduleStrategy, SolutionSet,
+    AcceptanceCriteriaSet, AdaptedCode, ArchitectureOptions, ClarifiedSpec, ConflictVerdict, ContractProposalSet,
+    DecisionCardPass1, InterfaceDraft, MemoryJudgment, ParsedCV, PlanJSON, QAReport, RegeneratedSlice,
+    RescheduleStrategy, SolutionSet,
 )
 from app import canned, demo, trace
 
@@ -154,6 +155,11 @@ async def _run_agent(agent: Agent, prompt: str) -> str:
         msg = types.Content(role="user", parts=[types.Part(text=prompt)])
         final: str | None = None
         usage = None
+        if _USE_VERTEX:  # make the Google Cloud partner visible in the ReAct trace (ADK-on-Vertex IS the stack)
+            try:
+                trace.step("gcp", "action", "Vertex AI · ADK", f"{agent.name} reasoning on Google Cloud")
+            except Exception:
+                pass
         async for ev in runner.run_async(user_id="local", session_id=session.id, new_message=msg):
             if getattr(ev, "usage_metadata", None):
                 usage = ev.usage_metadata
@@ -444,6 +450,22 @@ async def generate_contract_options(prompt: str) -> ContractProposalSet:
     if demo.is_demo():
         return ContractProposalSet(needed=False, skip_reason="demo")
     return _parse(ContractProposalSet, await _run_agent(contract_agent, prompt), contract_agent.name)
+
+
+INSTRUCTION_ACCEPTANCE = """You write acceptance criteria for a software feature's issues. For EACH issue \
+given, write ONE specific, testable pass-condition a tester checks on staging — concrete and verifiable (e.g. \
+"GET /shipments returns 200 with a paginated list, and an unknown id returns 404"), never vague like "works \
+end-to-end". Echo each issue id exactly. No semicolons. Output structured data only, no prose."""
+
+acceptance_agent = Agent(name="sprint0_acceptance", model=MODEL, instruction=INSTRUCTION_ACCEPTANCE, output_schema=AcceptanceCriteriaSet, generate_content_config=_GEN_CFG)
+
+
+async def generate_acceptance(prompt: str) -> AcceptanceCriteriaSet:
+    """One specific, testable acceptance criterion per issue (the Tester's definition of done, which they then
+    refine). Demo → empty (the generic 'works end-to-end' line stands)."""
+    if demo.is_demo():
+        return AcceptanceCriteriaSet()
+    return _parse(AcceptanceCriteriaSet, await _run_agent(acceptance_agent, prompt), acceptance_agent.name)
 
 
 # ── Author-assist: draft ONE interface shape from a human's one-line description (the write-own / counter helper) ──

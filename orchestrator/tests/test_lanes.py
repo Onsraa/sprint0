@@ -54,14 +54,15 @@ def test_unstaffed_gate_has_no_owner():
     assert uiux.owner is None  # gap → None → the Tech Lead ratifies it
 
 
-def test_task_md_carries_the_scoped_brief():
-    # WS11: the .sprint0/TASK.md a dev opens carries the feature, do/do-not, contract, and directives
-    from app.handoff import _task_md
+def test_docs_carry_the_scoped_brief():
+    # WS11: the scoped brief (feature, do/do-not, contract, directives) survives the handoff — now split
+    # across .sprint0/CONTEXT.md (feature + scope) + .sprint0/CONTRACT.md (contract + directives)
+    from app.handoff import _context_md, _contract_md
     iss = _iss("t1", "backend")
     iss.feature, iss.does, iss.not_does = "Auth", "Issue + refresh JWTs", "No social login"
     iss.api_contract, iss.directives = "POST /login -> {token}", ["Use argon2"]
-    md = _task_md(iss)
-    assert all(s in md for s in ["Auth", "Issue + refresh JWTs", "No social login", "POST /login", "Use argon2"])
+    docs = _context_md(iss, []) + _contract_md(iss)
+    assert all(s in docs for s in ["Auth", "Issue + refresh JWTs", "No social login", "POST /login", "Use argon2"])
 
 
 def test_plan_prompt_includes_the_roster():

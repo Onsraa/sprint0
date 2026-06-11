@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge, Button, DISC } from "../components/ui";
+import { isDone } from "../lib/gate";
 import { Icon } from "../lib/icon";
 import { api } from "../lib/api";
 import type { Agreement, InterfaceProposal, InterfaceDraft } from "../lib/schemas";
@@ -62,7 +63,10 @@ export function AgreementCard({ a, me, compact = false }: { a: Agreement; me?: a
     }).then(() => { setCountering(false); setCounterWhy(""); setCounterDraft(null); }));
 
   // which mode is this viewer in?
-  const done = a.state === "ratified" || a.state === "auto_passed";
+  const done = isDone(a.state);
+  // one person owns BOTH ends (an availability stretch) → their single sign auto-completes it (no counterpart
+  // to negotiate with). Label it so "agreed" on a fresh dispatch isn't surprising.
+  const sameOwner = !!a.producer_actor && a.producer_actor === a.consumer_actor;
   const rejected = a.state === "rejected";
   const producerPicks = isProducer && a.state === "proposed" && proposals.length > 0 && !lastCounter;
   const producerSeesCounter = isProducer && a.state === "proposed" && !!lastCounter;
@@ -130,7 +134,7 @@ export function AgreementCard({ a, me, compact = false }: { a: Agreement; me?: a
       {!countering && (
         <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 13px", borderTop: "0.5px solid var(--border-subtle)" }}>
           <span style={{ fontSize: 11, color: "var(--text-tertiary)", flex: 1, minWidth: 0 }}>
-            {done ? "Agreed — the mock is live, both sides build to this." :
+            {done ? (sameOwner ? "Both ends are yours — agreed automatically (no counterpart to negotiate)." : "Agreed — the mock is live, both sides build to this.") :
              rejected ? "Declined — no contract here." :
              producerSent ? `Signed by you · sent to ${consumerName} — they agree or counter.` :
              producerPicks ? "Pick a shape (or write your own), then send it to the consumer." :

@@ -43,11 +43,13 @@ def test_expansion_marks_linked_neighbors_both_directions():
     assert linked == {"payments/stripeClient.js", "routes/api.js"}  # dependency + dependent
 
 
-def test_filtered_zero_hits_retries_unfiltered():
+def test_filtered_zero_hits_stays_empty():
+    # STRICT per-gate retrieval: nothing in-lane → NOTHING (no cross-lane fallback) — the memory option
+    # degrades to fresh + write-your-own instead of citing another lane's files on this gate.
     m = FakeM({None: [_HIT], "uiux": []}, [], [])
     out = asyncio.run(code_search_expanded(m, _VEC, k=5, discipline="uiux"))
-    assert [c for c in m.calls if c[0] == "code_search"] == [("code_search", "uiux"), ("code_search", None)]
-    assert out[0]["file_path"] == "payments/server.js"
+    assert [c for c in m.calls if c[0] == "code_search"] == [("code_search", "uiux")]
+    assert out == []
 
 
 def test_filtered_hits_skip_retry():

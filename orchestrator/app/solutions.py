@@ -6,7 +6,7 @@ a solution set (ids + the write-your-own slot), and the cross-gate overlap that 
 """
 from __future__ import annotations
 
-from app.contracts import PlanJSON, SolutionSet
+from app.contracts import FileChange, PlanJSON, SolutionSet
 
 
 def gate_slice_files(plan: PlanJSON, discipline: str) -> set[str]:
@@ -23,15 +23,35 @@ def impacted_files(slice_files: set[str], dependents: dict[str, list[str]] | Non
     return sorted(out)
 
 
-def finalize_solution_set(sset: SolutionSet, discipline: str, impacted: list[str]) -> SolutionSet:
-    """Assign ids, force LLM `source` to memory|ai (never `user`), attach the gate's impacted files. The
-    write-your-own slot is the FRONTEND's own (RatifyPanel renders it), so the set stays AI/memory-only —
-    the server no longer appends a `user` card (that produced a duplicate slot in the gate)."""
+def classify_file_changes(impacted: list[str], existing: set[str] | None) -> list[FileChange]:
+    """Per-file change kind, decided against the FEATURE repo's CURRENT tree (`existing`) — a path already
+    in the repo = `modify`, a path that isn't there yet = `add`. A brand-new project passes an empty
+    `existing`, so every slice file is an `add` (never the old all-`modify` default). Deterministic — the
+    server classifies against ground truth, never the LLM guessing. `remove` is left to explicit intent."""
+    have = existing or frozenset()
+    return [FileChange(path=p, change=("modify" if p in have else "add")) for p in impacted]
+
+
+def finalize_solution_set(sset: SolutionSet, discipline: str, impacted: list[str],
+                          existing: set[str] | None = None) -> SolutionSet:
+    """Assign ids, force LLM `source` to memory|ai (never `user`), attach the gate's impacted files + each
+    file's change KIND classified against the feature repo (`existing`). The write-your-own slot is the
+    FRONTEND's own (RatifyPanel renders it), so the set stays AI/memory-only — the server no longer appends
+    a `user` card (that produced a duplicate slot in the gate)."""
+    changes = classify_file_changes(impacted, existing)
+    have = existing or frozenset()
     for n, s in enumerate(sset.solutions):
         s.id = f"sol_{discipline}_{n}"
         if s.source == "user":
             s.source = "ai"
         s.impacted_files = impacted
+        if s.file_changes:
+            # RECLASSIFY the card's own paths against the repo's real tree — a brand-new project → every file
+            # is `add` (never a demo-authored "modify"/"remove"). Reuse is INSPIRATION: the dev creates/edits
+            # the files, the program never auto-modifies or removes them, so we only ever show add | modify.
+            s.file_changes = [c.model_copy(update={"change": ("modify" if c.path in have else "add")}) for c in s.file_changes]
+        else:
+            s.file_changes = [c.model_copy() for c in changes]
     sset.discipline = discipline
     return sset
 

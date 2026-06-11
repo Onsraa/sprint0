@@ -556,6 +556,13 @@ export const api = {
   relay(planId: string): Promise<RelayState> {
     return jget(`/api/plans/${planId}/relay`, S.RelayState);
   },
+  /* The Tester's definition of done — one acceptance criterion per plan issue (seeded from the issue) */
+  getAcceptance(planId: string): Promise<{ plan_id: string; criteria: { issue_id: string; title: string; discipline: string; type: string; text: string }[] }> {
+    return jget(`/api/plans/${planId}/acceptance`);
+  },
+  saveAcceptance(planId: string, criteria: { issue_id: string; text: string }[]): Promise<{ saved: number }> {
+    return jpost(`/api/plans/${planId}/acceptance`, { criteria });
+  },
   ratify(
     planId: string,
     discipline: Discipline,
@@ -698,8 +705,9 @@ export const api = {
     return jpost(`/api/agreements/${id}/draft-shape`, { description });
   },
   /* The reuse agreement made executable: the cited source files for a chosen memory solution */
-  reusePack(projects: string[]): Promise<{ count: number; files: { project: string; file_path: string; web_url: string; excerpt: string }[] }> {
-    return jget(`/api/reuse-pack?projects=${encodeURIComponent(projects.join(","))}`);
+  reusePack(projects: string[], discipline?: string): Promise<{ count: number; files: { project: string; file_path: string; web_url: string; excerpt: string }[] }> {
+    const d = discipline ? `&discipline=${encodeURIComponent(discipline)}` : "";
+    return jget(`/api/reuse-pack?projects=${encodeURIComponent(projects.join(","))}${d}`);
   },
 
   /* QA */

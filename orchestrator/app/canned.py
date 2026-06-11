@@ -138,25 +138,25 @@ CANNED_DEVELOPERS = [
     DeveloperProfile(
         name="Maria Chen", gitlab_username="maria",
         skills_text="Python, FastAPI, auth, OAuth, payment integrations",
-        trust_level="high",
+        disciplines=["backend"], trust_level="high", trust={"backend": "high"},
         history=[{"task_type": "backend:auth", "score": 0.92}],
     ),
     DeveloperProfile(
         name="Sam Okafor", gitlab_username="sam",
         skills_text="React, TypeScript, forms, dataviz, accessibility",
-        trust_level="medium",
+        disciplines=["frontend"], trust_level="medium", trust={"frontend": "medium"},
         history=[{"task_type": "frontend:forms", "score": 0.81}],
     ),
     DeveloperProfile(
         name="Priya Nair", gitlab_username="priya",
         skills_text="Postgres, migrations, Docker, GitLab CI",
-        trust_level="medium",
+        disciplines=["devops"], trust_level="medium", trust={"devops": "medium"},
         history=[{"task_type": "devops:ci", "score": 0.77}],
     ),
     DeveloperProfile(
         name="Dev Newhire", gitlab_username="newhire",
         skills_text="Junior — claims React + Node from CV. Unproven.",
-        trust_level="low",
+        trust_level="low",  # unseated by design — covers no lane until the manager seats them
         history=[],
     ),
 ]
@@ -164,48 +164,43 @@ CANNED_DEVELOPERS = [
 # The DEMO_MODE login roster — mirrors the 5 real seed accounts the frontend picker offers, so login,
 # assignee resolution, and relay-lead resolution all line up. uiux stays an orphan gap (no uiux dev),
 # which keeps the Team staffing banner truthful.
+# The 3-user composable demo team (mirrors seed/team.json): everyone holds MULTIPLE lanes / the manager
+# capability. Teddy = manager + tester(qa); Tony = backend + devops; Sam = frontend. uiux stays an orphan
+# gap (no coverer) → routes to the Tech Lead, which keeps the Team staffing banner truthful.
 CANNED_ROSTER = [
     DeveloperProfile(
         name="Teddy", username="Onsraa", gitlab_username="Onsraa",
-        skills_text="Delivery management, planning, stakeholder comms.",
-        role="manager", seniority="senior", trust_level="high",
-    ),
-    DeveloperProfile(
-        name="Jean Gabriel", username="sprint0-se", gitlab_username="sprint0-se",
-        skills_text="Python, FastAPI, auth, OAuth/JWT, payment integrations, Postgres",
-        role="developer", discipline="backend", seniority="senior", trust_level="high",
-        trust={"backend": "high", "devops": "medium"}, load=60,
-        history=[{"task_type": "backend:auth", "score": 0.92}],
+        skills_text="Delivery management, planning, stakeholder comms, acceptance testing, release sign-off.",
+        is_manager=True, disciplines=["qa"], seniority="senior", trust_level="high",
+        trust={"qa": "high"}, load=10,
+        history=[{"task_type": "qa:acceptance", "score": 0.85}],
     ),
     DeveloperProfile(
         name="Tony Stark", username="sprint0-sse", gitlab_username="sprint0-sse",
-        skills_text="Docker, GitLab CI, Kubernetes, observability, Postgres migrations",
-        role="developer", discipline="devops", seniority="senior", trust_level="high",
+        skills_text="Docker, GitLab CI, Kubernetes, observability, Python, FastAPI, Postgres migrations",
+        disciplines=["backend", "devops"], seniority="senior", trust_level="high",
         trust={"devops": "high", "backend": "high"}, load=20,
-        history=[{"task_type": "devops:ci", "score": 0.88}],
+        history=[{"task_type": "devops:ci", "score": 0.88}, {"task_type": "backend:api", "score": 0.86}],
     ),
     DeveloperProfile(
         name="Sam Dupont", username="sprint0-fe", gitlab_username="sprint0-fe",
         skills_text="React, TypeScript, forms, dataviz, accessibility",
-        role="developer", discipline="frontend", seniority="mid", trust_level="medium",
+        disciplines=["frontend"], seniority="mid", trust_level="medium",
         trust={"frontend": "medium"}, load=30,
         history=[{"task_type": "frontend:forms", "score": 0.81}],
-    ),
-    DeveloperProfile(
-        name="Pascal Alice", username="sprint0-qa", gitlab_username="sprint0-qa",
-        skills_text="QA automation, Playwright, acceptance testing, edge cases",
-        role="developer", discipline="qa", seniority="mid", trust_level="medium",
-        trust={"qa": "medium"}, load=10,
-        history=[{"task_type": "qa:acceptance", "score": 0.80}],
     ),
 ]
 
 
 def _seat_plan(plan: PlanJSON) -> PlanJSON:
-    """Map a plan's draft assignees onto the demo login roster by discipline, so the plan, the relay,
-    and the Work board all show the same people (the canned plan ships maria/sam/priya placeholders)."""
+    """Map a plan's draft assignees onto the demo login roster by lane, so the plan, the relay, and the
+    Work board all show the same people. Composable: a member covering several lanes (Tony = backend +
+    devops) seats all of them; the first roster member to cover a lane owns it."""
     p = plan.model_copy(deep=True)
-    owner = {m.discipline: m.username for m in CANNED_ROSTER if m.role == "developer" and m.discipline}
+    owner: dict[str, str] = {}
+    for m in CANNED_ROSTER:
+        for lane in m.disciplines:
+            owner.setdefault(lane, m.username)
     for epic in p.epics:
         for i in epic.issues:
             if owner.get(i.discipline):
