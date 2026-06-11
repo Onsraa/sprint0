@@ -12,6 +12,7 @@ import { useUI } from "../lib/store";
 import { ViewChrome } from "../components/ViewChrome";
 import { ProjectSwitcher } from "../components/ProjectSwitcher";
 import { Avatar, Button, Badge, DiscDot, DISC } from "../components/ui";
+import { ownsGate } from "../lib/gate";
 import { Icon } from "../lib/icon";
 import { GATE_META } from "./RatifyPanel";
 import type { RelaySummary, Discipline } from "../lib/api";
@@ -21,36 +22,37 @@ const STATE_ORDER = ["setup", "uiux", "backend", "devops", "frontend", "qa"] as 
 const DONE = ["ratified", "auto_passed"];
 const projectKey = (r: RelaySummary) => String(r.target_project_id ?? r.project);
 
-type RelayStatus = "open" | "pending" | "shipping" | "inprogress";
+type RelayStatus = "open" | "preparing" | "pending" | "shipping" | "inprogress" | "dispatching" | "dispatch_failed";
 type RelayClass = { status: RelayStatus; disc?: Discipline; action: "gate" | "dispatch" | "none" };
 
-/* Classify a relay for the viewer. dev/qa: their lane's gate decides open (their turn) vs pending
-   (waiting) vs shipping (your gate's ratified but the relay's still in flight) vs excluded (not on this
-   relay). manager: a ready relay is open-to-dispatch; an orphan gate (no seated dev) is the manager's to
-   ratify (open if on baton, else pending); otherwise the relay is fully staffed → "in progress". */
-function classify(r: RelaySummary, scopeDisc: Discipline | undefined, isManager: boolean, seated: Set<string>, meUser?: string): RelayClass | null {
-  if (isManager) {
-    if (r.all_ratified) return { status: "open", action: "dispatch" };
-    const orphans = r.gates.filter((g) => !seated.has(g.discipline) && !DONE.includes(g.status));
-    if (!orphans.length) return { status: "inprogress", action: "gate" };
-    const batonOrphan = orphans.find((g) => r.baton.includes(g.discipline));
-    return { status: batonOrphan ? "open" : "pending", disc: (batonOrphan ?? orphans[0]).discipline, action: "gate" };
-  }
-  // dev/qa: a delegated gate belongs to its delegate; otherwise the discipline lead owns it.
-  const owns = (g: Gate) => (g.delegate ? (!!meUser && g.delegate === meUser) : g.discipline === scopeDisc);
-  const mineGates = r.gates.filter(owns);
+/* Classify a relay for the viewer — the SAME rule for everyone, manager included. Each gate belongs to ONE
+   user (ownsGate). A viewer is on a relay iff they own a gate in it; their owned gate decides open (their
+   turn) / preparing (choices drafting) / pending (baton upstream) / shipping (their gate ratified, relay in
+   flight). Relay-level dispatch states show to any owner. No role see-all, no "in progress" oversight. */
+function classify(r: RelaySummary, me: any, members: any[]): RelayClass | null {
+  const isOpen = (g: Gate) => r.baton.includes(g.discipline) && g.ready !== false;
+  const isPreparing = (g: Gate) => r.baton.includes(g.discipline) && g.ready === false;
+  const mineGates = r.gates.filter((g) => ownsGate(g, me, members));
   if (!mineGates.length) return null;                       // not on this relay at all
+  // the relay is mid-dispatch / shipped-failed (the tester just ratified the last gate) — visible to any owner.
+  if (r.dispatch === "dispatching") return { status: "dispatching", action: "none" };
+  if (r.dispatch === "failed") return { status: "dispatch_failed", action: me?.is_manager ? "dispatch" : "none" };
   const notDone = mineGates.filter((g) => !DONE.includes(g.status));
   if (!notDone.length) return { status: "shipping", disc: mineGates[0].discipline, action: "none" };  // your part shipped — relay still in flight
-  const batonMine = notDone.find((g) => r.baton.includes(g.discipline));
-  return { status: batonMine ? "open" : "pending", disc: (batonMine ?? notDone[0]).discipline, action: "gate" };
+  const batonMine = notDone.find(isOpen);
+  const prepMine = notDone.find(isPreparing);
+  return { status: batonMine ? "open" : prepMine ? "preparing" : "pending",
+           disc: (batonMine ?? prepMine ?? notDone[0]).discipline, action: "gate" };
 }
 
 const STATUS_META: Record<RelayStatus, { label: string; fg: string; bg: string }> = {
   open:       { label: "open",        fg: "var(--green)",          bg: "color-mix(in srgb, var(--green) 12%, transparent)" },
+  preparing:  { label: "preparing…",  fg: "var(--blue)",           bg: "color-mix(in srgb, var(--blue) 11%, transparent)" },
   pending:    { label: "pending",     fg: "var(--amber)",          bg: "color-mix(in srgb, var(--amber) 13%, transparent)" },
   shipping:   { label: "shipping",    fg: "var(--blue)",           bg: "color-mix(in srgb, var(--blue) 11%, transparent)" },
   inprogress: { label: "in progress", fg: "var(--text-tertiary)",  bg: "var(--bg-secondary)" },
+  dispatching:     { label: "dispatching…",   fg: "var(--blue)", bg: "color-mix(in srgb, var(--blue) 11%, transparent)" },
+  dispatch_failed: { label: "dispatch failed", fg: "var(--red)",  bg: "color-mix(in srgb, var(--red) 12%, transparent)" },
 };
 
 /* one gate's state dot — discipline mark + status colour, baton flagged in ink. */
@@ -85,8 +87,8 @@ function GateDots({ r }: { r: RelaySummary }) {
 function RelayRow({ r, cls, name, onOpen }: { r: RelaySummary; cls: RelayClass; name: string; onOpen: (r: RelaySummary, cls: RelayClass) => void }) {
   const [h, setH] = useState(false);
   const meta = STATUS_META[cls.status];
-  // open = act · shipping = view the read-only review · pending/in-progress = inert
-  const clickable = cls.status === "open" || cls.status === "shipping";
+  // open = act · shipping = view · dispatch_failed = retry · dispatching/pending/in-progress = inert
+  const clickable = cls.status === "open" || cls.status === "shipping" || cls.status === "dispatch_failed";
   return (
     <div onClick={clickable ? () => onOpen(r, cls) : undefined}
       onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
@@ -145,11 +147,9 @@ export function Relays() {
   const projectFilter = useUI((s) => s.projectFilter);
   const selName = (projects as any[]).find((p) => p.project_id === projectFilter)?.name ?? null;
   const all: RelaySummary[] = relaySummaries ?? [];
-  const seated = new Set<string>((members ?? []).filter((m: any) => m.discipline).map((m: any) => m.discipline));
   const watched = personFilter ? members.find((m: any) => m.username === personFilter) : null;
   const isManager = role === "manager" && !watched;
-  const scopeDisc: Discipline | undefined = watched ? watched.discipline : me?.discipline;
-  const scopeUser: string | undefined = watched ? watched.username : me?.username;
+  const scopeMember: any = watched ?? me;     // whose ownership the board is scoped to (self, or a watched peer)
   const firstName = watched ? String(watched.name).split(" ")[0] : "";
 
   // per-relay feature name (Initial plan / Feature N), stable per project regardless of status sorting
@@ -163,17 +163,18 @@ export function Relays() {
 
   // classify each relay for the viewer, drop the ones that aren't theirs (dev: done / not-on-relay)
   const scoped = selName ? all.filter((r) => r.project === selName) : all;
-  const classified = scoped.map((r) => ({ r, cls: classify(r, scopeDisc, isManager, seated, scopeUser) }))
+  const classified = scoped.map((r) => ({ r, cls: classify(r, scopeMember, members) }))
     .filter((x): x is { r: RelaySummary; cls: RelayClass } => !!x.cls);
 
-  // group by project, count + sort items open → pending → shipping → in-progress
-  const ORDER: Record<RelayStatus, number> = { open: 0, pending: 1, shipping: 2, inprogress: 3 };
+  // group by project, count + sort items open → preparing → pending → shipping → in-progress
+  const ORDER: Record<RelayStatus, number> = { dispatch_failed: 0, open: 1, dispatching: 2, preparing: 3, pending: 4, shipping: 5, inprogress: 6 };
   const groupMap = new Map<string, { r: RelaySummary; cls: RelayClass }[]>();
   classified.forEach((it) => { const k = projectKey(it.r); const arr = groupMap.get(k) ?? []; arr.push(it); groupMap.set(k, arr); });
   const projGroups = [...groupMap.entries()].map(([key, items]) => {
     items.sort((a, b) => ORDER[a.cls.status] - ORDER[b.cls.status]);
     const count = (s: RelayStatus) => items.filter((i) => i.cls.status === s).length;
-    return { key, name: items[0].r.project, counts: { open: count("open"), pending: count("pending"), shipping: count("shipping"), inprogress: count("inprogress") }, items };
+    // a preparing relay counts as pending in the header segments (same "not yet yours to act" bucket)
+    return { key, name: items[0].r.project, counts: { open: count("open"), pending: count("pending") + count("preparing"), shipping: count("shipping"), inprogress: count("inprogress") }, items };
   });
   const prio = (c: { open: number; pending: number }) => (c.open > 0 ? 2 : c.pending > 0 ? 1 : 0);
   projGroups.sort((a, b) => prio(b.counts) - prio(a.counts) || a.name.localeCompare(b.name));
@@ -221,10 +222,10 @@ export function Relays() {
           <div style={{ display: "flex", alignItems: "center", gap: 16, margin: "12px 0 18px", padding: "8px 12px", borderRadius: "var(--r-md)",
             background: "var(--bg-secondary)", border: "0.5px solid var(--border-subtle)", flexWrap: "wrap" }}>
             <span className="kicker" style={{ fontSize: 10 }}>Legend</span>
-            {(["open", "pending", ...(isManager ? ["inprogress" as const] : ["shipping" as const])] as RelayStatus[]).map((s) => (
+            {(["open", "preparing", "pending", ...(isManager ? ["inprogress" as const] : ["shipping" as const])] as RelayStatus[]).map((s) => (
               <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-tertiary)" }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_META[s].fg }} />
-                {STATUS_META[s].label} · {{ open: "your call", pending: "waiting", shipping: "shipped your part", inprogress: "observe" }[s]}
+                {STATUS_META[s].label} · {{ open: "your call", preparing: "AI drafting options", pending: "waiting", shipping: "shipped your part", inprogress: "observe", dispatching: "shipping…", dispatch_failed: "retry" }[s]}
               </span>
             ))}
           </div>

@@ -7,14 +7,18 @@ import { useState } from "react";
 import { Button, IconButton, Tab, Avatar, Badge } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { ViewChrome } from "../components/ViewChrome";
+import { DiscardDraft } from "../wizard/WizardMotion";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 
 export function Dashboard() {
   const { setView, projects, members, drafts, relaySummaries } = useApp();
   const setProjectFilter = useUI((s) => s.setProjectFilter);
+  const setResumeDraft = useUI((s) => s.setResumeDraft);
+  const removeDraftByName = useUI((s) => s.removeDraftByName);
   const [filter, setFilter] = useState("all"); // all | drafts | active | shipped | reference
   const [sel, setSel] = useState<any>(null);
+  const [discard, setDiscard] = useState<string | null>(null);  // a draft pending discard (the confirm popup)
 
   const projList = (projects as any[]).filter(p =>
     filter === "all" ? true :
@@ -65,7 +69,7 @@ export function Dashboard() {
               borderBottom: "0.5px solid var(--border-subtle)", position: "sticky", top: 0, background: "var(--bg-elevated)", zIndex: 1 }}>
               <span className="kicker" style={{ flex: 1, minWidth: 0 }}>Project</span>
               {!selP && <span className="kicker" style={{ width: 196, flexShrink: 0 }}>Stack</span>}
-              <span className="kicker" style={{ width: 76, flexShrink: 0 }}>Issues</span>
+              <span className="kicker" style={{ width: 76, flexShrink: 0 }}>Tasks</span>
               {!selP && <span className="kicker" style={{ width: 116, flexShrink: 0 }}>Team</span>}
               <span className="kicker" style={{ width: 92, flexShrink: 0, textAlign: "right" }}>Status</span>
             </div>
@@ -89,8 +93,10 @@ export function Dashboard() {
         </div>
         {selP && <ProjectPanel p={selP}
           hasRelays={(relaySummaries as any[]).some((r) => r.target_project_id === selP.project_id || r.project === selP.name)}
-          onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => setView("wizard")} />}
+          onViewRelays={() => { setProjectFilter(selP.project_id); setView("relays"); }} onClose={() => setSel(null)} onResume={() => { if (selP?.kind === "draft") setResumeDraft(selP); setView("wizard"); }}
+          onDiscard={() => setDiscard(selP.name)} />}
       </div>
+      {discard && <DiscardDraft name={discard} onConfirm={() => { removeDraftByName(discard); setDiscard(null); setSel(null); }} onCancel={() => setDiscard(null)} />}
     </div>
   );
 }
@@ -158,7 +164,7 @@ function AvatarStack({ n = 0, members }: { n?: number; members: any[] }) {
   );
 }
 
-function ProjectPanel({ p, hasRelays, onViewRelays, onClose, onResume }: { p: any; hasRelays: boolean; onViewRelays: () => void; onClose: () => void; onResume: () => void }) {
+function ProjectPanel({ p, hasRelays, onViewRelays, onClose, onResume, onDiscard }: { p: any; hasRelays: boolean; onViewRelays: () => void; onClose: () => void; onResume: () => void; onDiscard: () => void }) {
   const setFeatureProjectId = useUI((s) => s.setFeatureProjectId);
   const isRef = p.kind === "reference";
   const isDraft = p.kind === "draft";
@@ -194,7 +200,7 @@ function ProjectPanel({ p, hasRelays, onViewRelays, onClose, onResume }: { p: an
 
         {!isRef && !isDraft && (
           <div style={{ display: "flex", gap: 0, marginBottom: 16, border: "0.5px solid var(--border)", borderRadius: "var(--r-md)", overflow: "hidden" }}>
-            {[["Issues", p.issues], ["Devs", p.devs], ["Created", p.created]].map(([l, v], i) => (
+            {[["Tasks", p.issues], ["Devs", p.devs], ["Created", p.created]].map(([l, v], i) => (
               <div key={l} style={{ flex: 1, padding: "10px 12px", borderLeft: i ? "0.5px solid var(--border)" : "none" }}>
                 <div className="kicker" style={{ marginBottom: 4, fontSize: 10 }}>{l}</div>
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 600 }}>{v}</div>
@@ -236,6 +242,7 @@ function ProjectPanel({ p, hasRelays, onViewRelays, onClose, onResume }: { p: an
       </div>
       {isDraft ? (
         <div style={{ borderTop: "0.5px solid var(--border-subtle)", padding: 10, display: "flex", gap: 8 }}>
+          <Button variant="secondary" size="md" icon="close" onClick={onDiscard} style={{ color: "var(--red)" }}>Discard</Button>
           <Button variant="primary" size="md" iconRight="arrowRight" style={{ flex: 1 }} onClick={onResume}>Resume in wizard</Button>
         </div>
       ) : !isRef && (

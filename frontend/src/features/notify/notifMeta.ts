@@ -1,5 +1,5 @@
 /* sprint0 — the canonical notification metadata (icon · label · colour intent · how it acts), shared by the
-   bell so the 11 real backend `type`s render consistently. Colour by intent: green = good/finished ·
+   bell so every real backend `type` renders consistently. Colour by intent: green = good/finished ·
    red = urgent (something broke) · orange = act (you decide/resolve) · grey = neutral FYI.
    `act` says how an actionable notification behaves in the bell: "redirect" → a button that deep-links to the
    subject (`to` view + `cta` label); "inline" → buttons that act in place (reschedule consent · grant/deny a
@@ -15,6 +15,9 @@ export type NotifMeta = { icon: IconName; label: string; intent: NotifIntent; ac
 
 /* one entry per real Notification.type (orchestrator/app/contracts.py). No display aliases. */
 export const NOTIF_META: Record<string, NotifMeta> = {
+  // creation — the project exists, then its relay (a feature-add fires only the relay one)
+  project_created:     { icon: "projects", label: "Project",    intent: "good" },
+  relay_created:       { icon: "relay",    label: "Relay",      intent: "act",     act: "redirect", to: "relays",       cta: "Open the relay" },
   // relay · ratify — redirect to the Gate × Contract page (the act surface)
   ratify_needed:       { icon: "ratify",   label: "Ratify",     intent: "act",     act: "redirect", to: "gatecontract", cta: "Ratify your slice" },
   agreement_proposed:  { icon: "relay",    label: "Contract",   intent: "act",     act: "redirect", to: "gatecontract", cta: "Sign the Contract" },
@@ -32,6 +35,8 @@ export const NOTIF_META: Record<string, NotifMeta> = {
   access_granted:      { icon: "eye",      label: "Watch",      intent: "good" },
   // governance · drift
   drift_flagged:       { icon: "bolt",     label: "Drift",      intent: "urgent" },
+  // dispatch — the relay closed but the GitLab scaffold FAILED (retry from the relay)
+  dispatch_failed:     { icon: "bolt",     label: "Dispatch",   intent: "urgent",  act: "redirect", to: "relays",       cta: "Retry the dispatch" },
 };
 
 export const notifMeta = (kind: string): NotifMeta => NOTIF_META[kind] ?? { icon: "bell" as IconName, label: "Update", intent: "neutral" };

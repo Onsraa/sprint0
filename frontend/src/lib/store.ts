@@ -49,6 +49,10 @@ interface UIState {
   setPlanId: (id: string | null) => void;
   activeGate: Discipline | null;
   setActiveGate: (d: Discipline | null) => void;
+  /** A relay that JUST shipped (tester ratified → dispatched). Latches a done-state on Gate×Contract
+   *  instead of the stale "no gate here" once the relay leaves the board. Cleared on navigation. */
+  shippedRelay: { project: string; tasks: number } | null;
+  setShippedRelay: (s: { project: string; tasks: number } | null) => void;
 
   /** The dispatched GitLab project (QA / mid-prod / the dev fetch block). */
   liveProjectId: number | null;
@@ -74,6 +78,8 @@ interface UIState {
   drafts: any[];
   addDraft: (d: any) => any;
   removeDraftByName: (name: string) => void;
+  resumeDraft: any | null;                   // a draft being reopened in the wizard (rehydrated from the server)
+  setResumeDraft: (d: any | null) => void;
 
   /** Clear all session-scoped UI on logout. */
   resetSession: () => void;
@@ -86,6 +92,7 @@ const SESSION_DEFAULTS = {
   plan: null,
   planId: null,
   activeGate: null,
+  shippedRelay: null,
   liveProjectId: null,
   liveCloneUrl: null,
   projectFilter: null,
@@ -127,6 +134,8 @@ export const useUI = create<UIState>()(persist((set) => ({
   setPlanId: (planId) => set({ planId }),
   activeGate: null,
   setActiveGate: (activeGate) => set({ activeGate }),
+  shippedRelay: null,
+  setShippedRelay: (shippedRelay) => set({ shippedRelay }),
 
   liveProjectId: null,
   setLiveProjectId: (liveProjectId) => set({ liveProjectId }),
@@ -148,6 +157,8 @@ export const useUI = create<UIState>()(persist((set) => ({
     return draft;
   },
   removeDraftByName: (name) => set((s) => ({ drafts: s.drafts.filter((d: any) => d.name !== name) })),
+  resumeDraft: null,
+  setResumeDraft: (resumeDraft) => set({ resumeDraft }),
 
   resetSession: () => set(SESSION_DEFAULTS),
-}), { name: "sprint0-ui", partialize: (s) => ({ navCollapsed: s.navCollapsed }) }));
+}), { name: "sprint0-ui", partialize: (s) => ({ navCollapsed: s.navCollapsed, drafts: s.drafts }) }));

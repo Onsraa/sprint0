@@ -78,9 +78,11 @@ def test_demo_task_store_namespaced_by_project(monkeypatch):
                 await rag.tasks_for_project(9002))
 
     all_tasks, p1, p2 = asyncio.run(run())
-    assert sorted(t["project_id"] for t in all_tasks) == [9001, 9002]   # both coexist
+    # the STORE is namespaced by project → no clobber: each project keeps its OWN task under the shared id.
     assert len(p1) == 1 and p1[0]["title"] == "A"                       # isolated per project
     assert len(p2) == 1 and p2[0]["title"] == "B"
+    # the global Work view dedupes the shared canned-plan id (kanban no-duplicate) → one row, newest wins.
+    assert len(all_tasks) == 1
 
 
 # ── webhook→passport: the shared merge-credit fallback queues an unmatched author (commit feat/webhook-passport) ──

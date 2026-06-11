@@ -46,12 +46,17 @@ def _earned(grade: str | None) -> bool:
 def grade_for(grounded_on: list[str], decisions: list[dict], discipline: str) -> str | None:
     """Earned strength of a memory-grounded option (server-derived — never an LLM guess). Prefer a TEAM
     decision graded on one of the grounded projects in this discipline (the real P4 grade); else a coarse
-    "shipped" since the agency's seeded past projects all shipped; ungrounded → None."""
+    "shipped" since the agency's seeded past projects all shipped; ungrounded → None.
+    Identities compare via the canonical project_key — grounded_on carries corpus slugs ("quantapay-2024")
+    while Decisions.project_name carries display names ("QuantaPay (2024)"); a raw string match never hit,
+    so every memory card silently degraded to the coarse "shipped"."""
     if not grounded_on:
         return None
+    from app.corpus import project_key
+    keys = {project_key(g) for g in grounded_on if g}
     best = None
     for d in decisions:
-        if (d.get("project_name") in grounded_on and d.get("domain") == discipline
+        if (project_key(d.get("project_name") or "") in keys and d.get("domain") == discipline
                 and d.get("visibility") == "team"):
             g = d.get("grade", "proposed")
             if best is None or _RANK.get(g, 0) > _RANK.get(best, 0):
@@ -73,23 +78,16 @@ def signal_for(card) -> str:
     return "orange"
 
 
-def recommend_architecture(cards: list) -> int | None:
-    """Deterministic stack pick (the server's badge, not the LLM's vote): the card that REUSES the most proven
-    memory — sprint0's thesis is reuse > rebuild. Score = reusable features (action reuse|adapt, weighted) +
-    grounded-on projects. Returns the top card's index, or None. The AI's OWN pick (ArchitectureOptions.ai_pick_*)
-    is surfaced alongside as the alternative view — it may favor a fresh/modern stack this score would penalize."""
-    if not cards:
+def recommend_architecture(cards: list, ai_pick_name: str = "") -> int | None:
+    """The badged card follows the AI's OWN pick (`ai_pick_name`) — NOT a reuse-max heuristic. We dropped the
+    old "most proven reuse" scoring (reused*2 + grounded) because it forced a reuse bias even on a mismatched
+    brief; reuse is now one option among equals, and relevance is LLM-judged upstream (CRAG: verdict+reason) so a
+    card only cites memory when a past project genuinely fits. Returns the index of the card whose name matches
+    the AI's pick, else None (no server badge — the cards stand on their own)."""
+    if not cards or not ai_pick_name:
         return None
-
-    def score(c) -> int:
-        reuse = getattr(c, "reuse", None) or []
-        reused = sum(1 for r in reuse if getattr(r, "action", "reuse") in ("reuse", "adapt"))
-        grounded = len(getattr(c, "grounded_on", None) or [])
-        return reused * 2 + grounded
-
-    best_i, best_s = 0, -1
+    want = ai_pick_name.strip().lower()
     for i, c in enumerate(cards):
-        s = score(c)
-        if s > best_s:
-            best_i, best_s = i, s
-    return best_i
+        if (getattr(c, "name", "") or "").strip().lower() == want:
+            return i
+    return None

@@ -50,11 +50,15 @@ def add_demo_member(member: DeveloperProfile) -> None:
 
 
 def set_demo_discipline(username: str, discipline: str) -> None:
-    """DEMO_MODE: seat a member in a discipline + seed a starting (low) per-discipline trust."""
+    """DEMO_MODE: seat a member in a discipline (composable — ADDS the lane, keeps existing ones) + seed a
+    starting (low) per-discipline trust."""
     m = _CACHE.get(username)
-    if m:
-        m.discipline = discipline  # type: ignore[assignment]
-        if discipline and discipline not in m.trust:
+    if m and discipline:
+        if discipline not in m.disciplines:
+            m.disciplines.append(discipline)  # type: ignore[arg-type]
+        if not m.discipline:
+            m.discipline = discipline  # type: ignore[assignment]
+        if discipline not in m.trust:
             m.trust[discipline] = "low"
 
 
@@ -91,8 +95,8 @@ def all_members() -> list[DeveloperProfile]:
 
 
 def developers() -> list[DeveloperProfile]:
-    return [m for m in _CACHE.values() if m.role == "developer"]
+    return [m for m in _CACHE.values() if m.disciplines]  # anyone who covers a lane (managers who work too)
 
 
 def manager() -> DeveloperProfile | None:
-    return next((m for m in _CACHE.values() if m.role == "manager"), None)
+    return next((m for m in _CACHE.values() if m.is_manager), None)

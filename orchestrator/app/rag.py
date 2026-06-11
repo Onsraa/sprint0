@@ -35,6 +35,13 @@ PP_INDEX = os.getenv("PAST_PROJECTS_VECTOR_INDEX", "pp_vector_index")
 DEV_INDEX = os.getenv("DEVELOPER_VECTOR_INDEX", "dev_vector_index")
 PROJ_COLL = os.getenv("PROJECT_RECORDS_COLLECTION", "ProjectRecords")
 CODE_COLL = os.getenv("CODE_CHUNKS_COLLECTION", "CodeChunks")
+
+# Retrieval ceilings — sized for "a real org", not the demo corpus; one named knob per scan, never bare literals.
+PROJECT_RECORDS_LIMIT = 2000   # dispatched projects a Dashboard scan returns (was 50 — a real org has more)
+GRAPH_NODES_LIMIT = 2000       # one project partition of Graph A
+GRAPH_EDGES_LIMIT = 5000
+TASKS_LIMIT = 10000            # the whole Work-hub board ceiling — never drop tasks at scale
+REUSE_PACK_LIMIT = 30          # cited source files per reuse pack
 CODE_INDEX = os.getenv("CODE_CHUNKS_VECTOR_INDEX", "code_vector_index")
 PP_TEXT_INDEX = os.getenv("PAST_PROJECTS_TEXT_INDEX", "pp_text_index")
 
@@ -153,17 +160,10 @@ async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85
 
 
 async def set_developer_discipline(username: str, discipline: str) -> None:
-    """Seat a member in a discipline (manager action) → they enter the assignment pool in-lane."""
+    """Seat a member in a discipline (manager action) → they enter the assignment pool in-lane. Composable:
+    ADDS the lane (a member can cover several); the model reconciles the `discipline` primary mirror on load."""
     async with MongoMCP() as m:
-        await m.update_many(DEV_COLL, {"username": username}, {"$set": {"discipline": discipline}})
-
-
-_DEMO_PROJECTS: dict[int, dict] = {}  # DEMO_MODE in-mem store — Atlas writes no-op, so dispatched projects live here
-
-
-def reset_demo_projects() -> None:
-    """DEMO reset/seed: drop every session-dispatched project record (only the canned workspace remains)."""
-    _DEMO_PROJECTS.clear()
+        await m.update_many(DEV_COLL, {"username": username}, {"$addToSet": {"disciplines": discipline}})
 
 
 async def save_project_record(record: dict) -> None:
@@ -197,7 +197,7 @@ async def all_project_records() -> list[dict]:
     if demo.is_demo():
         return [dict(r) for r in _DEMO_PROJECTS.values()]
     async with MongoMCP() as m:
-        return await m.find(PROJ_COLL, projection={"_id": 0}, limit=2000)  # was 50 — a real org has >50 projects
+        return await m.find(PROJ_COLL, projection={"_id": 0}, limit=PROJECT_RECORDS_LIMIT)
 
 
 async def past_projects() -> list[dict]:
@@ -251,22 +251,16 @@ async def decisions_for_project(project_name: str) -> list[dict]:
         return await m.find(DECISIONS_COLLECTION, query={"project_name": project_name}, projection={"_id": 0}, limit=200)
 
 
-async def all_decisions(limit: int = 500) -> list[dict]:
-    """The whole Decisions pool — the cross-user surfacing endpoint filters it by the quality gate."""
+async def all_decisions(limit: int = 500, query: dict | None = None) -> list[dict]:
+    """The Decisions pool. `query` pushes the filter server-side (e.g. {"visibility":"team","domain":disc})
+    so a per-gate caller never fetches the whole pool to keep a handful — the cross-user surfacing endpoint
+    passes none and gates the full set by quality."""
     async with MongoMCP() as m:
-        return await m.find(DECISIONS_COLLECTION, projection={"_id": 0}, limit=limit)
+        return await m.find(DECISIONS_COLLECTION, query=query, projection={"_id": 0}, limit=limit)
 
 
 # ── Agreements (the coordination spine: AI-drafted, async-ratified, compounding) ──
 AGREEMENTS_COLLECTION = "Agreements"
-_DEMO_AGREEMENTS: dict[str, dict] = {}  # DEMO_MODE in-mem store — Atlas writes no-op, so agreements live here
-
-
-def reset_demo_agreements() -> None:
-    """DEMO reset/seed: drop every in-mem interface contract so the canned set is the only one left."""
-    _DEMO_AGREEMENTS.clear()
-
-
 async def save_agreement(doc: dict) -> None:
     if demo.is_demo():
         _DEMO_AGREEMENTS[doc["id"]] = dict(doc)
@@ -301,19 +295,51 @@ async def all_agreements(limit: int = 1000) -> list[dict]:
         return await m.find(AGREEMENTS_COLLECTION, projection={"_id": 0}, limit=limit)
 
 
-async def reuse_pack(projects: list[str], limit: int = 30) -> list[dict]:
-    """The reuse agreement's executable payload: the cited source files for a chosen MEMORY solution —
-    the CodeChunks of the grounded project(s) (file_path · web_url · excerpt). Loose-matched on the first
-    name token so 'QuantaPay (2024)' finds the 'quantapay-2024' repo's chunks. 'it was built before' →
-    'it's already in your branch'."""
-    toks = {p.split()[0].split("-")[0].lower() for p in projects if p}
-    if not toks:
+from app.corpus import project_key  # noqa: E402 — canonical project-identity key (re-export; callers use rag.project_key)
+# The DEMO plane lives in ONE auditable module (demo_store.py) — this storage facade branches into it on
+# demo.is_demo() and RE-EXPORTS the reset_* names so main/tests keep importing from here. (F5 split)
+from app.demo_store import (  # noqa: E402,F401
+    _DEMO_AGREEMENTS, _DEMO_EVENTS, _DEMO_GRAPH_EDGES, _DEMO_GRAPH_NODES, _DEMO_NOTIFICATIONS,
+    _DEMO_PROJECTS, _DEMO_SESSION, _DEMO_TASKS,
+    reset_demo_agreements, reset_demo_events, reset_demo_graph, reset_demo_notifications,
+    reset_demo_projects, reset_demo_session, reset_demo_tasks,
+)
+
+
+# Files that are noise as a "reuse inspiration" — docs, license, vcs/meta, lockfiles. A reuse pack cites the
+# SOURCE the dev draws from; README/.gitignore/LICENSE aren't code to be inspired by.
+_REUSE_NOISE_NAMES = {"readme", "license", "licence", "contributing", "changelog", "authors", "notice",
+                      ".gitignore", ".gitattributes", ".dockerignore", ".editorconfig", ".npmignore"}
+_REUSE_NOISE_SUFFIX = (".md", ".lock", ".txt", "-lock.json", ".log")
+
+
+def _reuse_substantive(file_path: str) -> bool:
+    import posixpath
+    base = posixpath.basename(file_path or "").lower()
+    if base in _REUSE_NOISE_NAMES or posixpath.splitext(base)[0] in _REUSE_NOISE_NAMES:
+        return False
+    return not base.endswith(_REUSE_NOISE_SUFFIX)
+
+
+async def reuse_pack(projects: list[str], discipline: str | None = None, limit: int = REUSE_PACK_LIMIT) -> list[dict]:
+    """The reuse agreement's executable payload: the cited source files for a chosen MEMORY solution — the
+    CodeChunks of the grounded project(s), SCOPED to the gate's discipline. Matched on the canonical project
+    key (slugified, exact) server-side — not fetch-all-then-filter. `discipline` is STRICT per gate: the
+    devops card cites devops files or NOTHING — never the project's whole tree (nothing fits → propose
+    nothing; a cross-lane fallback showed py files on a devops gate). Docs/license/lockfiles are dropped —
+    a reuse pack is SOURCE to draw from, not README/.gitignore. 'built before' → 'in your branch'."""
+    if demo.is_demo():  # no Atlas in demo — the canned cards carry their own file_changes; never touch Mongo
         return []
+    keys = sorted({project_key(p) for p in projects if p})
+    if not keys:
+        return []
+    proj = {"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1, "summary": 1, "discipline": 1, "language": 1}
     async with MongoMCP() as m:
-        rows = await m.find(CODE_COLL, projection={"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1,
-                                                   "summary": 1, "discipline": 1, "language": 1}, limit=300)
-    out = [r for r in rows if str(r.get("project", "")).split("-")[0].lower() in toks]
-    return out[:limit]
+        q: dict = {"project": {"$in": keys}}
+        if discipline:
+            q["discipline"] = discipline
+        rows = await m.find(CODE_COLL, query=q, projection=proj, limit=limit * 3)  # over-fetch; trim after the noise filter
+    return [r for r in rows if _reuse_substantive(r.get("file_path", ""))][:limit]
 
 
 async def code_chunks_for_project(project: str) -> list[dict]:
@@ -335,15 +361,14 @@ async def upsert_code_chunk(doc: dict) -> None:
 
 
 async def code_search_expanded(m: "MongoMCP", query_vec: list[float], k: int = 5,
-                               discipline: str | None = None) -> list[dict]:
+                               discipline: str | None = None, min_score: float | None = None) -> list[dict]:
     """Code-RAG with 1-hop import expansion: top-k chunks, then their direct import neighbors from the
     seed-time GraphEdges partition (project_id == CodeChunks.project) — multi-file features surface as a
-    cluster, not one island. `discipline` pre-filters per-gate; 0 in-lane hits → unfiltered retry.
+    cluster, not one island. `discipline` pre-filters per-gate, STRICTLY: 0 in-lane hits → 0 hits, so the
+    gate's memory option degrades to fresh + write-your-own instead of grounding on another lane's code.
     Expansion reads GRAPH_EDGES_COLL via raw find (NOT graph_edges(), whose demo branch is in-mem-only)
     so it works in demo too, and is best-effort: any failure degrades to the plain hits."""
-    hits = await m.code_search(query_vec, k=k, discipline=discipline)
-    if discipline and not hits:
-        hits = await m.code_search(query_vec, k=k)  # nothing in-lane → fall back to the global pool
+    hits = await m.code_search(query_vec, k=k, discipline=discipline, min_score=min_score)
     by_proj: dict[str, set[str]] = {}
     for h in hits:
         if h.get("project") and h.get("file_path"):
@@ -394,16 +419,6 @@ GRAPH_NODES_COLL = "GraphNodes"
 GRAPH_EDGES_COLL = "GraphEdges"
 GOVERNANCE_COLL = "GovernanceRules"
 
-_DEMO_GRAPH_NODES: list[dict] = []  # DEMO in-mem graph (Atlas writes no-op) — the lineage/feature graph lives here
-_DEMO_GRAPH_EDGES: list[dict] = []
-
-
-def reset_demo_graph() -> None:
-    """DEMO reset/seed: drop the in-mem graph (lineage/feature nodes + edges) before re-seeding."""
-    _DEMO_GRAPH_NODES.clear()
-    _DEMO_GRAPH_EDGES.clear()
-
-
 async def save_graph(nodes: list[dict], edges: list[dict], project_id: str) -> None:
     """Replace the stored Graph A for a project (clear then insert) — a rebuild is idempotent.
     Per-project_id isolation matters: the file graph ('local') and the lineage graph ('lineage') never
@@ -425,14 +440,14 @@ async def graph_nodes(project_id: str = "local") -> list[dict]:
     if demo.is_demo():
         return [dict(n) for n in _DEMO_GRAPH_NODES if n.get("project_id") == project_id]
     async with MongoMCP() as m:
-        return await m.find(GRAPH_NODES_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=2000)
+        return await m.find(GRAPH_NODES_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=GRAPH_NODES_LIMIT)
 
 
 async def graph_edges(project_id: str = "local") -> list[dict]:
     if demo.is_demo():
         return [dict(e) for e in _DEMO_GRAPH_EDGES if e.get("project_id") == project_id]
     async with MongoMCP() as m:
-        return await m.find(GRAPH_EDGES_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=5000)
+        return await m.find(GRAPH_EDGES_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=GRAPH_EDGES_LIMIT)
 
 
 async def add_graph_nodes(nodes: list[dict]) -> None:
@@ -529,14 +544,6 @@ async def watchers_of(subject_id: str) -> list[dict]:
 
 NOTIFICATIONS_COLL = "Notifications"
 ACCESS_GRANTS_COLL = "AccessGrants"
-
-_DEMO_NOTIFICATIONS: list[dict] = []  # DEMO in-mem feed (Atlas writes no-op) — runtime pings persist here so the bell works
-
-
-def reset_demo_notifications() -> None:
-    """DEMO reset: drop session-generated notifications (the canned feed is added by the inbox endpoint)."""
-    _DEMO_NOTIFICATIONS.clear()
-
 
 async def save_notification(doc: dict) -> None:
     if demo.is_demo():
@@ -635,14 +642,6 @@ async def access_grants_for_requester(requester_id: str) -> list[dict]:
 
 
 TASKS_COLL = "Tasks"  # PascalCase, the Work hub's source of truth (Phase A)
-_DEMO_TASKS: dict[str, dict] = {}  # DEMO_MODE in-mem task store — Atlas writes no-op, so the Work hub lives here
-
-
-def reset_demo_tasks() -> None:
-    """DEMO reset/seed: drop every in-mem task so only the freshly re-seeded board's tasks remain."""
-    _DEMO_TASKS.clear()
-
-
 def _demo_key(project_id, task_id: str) -> str:
     """Namespace the in-mem task store by project. In DEMO_MODE every wizard project is built from the
     one canned plan, so the issue ids (= task ids) are identical across projects; keying by the bare id
@@ -658,7 +657,14 @@ async def save_tasks(docs: list[dict]) -> None:
         for d in docs:
             _DEMO_TASKS[_demo_key(d.get("project_id"), d["id"])] = dict(d)
         return
+    # idempotent by (project_id, id) — drop any existing rows for these tasks first, then insert, so a
+    # re-dispatch / retry never leaves a DUPLICATE row (which then renders twice on the Work board).
     async with MongoMCP() as m:
+        by_proj: dict = {}
+        for d in docs:
+            by_proj.setdefault(d.get("project_id"), []).append(d["id"])
+        for pid, ids in by_proj.items():
+            await m.delete_many(TASKS_COLL, {"project_id": pid, "id": {"$in": ids}})
         await m.insert_many(TASKS_COLL, docs)
 
 
@@ -669,11 +675,21 @@ async def tasks_for_project(project_id: int) -> list[dict]:
         return await m.find(TASKS_COLL, query={"project_id": project_id}, projection={"_id": 0}, limit=500)
 
 
-async def all_tasks() -> list[dict]:
+async def all_tasks(assignee: str | None = None) -> list[dict]:
+    """Every task, or — with `assignee` — just one person's, filtered SERVER-SIDE so the Work hub's
+    me / user:<name> scopes never fetch the whole board to keep a handful."""
     if demo.is_demo():
-        return [dict(d) for d in _DEMO_TASKS.values()]
+        rows = [d for d in _DEMO_TASKS.values() if not assignee or d.get("assignee") == assignee]
+        # dedup by bare id — demo projects share the same canned plan so task ids collide across projects
+        seen: dict[str, dict] = {}
+        for d in rows:
+            tid = d["id"]
+            if tid not in seen or (d.get("updated_at") or "") >= (seen[tid].get("updated_at") or ""):
+                seen[tid] = d
+        return [dict(d) for d in seen.values()]
     async with MongoMCP() as m:
-        return await m.find(TASKS_COLL, projection={"_id": 0}, limit=10000)  # was 1000 — don't drop tasks at scale
+        q = {"assignee": assignee} if assignee else None
+        return await m.find(TASKS_COLL, query=q, projection={"_id": 0}, limit=TASKS_LIMIT)
 
 
 async def get_task(task_id: str) -> dict:
@@ -708,14 +724,6 @@ async def delete_tasks_for_project(project_id: int) -> None:
 
 EVENTS_COLL = "ChangeEvents"  # append-only change log (calendar + work) driving the reflow engine + the LPG spine
 
-_DEMO_EVENTS: list[dict] = []  # DEMO in-mem event log (Atlas writes no-op) — append-ordered = chronological
-
-
-def reset_demo_events() -> None:
-    """DEMO reset: drop the session event log."""
-    _DEMO_EVENTS.clear()
-
-
 async def save_event(doc: dict) -> None:
     if demo.is_demo():
         _DEMO_EVENTS.append(dict(doc))
@@ -735,14 +743,6 @@ async def all_events(limit: int = 20000) -> list[dict]:  # was 1000 — the refl
 # CHOSEN/SOLUTIONS/RESERVED/DELTA_*/REQA/ATTRIBUTIONS/RESULTS) write THROUGH to here so they survive a
 # restart, while the dicts stay the fast read cache (hot paths never hit Mongo). Rehydrated on startup. ──
 SESSION_COLL = "SessionState"
-_DEMO_SESSION: dict[tuple[str, str], dict] = {}  # DEMO in-mem (store,key) → value (Atlas writes no-op)
-
-
-def reset_demo_session() -> None:
-    """DEMO reset: drop the persisted session snapshot."""
-    _DEMO_SESSION.clear()
-
-
 async def save_state(store: str, key: str, value: dict) -> None:
     """Write-through one session entry (durable). value MUST be JSON-able (model_dump primitives). Cold-path
     only (brief/plan/ratify/dispatch), so the delete+insert upsert cost is fine."""
@@ -891,14 +891,20 @@ class MongoMCP:
     async def hybrid_search(
         self, collection: str, vector_index: str, text_index: str, vpath: str,
         query_vec: list[float], query_text: str, k: int = 3, projection: dict | None = None,
+        min_score: float | None = None, key: str = "name",
     ) -> list[dict]:
         """Hybrid retrieval: native MongoDB $rankFusion (server-side reciprocal rank fusion of
         $vectorSearch + $search full-text). Falls back to vector-only if fusion errors (e.g. the
-        full-text index is absent, or the server predates 8.1)."""
+        full-text index is absent, or the server predates 8.1).
+
+        `min_score` adds a RELEVANCE FLOOR: a doc only survives if its raw $vectorSearch cosine is
+        ≥ min_score. $rankFusion's output score is a fused RANK, not a cosine, so the floor is applied
+        via a paired vector_search keyed on `key` — a brief with no genuine match returns []. This is
+        what stops a mismatched-domain brief (e.g. a video game) from surfacing unrelated past work."""
         proj: dict = {"_id": 0}
         proj.update(projection or {})
         try:
-            return await self._aggregate(collection, [
+            fused = await self._aggregate(collection, [
                 {"$rankFusion": {"input": {"pipelines": {
                     "vector": [{"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k * 2}}],
                     "text": [{"$search": {"index": text_index, "text": {"query": query_text, "path": {"wildcard": "*"}}}}, {"$limit": k * 2}],
@@ -907,23 +913,32 @@ class MongoMCP:
                 {"$project": proj},
             ])
         except Exception:
-            return await self._aggregate(collection, [
+            fused = await self._aggregate(collection, [
                 {"$vectorSearch": {"index": vector_index, "path": vpath, "queryVector": query_vec, "numCandidates": max(50, k * 10), "limit": k}},
                 {"$project": proj},
             ])
+        if min_score is None or not fused:
+            return fused
+        gate = await self.vector_search(collection, vector_index, vpath, query_vec, k=max(k, 10), projection={key: 1})
+        keep = {g.get(key) for g in gate if (g.get("score") or 0) >= min_score}
+        return [d for d in fused if d.get(key) in keep]
 
     async def code_search(self, query_vec: list[float], k: int = 5, projection: dict | None = None,
-                          discipline: str | None = None) -> list[dict]:
+                          discipline: str | None = None, min_score: float | None = None) -> list[dict]:
         """Code-RAG: vector search over CodeChunks — reusable code across the agency's past repos.
-        `discipline` pre-filters server-side (the vector index has a filter field on it)."""
+        `discipline` pre-filters server-side (the vector index has a filter field on it). `min_score`
+        is a cosine relevance floor — chunks below it are dropped, so a mismatched brief surfaces none."""
         proj: dict = {"_id": 0, "project": 1, "file_path": 1, "web_url": 1, "excerpt": 1,
-                      "summary": 1, "discipline": 1, "language": 1}
+                      "summary": 1, "discipline": 1, "language": 1, "score": {"$meta": "vectorSearchScore"}}
         proj.update(projection or {})
         vs: dict = {"index": CODE_INDEX, "path": "embedding", "queryVector": query_vec,
                     "numCandidates": max(50, k * 10), "limit": k}
         if discipline:
             vs["filter"] = {"discipline": discipline}
-        return await self._aggregate(CODE_COLL, [{"$vectorSearch": vs}, {"$project": proj}])
+        rows = await self._aggregate(CODE_COLL, [{"$vectorSearch": vs}, {"$project": proj}])
+        if min_score is not None:
+            rows = [r for r in rows if (r.get("score") or 0) >= min_score]
+        return rows
 
     async def find(self, collection: str, projection: dict | None = None, query: dict | None = None, limit: int = 20) -> list[dict]:
         res = await self.session.call_tool(

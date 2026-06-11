@@ -5,6 +5,7 @@ contract. The caller persists (rag.save_agreement). Pure + deterministic + testa
 """
 from __future__ import annotations
 
+from app import const
 from app.contracts import Agreement, DeveloperProfile, InterfaceDraft, SchemaField, SubteamDraft
 
 _TRUST = {"low": 0, "medium": 1, "high": 2}
@@ -14,30 +15,35 @@ _SENIORITY = {"junior": 0, "mid": 1, "senior": 2}
 def lead_of(discipline: str, members: list[DeveloperProfile]) -> str | None:
     """The lead who signs a discipline's agreements: the highest-trust (then most-senior) developer in that
     lane — deterministic, not roster-order. Falls back to the manager when the lane is an orphan (no dev)."""
-    devs = [m for m in members if m.role == "developer" and m.discipline == discipline]
+    devs = [m for m in members if m.covers(discipline)]
     if devs:
         best = max(devs, key=lambda m: (_TRUST.get(m.trust_in(discipline), 0), _SENIORITY.get(m.seniority, 1)))
         return best.username
-    mgr = next((m for m in members if m.role == "manager"), None)
+    mgr = next((m for m in members if m.is_manager), None)
     return mgr.username if mgr else None
 
 
-def ratifiers_for(agreement: Agreement, members: list[DeveloperProfile]) -> list[str]:
-    """The MINIMAL set who must consent — never broadcast. interface → both lane leads; subteam/handoff/
-    reuse/assign → the lane lead; priority/reschedule/default → the manager."""
+def ratifiers_for(agreement: Agreement, members: list[DeveloperProfile],
+                  gate_ratifiers: dict[str, str] | None = None) -> list[str]:
+    """The MINIMAL set who must consent — never broadcast. A lane's signer is its GATE RATIFIER when known
+    (delegate ?? owner — the assigned lead, possibly out-of-discipline when availability stretched the work),
+    else the lane lead. interface → both lanes; subteam/handoff/reuse/assign → the producing lane;
+    priority/reschedule/default → the manager."""
     t = agreement.type
+    gr = gate_ratifiers or {}
     out: list[str] = []
     if t == "interface":
         for disc in (agreement.producer_discipline, agreement.consumer_discipline):
-            lead = lead_of(disc, members) if disc else None
+            lead = (gr.get(disc) or lead_of(disc, members)) if disc else None
             if lead and lead not in out:
                 out.append(lead)
     elif t in ("subteam", "handoff", "reuse", "assign"):
-        lead = lead_of(agreement.producer_discipline or agreement.consumer_discipline or "", members)
+        disc = agreement.producer_discipline or agreement.consumer_discipline or ""
+        lead = gr.get(disc) or lead_of(disc, members)
         if lead:
             out.append(lead)
     else:  # priority / reschedule / default → the manager arbitrates
-        mgr = next((m for m in members if m.role == "manager"), None)
+        mgr = next((m for m in members if m.is_manager), None)
         if mgr:
             out.append(mgr.username)
     return out
@@ -143,7 +149,7 @@ def find_precedent(new: dict, past: list[dict]) -> str | None:
         return None
     sig = _iface_sig(new)
     for p in past:
-        if (p.get("type") == "interface" and p.get("state") in ("ratified", "auto_passed")
+        if (p.get("type") == "interface" and p.get("state") in const.DONE
                 and p.get("id") != new.get("id") and _iface_sig(p) == sig):
             return p.get("id")
     return None

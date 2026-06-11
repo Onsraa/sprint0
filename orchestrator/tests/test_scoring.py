@@ -1,4 +1,5 @@
-"""Scored attribution — the lane is one weighted signal, not a gate (no I/O, no LLM)."""
+"""Scored attribution — eligibility = COVERS the lane (composable roles); among coverers, the passport
+(skill/trust/load/seniority/history) ranks. No I/O, no LLM."""
 from app import scoring
 from app.contracts import ContextScope, Issue
 
@@ -16,13 +17,22 @@ def _cand(user, disc, score=0.5, trust_level="medium", load=20, seniority="mid",
             "role": role, "history": history or []}
 
 
-def test_high_skill_out_of_lane_beats_low_skill_in_lane():
-    # the whole point: discipline is a SIGNAL, not a gate
+def test_out_of_lane_is_ineligible_under_covers():
+    # composable roles: eligibility = COVERS the lane. An out-of-lane dev (however skilled) is ineligible;
+    # the in-lane dev wins. (Replaces the old soft-stretch where a high-skill out-of-lane dev could win.)
     issue = _iss(typ="backend")
     in_lane = _cand("bob", "backend", score=0.2, trust_level="low")
     out_lane = _cand("ann", "frontend", score=0.95, trust_level="high")
     chosen, s, below = scoring.best_assignment(issue, [in_lane, out_lane])
-    assert chosen["gitlab_username"] == "ann" and not below
+    assert chosen["gitlab_username"] == "bob"
+
+
+def test_multi_lane_dev_wins_each_covered_lane():
+    # Tony covers backend AND devops → eligible (and best) for issues in EITHER lane
+    tony = {**_cand("tony", "backend", score=0.6, trust_level="high"), "disciplines": ["backend", "devops"]}
+    for lane in ("backend", "devops"):
+        chosen, _, _ = scoring.best_assignment(_iss(lane=lane), [tony])
+        assert chosen["gitlab_username"] == "tony"
 
 
 def test_in_lane_nudge_breaks_ties():
@@ -34,17 +44,47 @@ def test_in_lane_nudge_breaks_ties():
     assert chosen["gitlab_username"] == "a"
 
 
-def test_fully_loaded_excluded():
+def test_fully_loaded_in_lane_stays_eligible():
+    # load is a SIGNAL, not a gate — the busy in-lane specialist outranks a free out-of-lane dev (the
+    # schedule absorbs his wait; a hard load<100 gate let whoever was free sweep every lane).
+    issue = _iss(typ="backend")
+    busy_specialist = _cand("jean", "backend", score=0.6, trust_level="high", load=100, seniority="senior")
+    free_outlane = _cand("tony", "devops", score=0.6, trust_level="low", load=0, seniority="senior")
+    chosen, _, _ = scoring.best_assignment(issue, [busy_specialist, free_outlane])
+    assert chosen["gitlab_username"] == "jean"
+
+
+def test_load_still_separates_in_lane_peers():
+    # between same-lane peers, availability still routes to whoever can start sooner
     issue = _iss()
-    busy = _cand("busy", "backend", score=0.99, load=100)
-    free = _cand("free", "backend", score=0.4, load=10)
+    busy = _cand("busy", "backend", load=100)
+    free = _cand("free", "backend", load=10)
     chosen, _, _ = scoring.best_assignment(issue, [busy, free])
     assert chosen["gitlab_username"] == "free"
 
 
+def test_qa_never_takes_implementation_work():
+    # the one hard rule: the Tester only tests — a qa member is ineligible for non-qa lanes
+    issue = _iss(typ="backend")
+    qa = _cand("pascal", "qa", score=0.99, trust_level="high", load=0)
+    chosen, _, _ = scoring.best_assignment(issue, [qa])
+    assert chosen is None
+    dev = _cand("dev", "backend", score=0.2, load=0)  # covers the backend lane
+    chosen2, _, _ = scoring.best_assignment(issue, [qa, dev])
+    assert chosen2["gitlab_username"] == "dev"
+
+
+def test_qa_lane_still_routes_to_qa():
+    issue = _iss(lane="qa")  # acceptance work — the lane (not the issue type) names the discipline
+    qa = _cand("pascal", "qa", score=0.5)
+    dev = _cand("dev", "backend", score=0.5)
+    chosen, _, _ = scoring.best_assignment(issue, [qa, dev])
+    assert chosen["gitlab_username"] == "pascal"
+
+
 def test_below_floor_flags_weak_match():
     issue = _iss(risk="high")
-    weak = _cand("weak", "frontend", score=0.05, trust_level="low", load=95, seniority="junior")
+    weak = _cand("weak", "backend", score=0.05, trust_level="low", load=95, seniority="junior")  # covers, but weak
     chosen, s, below = scoring.best_assignment(issue, [weak])
     assert chosen["gitlab_username"] == "weak" and below  # assigned but flagged for the manager
 

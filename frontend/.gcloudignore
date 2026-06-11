@@ -4,7 +4,7 @@
 node_modules
 src
 public
-index.html
+/index.html
 vite.config.ts
 tsconfig*.json
 package.json

@@ -51,6 +51,32 @@ def test_finalize_assigns_ids_and_coerces_user():
     assert out.solutions[0].impacted_files == ["billing.py"]
 
 
+def test_classify_file_changes_against_the_feature_repo():
+    # a path already in the repo = modify; a new path = add (the deterministic ground-truth classifier)
+    cs = soln.classify_file_changes(["billing.py", "new_feature.py"], {"billing.py", "README.md"})
+    assert {c.path: c.change for c in cs} == {"billing.py": "modify", "new_feature.py": "add"}
+
+
+def test_finalize_new_project_is_all_add():
+    # empty `existing` (brand-new project, repo has no slice files yet) → every file is an `add`, never modify
+    sset = SolutionSet(solutions=[SolutionCard(source="ai", title="Fresh")])
+    out = soln.finalize_solution_set(sset, "backend", ["a.py", "b.py"], existing=set())
+    assert [c.change for c in out.solutions[0].file_changes] == ["add", "add"]
+
+
+def test_finalize_reclassifies_file_change_kind_against_repo():
+    # reuse = INSPIRATION: the change KIND is reclassified against the repo's real tree (the dev creates
+    # /edits, the program never auto-modifies/removes). A brand-new project (empty `existing`) → every
+    # file is `add`, even a demo-authored "modify"/"remove"; a file already in the repo → `modify`.
+    from app.contracts import FileChange
+    pre = [FileChange(path="x.py", change="remove"), FileChange(path="have.py", change="add")]
+    sset = SolutionSet(solutions=[SolutionCard(source="memory", title="Reuse", file_changes=pre)])
+    fresh = soln.finalize_solution_set(sset.model_copy(deep=True), "backend", ["a.py"], existing=set())
+    assert [c.change for c in fresh.solutions[0].file_changes] == ["add", "add"]   # new project → all add
+    delta = soln.finalize_solution_set(sset.model_copy(deep=True), "backend", ["a.py"], existing={"have.py"})
+    assert [c.change for c in delta.solutions[0].file_changes] == ["add", "modify"]  # have.py exists → modify
+
+
 def test_cross_gate_overlap_flags_only_sharers():
     p = _plan()
     assert soln.cross_gate_overlap(p, "backend", ["billing.py"]) == ["frontend"]  # frontend also touches billing.py

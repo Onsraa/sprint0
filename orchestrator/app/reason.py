@@ -7,16 +7,18 @@ REASON only (RAG via MongoDB MCP + Gemini). Execution is the separate, human-gat
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from datetime import datetime, timezone
 
 from app.agent import (
-    generate_architectures, generate_clarification, generate_contract_options, generate_cv_profile, generate_plan,
-    generate_qa_report, generate_regen, generate_solutions,
+    generate_acceptance, generate_architectures, generate_clarification, generate_contract_options,
+    generate_cv_profile, generate_memory_judgment, generate_plan, generate_qa_report, generate_regen,
+    generate_solutions,
 )
 from app.assign import assign_developers
-from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
+from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, MemoryCandidate, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
 from app.rag import (
     DEV_COLL, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
     all_profiles, code_search_expanded, cosine_score, decisions_for_project, embed_document, embed_queries, embed_query,
@@ -26,12 +28,21 @@ from app.rag import (
 log = logging.getLogger(__name__)
 
 _PP_PROJECTION = {"name": 1, "tech_stack": 1, "total_estimate_days": 1, "actual_days": 1, "outcome_notes": 1}
+
+# Reuse relevance is decided by the LLM (CRAG: a verdict + reason per candidate), NOT a cosine threshold —
+# bi-encoder cosine isn't comparable across briefs (anisotropic, phrasing-sensitive) and the N=2 corpus is
+# un-tunable. Retrieval below is RECALL only; the judge lives in clarify (memory_candidates) + the agent prompts.
 _DEV_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "skills_text": 1, "trust_level": 1}
 # Match needs the scoring fields + the stored vector (we rank locally over the tiny roster, not per-skill in Atlas).
 _DEV_MATCH_PROJECTION = {"_id": 0, "name": 1, "gitlab_username": 1, "username": 1, "trust_level": 1, "trust": 1,
-                         "discipline": 1, "load": 1, "role": 1, "seniority": 1, "history": 1, "skill_embedding": 1}
+                         "discipline": 1, "disciplines": 1, "is_manager": 1, "load": 1, "role": 1, "seniority": 1,
+                         "history": 1, "skill_embedding": 1}
 
 
+# Everything retrieved from memory (past projects, code chunks, decisions) or derived from user uploads
+# (roster skills come from CVs) is UNTRUSTED prompt input — same threat class as the brief itself. Each
+# formatter wraps its block in delimiter tags so every caller inherits the injection boundary, and the
+# instructions tell the model the tagged content is data, never instructions.
 def _format_past(projects: list[dict]) -> str:
     lines = []
     for p in projects:
@@ -41,7 +52,7 @@ def _format_past(projects: list[dict]) -> str:
             f"- {p.get('name')} | {stack} | est {p.get('total_estimate_days', '?')}d, "
             f"actual {p.get('actual_days', '?')}d | {(p.get('outcome_notes', '') or '')[:160]}"
         )
-    return "\n".join(lines) or "(no close matches)"
+    return "<past_projects>\n" + ("\n".join(lines) or "(no close matches)") + "\n</past_projects>"
 
 
 def _format_code(chunks: list[dict]) -> str:
@@ -52,19 +63,21 @@ def _format_code(chunks: list[dict]) -> str:
         f"    {(c.get('summary') or (c.get('excerpt', '') or '')[:240]).strip()}"
         for c in chunks
     ]
-    return "\n".join(lines) or "(no reusable code found)"
+    return "<code_chunks>\n" + ("\n".join(lines) or "(no reusable code found)") + "\n</code_chunks>"
 
 
 def _format_decisions(decisions: list[dict]) -> str:
     lines = [f"- [{d.get('grade', 'proposed')}] {d.get('recommendation', '')} (on {d.get('project_name', '?')})"
              for d in decisions]
-    return "\n".join(lines) or "(no standing team decisions for this gate)"
+    return "<team_decisions>\n" + ("\n".join(lines) or "(no standing team decisions for this gate)") + "\n</team_decisions>"
 
 
 def _format_roster(devs: list[dict]) -> str:
-    return "\n".join(
-        f"- @{d.get('gitlab_username')} ({d.get('trust_level')}): {d.get('skills_text', '')}" for d in devs
+    # skills_text is CV-derived (user upload) → cap it: injection surface AND the biggest prompt-size item
+    body = "\n".join(
+        f"- @{d.get('gitlab_username')} ({d.get('trust_level')}): {(d.get('skills_text', '') or '')[:160]}" for d in devs
     ) or "(roster unavailable)"
+    return "<roster>\n" + body + "\n</roster>"
 
 
 def _format_constraints(c: Constraints | None) -> str:
@@ -89,6 +102,22 @@ def _normalize_plan_ids(plan: PlanJSON) -> None:
             iss.depends_on = [id_map[d] for d in iss.depends_on if d in id_map]
 
 
+_DISCIPLINE_LANES = {"uiux", "backend", "frontend", "qa", "devops"}  # the valid relay lanes (= relay._LANE_STAGE keys)
+
+
+def _normalize_plan_lanes(plan: PlanJSON) -> None:
+    """Collapse every issue's relay `lane` onto a valid DISCIPLINE so the gate ↔ slice ↔ owner ↔ solutions
+    chain (all keyed on the computed `discipline`) stays consistent. Folds type-lanes (design→uiux, db→
+    backend), keeps the 5 discipline lanes, and rewrites any FREE-STRING lane ("platform"/"security") to the
+    issue's discipline — an open lane has no slice/coverer/solutions, so it would build a phantom, ownerless,
+    unassignable gate (the 'open gate is empty' + 403 bug)."""
+    from app.contracts import _TYPE_TO_DISCIPLINE
+    for epic in plan.epics:
+        for iss in epic.issues:
+            resolved = _TYPE_TO_DISCIPLINE.get(iss.lane or "", iss.lane)
+            iss.lane = resolved if resolved in _DISCIPLINE_LANES else iss.discipline
+
+
 def _safe_username(raw: str) -> str:
     """A server-owned slug from the LLM's proposed handle — the handle is content, not a trusted key.
     Lowercase, kebab, strip anything that isn't [a-z0-9-] so it's safe as an id / GitLab lookup."""
@@ -96,56 +125,166 @@ def _safe_username(raw: str) -> str:
     return slug or "dev"
 
 
-async def propose_architectures(brief_text: str, constraints: Constraints | None = None) -> ArchitectureOptions:
+def select_grounded(past: list[dict], code: list[dict], grounded: list[str] | None) -> tuple[list[dict], list[dict]]:
+    """Keep only the memory candidates the human ratified (Use/Skip → `grounded` refs); None = keep all. A
+    past project matches by `name`, a code chunk by `file_path` (or "project · file_path")."""
+    if grounded is None:
+        return past, code
+    sel = set(grounded)
+    kept_past = [p for p in past if p.get("name") in sel]
+    kept_code = [c for c in code if c.get("file_path") in sel or f"{c.get('project')} · {c.get('file_path')}" in sel]
+    return kept_past, kept_code
+
+
+# The arch + plan phases retrieve PastProjects with the SAME query (the brief text) — cache the arch
+# retrieval per query-hash so run_brief reuses it instead of a redundant $rankFusion round-trip.
+_PP_GROUNDING: dict[str, list[dict]] = {}
+_PP_GROUNDING_CAP = 32  # FIFO — a wizard session touches a handful of briefs
+
+
+def _grounding_key(text: str) -> str:
+    return hashlib.sha1((text or "").encode()).hexdigest()[:16]
+
+
+def _cache_grounding(text: str, past: list[dict]) -> None:
+    if len(_PP_GROUNDING) >= _PP_GROUNDING_CAP:
+        _PP_GROUNDING.pop(next(iter(_PP_GROUNDING)))
+    _PP_GROUNDING[_grounding_key(text)] = list(past)
+
+
+async def propose_architectures(brief_text: str, constraints: Constraints | None = None,
+                                grounded: list[str] | None = None) -> ArchitectureOptions:
     async with MongoMCP() as m:
         qv = embed_query(brief_text)
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION)
+        _cache_grounding(brief_text, past)  # the plan phase reuses this exact retrieval (same query)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)
         try:  # ground the per-card `reuse` block in real reusable files (code-RAG + 1-hop import cluster)
             code = await code_search_expanded(m, qv, k=5)
         except Exception:
             code = []
+    past, code = select_grounded(past, code, grounded)  # the human ratified WHICH candidates to ground on (Use/Skip)
     prompt = (
         f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"SIMILAR PAST PROJECTS (agency memory — the `reuse` source):\n{_format_past(past)}\n\n"
-        f"REUSABLE CODE (chunk-level — cite the project + feature in each card's `reuse`):\n{_format_code(code)}\n\n"
+        f"CANDIDATE PAST PROJECTS (agency memory — JUDGE each for fit; reuse a card's `reuse` block ONLY from a "
+        f"project that genuinely fits this brief's domain; if none fit, design a fresh stack):\n{_format_past(past)}\n\n"
+        f"REUSABLE CODE (chunk-level — cite the project + feature in each card's `reuse`, only if listed):\n{_format_code(code)}\n\n"
         f"DEV ROSTER:\n{_format_roster(roster)}\n\n"
-        f"Propose 2-3 distinct, grounded architecture cards + your own ai_pick."
+        f"Propose EXACTLY 3 distinct architecture cards + your own ai_pick:\n"
+        f"  1) one ORIGINAL from-scratch stack — your best clean-slate design from the BRIEF ALONE, with an "
+        f"EMPTY `reuse` block (ignore the memory above for this card); it is the no-bias baseline.\n"
+        f"  2-3) memory-grounded alternatives — cite a card's `reuse` block ONLY from a past project that "
+        f"genuinely fits; if none fit, make them fresh too. Never force reuse onto every card."
     )
+    from app import trace
+    trace.step("gemini", "action", "Design architecture options", "ground the cards on the chosen memory, propose 2-3 stacks")
     opts = await generate_architectures(prompt)
+    for card in opts.cards:  # text hygiene — no semicolons / em-dashes in the card prose
+        card.summary, card.rationale = _sanitize(card.summary), _sanitize(card.rationale)
+    trace.step("gemini", "result", f"{len(opts.cards)} stack card(s) · AI pick: {opts.ai_pick_name}")
     from app import grading
-    idx = grading.recommend_architecture(opts.cards)   # the deterministic 'most proven reuse' badge (server-set)
+    idx = grading.recommend_architecture(opts.cards, opts.ai_pick_name)   # badge follows the AI's OWN pick, not reuse-max
     if idx is not None:
         opts.cards[idx].recommended = True
     return opts
 
 
 async def clarify_brief(brief_text: str, constraints: Constraints | None = None) -> ClarifiedSpec:
-    """Intake step: extract the spec, flag unclear *features* as ambiguity cards, and propose
-    memory-grounded reuse — the manager's first panel, before architecture + planning."""
-    qv = embed_query(brief_text)
-    async with MongoMCP() as m:
-        past = await m.hybrid_search(
-            PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION
-        )
-        try:
-            code = await m.code_search(qv, k=5)
-        except Exception:
-            code = []  # code-RAG index not present yet (pre-reseed) → skip the reuse-code section
+    """Intake step: extract the spec and flag unclear *features* as ambiguity cards. Agency-memory reuse is
+    judged LATER (judge_memory), on the RESOLVED spec — so the manager's answers can shift the grounding."""
+    from app import trace
+    trace.step("gemini", "thought", "Reading the brief", brief_text[:120])
     prompt = (
         f"<client_brief>\n{brief_text}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"SIMILAR PAST PROJECTS (agency memory):\n{_format_past(past)}\n\n"
-        f"REUSABLE CODE (chunk-level code-RAG over agency repos — cite specific files in reuse proposals):\n{_format_code(code)}\n\n"
-        f"Produce the clarified spec: extraction, 2-4 ambiguity cards, and reuse proposals."
+        f"Produce the clarified spec: extraction + 2-4 product-level ambiguity cards (never technical/stack)."
     )
-    return await generate_clarification(prompt)
+    trace.step("gemini", "action", "Clarify the brief", "extract goal · users · must-haves · ambiguities")
+    spec = await generate_clarification(prompt)
+    trace.step("gemini", "result", f"{len(spec.ambiguities)} ambiguit(ies) to resolve")
+    return spec
 
 
-async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None) -> SolutionSet:
+def _format_spec_for_memory(spec: ClarifiedSpec) -> str:
+    """A compact view of the RESOLVED spec for the memory judge — goal, features, and the answered calls."""
+    lines = [f"GOAL: {spec.goal}", "MUST-HAVES: " + "; ".join(spec.must_haves)]
+    decided = [f"  - {a.feature}: {a.resolution}" for a in spec.ambiguities if a.resolution]
+    if decided:
+        lines.append("RESOLVED DECISIONS:\n" + "\n".join(decided))
+    return "\n".join(lines)
+
+
+def _resolved_query(spec: ClarifiedSpec) -> str:
+    """The text we ground memory on: goal + must-haves + the manager's RESOLVED ambiguity answers."""
+    decided = [a.resolution for a in spec.ambiguities if a.resolution]
+    return " ".join([spec.goal, *spec.must_haves, *decided]).strip()
+
+
+async def judge_memory(spec: ClarifiedSpec, constraints: Constraints | None = None) -> list[MemoryCandidate]:
+    """CRAG reuse judge, run AFTER the ambiguities are resolved: retrieve agency-memory candidates on the
+    RESOLVED spec and grade each (verdict + reason, no cosine gate). Server pre-selects reuse-verdict ones;
+    the human toggles Use/Skip in the Memory panel, and the kept refs ground the architecture."""
+    from app import trace
+    query = _resolved_query(spec) or spec.goal
+    trace.step("gemini", "thought", "Grounding on the resolved spec", query[:120])
+    qv = embed_query(query)
+    async with MongoMCP() as m:
+        # retrieve for RECALL only — the LLM judges relevance per candidate (CRAG); no cosine decision-gate
+        trace.step("mongodb", "action", "Search agency memory", "$rankFusion ($vectorSearch + $search) over PastProjects")
+        past = await m.hybrid_search(
+            PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, query, k=3, projection=_PP_PROJECTION,
+        )
+        trace.step("mongodb", "result", f"{len(past)} candidate project(s)", ", ".join(p.get("name", "") for p in past))
+        try:
+            code = await m.code_search(qv, k=5)
+            trace.step("mongodb", "result", f"{len(code)} candidate code chunk(s)")
+        except Exception:
+            code = []  # code-RAG index not present yet (pre-reseed) → skip the reuse-code section
+    prompt = (
+        f"CLARIFIED SPEC (resolved):\n{_format_spec_for_memory(spec)}\n\n"
+        f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
+        f"CANDIDATE PAST PROJECTS (agency memory — retrieved by similarity; JUDGE each for fit):\n{_format_past(past)}\n\n"
+        f"CANDIDATE CODE (chunk-level code-RAG over agency repos; JUDGE each for fit):\n{_format_code(code)}\n"
+    )
+    trace.step("gemini", "action", "Judge reuse fit", "grade each candidate reuse / maybe / skip on the resolved spec")
+    judgment = await generate_memory_judgment(prompt)
+    for c in judgment.candidates:  # server default — strong-fit capabilities pre-selected; the human toggles in the UI
+        c.used = c.fit == "strong"
+        if not c.year:
+            c.year = _year_of(c.ref) or _year_of(c.project)  # year lives in the project name (traillog-2025)
+        c.capability, c.what, c.reason = _sanitize(c.capability), _sanitize(c.what), _sanitize(c.reason)
+        c.pros, c.cons = [_sanitize(p) for p in c.pros], [_sanitize(p) for p in c.cons]
+    _n = sum(1 for c in judgment.candidates if c.fit == "strong")
+    trace.step("gemini", "result", f"{_n} strong-fit capabilit(ies) of {len(judgment.candidates)}")
+    return judgment.candidates
+
+
+def _year_of(name: str) -> str:
+    m = re.search(r"(?:19|20)\d{2}", name or "")
+    return m.group(0) if m else ""
+
+
+def _sanitize(s: str) -> str:
+    """Code-owned text hygiene for AI copy: no semicolons, no em/en dashes, no doubled punctuation. The
+    prompts ask for this too; this guarantees it (manage in code, don't over-constrain the model)."""
+    if not s:
+        return s
+    s = s.replace("—", ", ").replace("–", "-")     # em-dash → comma break, en-dash → hyphen
+    s = re.sub(r"\s*;\s*", ". ", s)                  # semicolon → sentence break
+    s = re.sub(r"\s+([,.])", r"\1", s)               # no space before , or .
+    s = re.sub(r",\s*,", ",", s).replace(". .", ".")  # collapse doubled punctuation
+    return re.sub(r"\s{2,}", " ", s).strip()
+
+
+async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constraints | None = None,
+                            upstream_choices: dict[str, "SolutionCard"] | None = None,
+                            inbound_contracts: list[dict] | None = None) -> SolutionSet:
     """Reuse-or-innovate for ONE gate: a memory-grounded option + 1-2 fresh (dedup-checked) options, in a
-    SINGLE LLM call. The server adds ids, impacted files, and the user write-your-own slot."""
+    SINGLE LLM call. The server adds ids, impacted files, and the user write-your-own slot.
+    `upstream_choices` (discipline → the CHOSEN solution of an already-ratified gate) + `inbound_contracts`
+    (signed interface shapes this gate consumes) keep the proposals consistent with the decisions already
+    made — the gate never generates blind to its feature context."""
     slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
     if not slice_issues:
         return SolutionSet(discipline=discipline, solutions=[])
@@ -166,17 +305,30 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
             code = []
     try:  # #33 — feed past TEAM decisions so the LLM can ground a `conflict` flag (not hallucinate it)
         from app.rag import all_decisions
-        team_decisions = [d for d in await all_decisions()
-                          if d.get("visibility") == "team" and d.get("domain") == discipline]
+        team_decisions = await all_decisions(query={"visibility": "team", "domain": discipline})
     except Exception:
         team_decisions = []
+    ts = plan.tech_stack
+    upstream_text = "\n".join(
+        f"- {d} gate chose: {c.title} — {(c.summary or '')[:140]}" for d, c in (upstream_choices or {}).items()
+    ) or "(none ratified yet — this is a first-wave gate)"
+    contracts_text = "\n".join(
+        f"- {c.get('subject', '')}: {((c.get('interface') or {}).get('method', '') or '')} "
+        f"{((c.get('interface') or {}).get('path', '') or '')}"
+        for c in (inbound_contracts or [])
+    ) or "(no signed contracts into this gate yet)"
     prompt = (
         f"FEATURE: {plan.project_name}\n"
+        f"PRODUCT: {plan.client_summary}\n"
+        f"CHOSEN STACK (build on EXACTLY this): frontend {ts.frontend} · backend {ts.backend} · db {ts.db} · infra {ts.infra}\n"
         f"GATE DISCIPLINE: {discipline}\n\n"
         f"THE SLICE (issues this gate delivers):\n{slice_text}\n\n"
+        f"UPSTREAM RATIFIED CHOICES (decisions already made on this feature — every option you propose MUST "
+        f"stay consistent with them):\n{upstream_text}\n\n"
+        f"SIGNED CONTRACTS INTO THIS GATE (interfaces this slice consumes — build against these shapes):\n{contracts_text}\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n\n"
-        f"SIMILAR PAST PROJECTS (agency memory — reuse what worked):\n{_format_past(past)}\n\n"
-        f"REUSABLE CODE (chunk-level):\n{_format_code(code)}\n\n"
+        f"CANDIDATE PAST PROJECTS (agency memory — JUDGE each; reuse ONLY a project that genuinely fits this gate; none fit = build fresh):\n{_format_past(past)}\n\n"
+        f"REUSABLE CODE (chunk-level — only if listed):\n{_format_code(code)}\n\n"
         f"PAST TEAM DECISIONS (set conflict=true + name it in conflict_reason ONLY if an option genuinely "
         f"contradicts one; else conflict=false):\n{_format_decisions(team_decisions)}\n\n"
         f"Propose 2-3 grounded solutions for THIS gate."
@@ -187,9 +339,10 @@ async def propose_solutions(plan: PlanJSON, discipline: str, constraints: Constr
 
 
 async def propose_contract_options(plan: PlanJSON, prod, cons, chosen=None) -> ContractProposalSet:
-    """JIT contract options for ONE producer→consumer edge, grounded on the producer's CHOSEN gate solution.
-    The AI returns either `needed=false` (no real API boundary — no contract) or 1-2 pickable shape options
-    (reuse/fresh). The server assigns each proposal an id. Called when the producer ratifies its gate."""
+    """Contract options for ONE producer→consumer edge, drafted from the FEATURE (the two slices) — the
+    interface is independent of how either side implements it, so `chosen` is optional and normally omitted
+    (contract-first: drafted at reserve, before any gate choice). The AI returns either `needed=false` (no
+    real API boundary — no contract) or 1-2 pickable shape options. The server assigns each proposal an id."""
     from app import demo, canned
     if demo.is_demo():  # no Vertex on the public tier → the discipline's canned contract options (necessity-aware)
         opts = canned.contract_options_for(prod.discipline)
@@ -211,6 +364,25 @@ async def propose_contract_options(plan: PlanJSON, prod, cons, chosen=None) -> C
     return opts
 
 
+async def propose_acceptance(plan: PlanJSON) -> dict[str, str]:
+    """One specific, testable acceptance criterion per issue — the Tester's definition of done, which they
+    then refine (vs the generic 'works end-to-end' seed). One Gemini call; demo → {} (the generic line stands)."""
+    from app import demo
+    if demo.is_demo():
+        return {}
+    issues = [i for e in plan.epics for i in e.issues]
+    if not issues:
+        return {}
+    lines = [f"- {i.id} [{i.discipline}] {i.title}: {(i.description or '')[:120]}" for i in issues]
+    prompt = (f"FEATURE: {plan.project_name} — {(plan.client_summary or '')[:200]}\nISSUES:\n" + "\n".join(lines) +
+              "\n\nReturn exactly one AcceptanceCriterion per issue (echo its id).")
+    try:
+        res = await generate_acceptance(prompt)
+    except Exception:
+        return {}
+    return {c.issue_id: c.criterion.strip() for c in res.items if c.issue_id and c.criterion.strip()}
+
+
 async def regenerate_slice(issues: list, discipline: str, user_solution) -> RegeneratedSlice:
     """Rewrite a gate's issues to match a user-WRITTEN solution (no memory — just the user's intent). One
     LLM call; the caller applies the patches to the plan and recomputes impacted files."""
@@ -228,7 +400,8 @@ async def regenerate_slice(issues: list, discipline: str, user_solution) -> Rege
 
 
 def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | None,
-                       constraints: Constraints | None, vocab: list[str] | None = None) -> str:
+                       constraints: Constraints | None, vocab: list[str] | None = None,
+                       roster: list[dict] | None = None) -> str:
     chosen = ""
     if chosen_stack:
         s = chosen_stack
@@ -237,11 +410,15 @@ def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | N
     if vocab:
         vocab_line = ("KNOWN CAPABILITY PROFILES (reuse these capability_tags when one fits; only coin "
                       f"a new kebab-case tag if none match):\n{', '.join(vocab)}\n\n")
+    roster_line = ""
+    if roster:  # WS12: size + sequence with the real team; flag (never drop) work it can't staff
+        roster_line = f"DEV ROSTER (size + sequence the work with this team; flag gaps, do not drop them):\n{_format_roster(roster)}\n\n"
     return (
         f"<client_brief>\n{brief}\n</client_brief>\n\n"
         f"MANAGER CONSTRAINTS:\n{_format_constraints(constraints)}\n"
         f"{chosen}\n"
         f"{vocab_line}"
+        f"{roster_line}"
         f"SIMILAR PAST PROJECTS (ground your plan in these):\n{_format_past(past)}\n\nProduce the Sprint-0 plan."
     )
 
@@ -249,14 +426,26 @@ def _build_plan_prompt(brief: str, past: list[dict], chosen_stack: TechStack | N
 async def run_brief(
     brief_text: str, chosen_stack: TechStack | None = None, constraints: Constraints | None = None
 ) -> PlanJSON:
+    from app import trace
     vocab = await _known_profile_labels()  # own MCP context — fetch BEFORE the main one (no re-entrancy)
     async with MongoMCP() as m:
-        past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
-        plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab))
+        past = _PP_GROUNDING.get(_grounding_key(brief_text))
+        if past is not None:  # the arch phase already retrieved for this exact query — reuse, don't re-fetch
+            trace.step("server", "action", "Reuse the architecture-phase grounding", ", ".join(p.get("name", "") for p in past))
+        else:
+            trace.step("mongodb", "action", "Retrieve grounding", "$rankFusion over PastProjects for the plan")
+            past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(brief_text), brief_text, k=3, projection=_PP_PROJECTION)
+        roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)  # WS12: size/sequence the plan with the real team
+        trace.step("gemini", "action", "Plan the relay", "map features → epics → issues across the discipline gates")
+        plan = await generate_plan(_build_plan_prompt(brief_text, past, chosen_stack, constraints, vocab, roster))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
+        _normalize_plan_lanes(plan)  # fold any free-string lane → a valid discipline (no phantom gates)
         plan.grounded_on = plan.grounded_on or [p["name"] for p in past]
+        trace.step("server", "action", "Assign + schedule", "match each issue to the roster by skill + availability")
         await _match_and_assign(plan, m)
     await _discover_profiles(plan)  # own MCP context — AFTER the main one (no re-entrancy)
+    _tasks = sum(len(e.issues) for e in plan.epics)
+    trace.step("server", "result", f"{_tasks} task(s) · {len(plan.epics)} epic(s)", "relay ready to open on reserve")
     return plan
 
 
@@ -350,10 +539,11 @@ async def delta_brief(feature_text: str, record: dict, constraints: Constraints 
         decisions = []
     async with MongoMCP() as m:
         past = await m.hybrid_search(
-            PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(feature_text), feature_text, k=3, projection=_PP_PROJECTION
+            PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", embed_query(feature_text), feature_text, k=3, projection=_PP_PROJECTION,
         )
         plan = await generate_plan(_build_delta_prompt(feature_text, record, existing_titles, manifest, past, stack, constraints, decisions))
         _normalize_plan_ids(plan)   # never trust LLM-minted ids — own them server-side
+        _normalize_plan_lanes(plan)  # fold any free-string lane → a valid discipline (no phantom gates)
         plan.grounded_on = plan.grounded_on or [record.get("name", "this project"), *(p["name"] for p in past)]
         await _match_and_assign(plan, m)
     return plan

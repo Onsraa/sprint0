@@ -49,6 +49,7 @@ import type {
   LoginResponse,
   Member,
   MemberRole,
+  MemoryCandidate,
   MyIssue,
   MyIssuesResponse,
   NotificationItem,
@@ -91,6 +92,9 @@ import type {
 /** A passport-ranked teammate to hand work off to (task or gate). */
 export type HandoffCandidate = { username: string; name: string; discipline: string | null; score: number; in_lane: boolean; why: string };
 
+/** One step in the live ReAct trace the gateway emits during a wizard phase (clarify/arch/plan). */
+export type TraceStep = { seq: number; actor: string; kind: "thought" | "action" | "result"; label: string; detail?: string; ts?: number };
+
 export type {
   AccessGrant,
   AmbiguityCard,
@@ -128,6 +132,7 @@ export type {
   LoginResponse,
   Member,
   MemberRole,
+  MemoryCandidate,
   MyIssue,
   MyIssuesResponse,
   NotificationItem,
@@ -344,6 +349,11 @@ export const draft = {
 
 /* ── Transport helpers ───────────────────────────────────────────────── */
 
+// Every call carries a hard timeout: a hung gateway/LLM call must surface as an error the UI
+// can react to (retry, toast), never an infinite spinner. 120s covers slow live Vertex plan-gen.
+const REQUEST_TIMEOUT_MS = 120_000;
+const reqSignal = () => AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+
 async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -357,19 +367,20 @@ async function jpost<T>(path: string, body?: unknown): Promise<T> {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: reqSignal(),
   });
   return unwrap<T>(res);
 }
 
 async function jget<T>(path: string, schema?: z.ZodType<T>): Promise<T> {
-  const data = await unwrap<T>(await fetch(BASE + path, { headers: authHeaders() }));
+  const data = await unwrap<T>(await fetch(BASE + path, { headers: authHeaders(), signal: reqSignal() }));
   // Zod validation at the boundary (opt-in): a backend contract change throws HERE with a clear,
   // located message instead of leaking undefined into a component three layers down.
   return schema ? schema.parse(data) : data;
 }
 
 async function jdelete<T>(path: string): Promise<T> {
-  return unwrap<T>(await fetch(BASE + path, { method: "DELETE", headers: authHeaders() }));
+  return unwrap<T>(await fetch(BASE + path, { method: "DELETE", headers: authHeaders(), signal: reqSignal() }));
 }
 
 async function jpatch<T>(path: string, body?: unknown): Promise<T> {
@@ -377,12 +388,13 @@ async function jpatch<T>(path: string, body?: unknown): Promise<T> {
     method: "PATCH",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: reqSignal(),
   });
   return unwrap<T>(res);
 }
 
 async function fpost<T>(path: string, form: FormData): Promise<T> {
-  return unwrap<T>(await fetch(BASE + path, { method: "POST", headers: authHeaders(), body: form }));
+  return unwrap<T>(await fetch(BASE + path, { method: "POST", headers: authHeaders(), body: form, signal: reqSignal() }));
 }
 
 /* ── Endpoints ───────────────────────────────────────────────────────── */
@@ -504,11 +516,20 @@ export const api = {
   getArchitectures(briefId: string): Promise<ArchitectureOptions> {
     return jget(`/api/briefs/${briefId}/architectures`);
   },
+  /* The live Reason→Action trace the gateway emits during a phase; polled by the wizard loader. */
+  trace(briefId: string, phase?: string): Promise<{ steps: TraceStep[] }> {
+    // phase-scoped run ({brief_id}:{phase}) so each wizard phase polls only its own steps
+    return jget(`/api/briefs/${briefId}/trace${phase ? `?phase=${encodeURIComponent(phase)}` : ""}`);
+  },
   resolveClarify(briefId: string, answers: Record<string, string>): Promise<ClarifiedSpec> {
     return jpost(`/api/briefs/${briefId}/clarify/resolve`, { answers });
   },
-  architectures(briefId: string, constraints?: Constraints | null): Promise<ArchitectureOptions> {
-    return jpost(`/api/briefs/${briefId}/architectures`, constraints ?? null);
+  architectures(briefId: string, constraints?: Constraints | null, grounded?: string[]): Promise<ArchitectureOptions> {
+    // grounded = the human-ratified memory-candidate refs (Use/Skip). `decided=true` lets the server tell
+    // "kept none → fresh build" (grounded=[]) apart from "no panel shown → AI judges all" (grounded omitted).
+    let qs = "";
+    if (grounded) qs = "?decided=true" + grounded.map((r) => `&grounded=${encodeURIComponent(r)}`).join("");
+    return jpost(`/api/briefs/${briefId}/architectures${qs}`, constraints ?? null);
   },
   plan(
     briefId: string,
@@ -534,6 +555,13 @@ export const api = {
   },
   relay(planId: string): Promise<RelayState> {
     return jget(`/api/plans/${planId}/relay`, S.RelayState);
+  },
+  /* The Tester's definition of done — one acceptance criterion per plan issue (seeded from the issue) */
+  getAcceptance(planId: string): Promise<{ plan_id: string; criteria: { issue_id: string; title: string; discipline: string; type: string; text: string }[] }> {
+    return jget(`/api/plans/${planId}/acceptance`);
+  },
+  saveAcceptance(planId: string, criteria: { issue_id: string; text: string }[]): Promise<{ saved: number }> {
+    return jpost(`/api/plans/${planId}/acceptance`, { criteria });
   },
   ratify(
     planId: string,
@@ -677,8 +705,9 @@ export const api = {
     return jpost(`/api/agreements/${id}/draft-shape`, { description });
   },
   /* The reuse agreement made executable: the cited source files for a chosen memory solution */
-  reusePack(projects: string[]): Promise<{ count: number; files: { project: string; file_path: string; web_url: string; excerpt: string }[] }> {
-    return jget(`/api/reuse-pack?projects=${encodeURIComponent(projects.join(","))}`);
+  reusePack(projects: string[], discipline?: string): Promise<{ count: number; files: { project: string; file_path: string; web_url: string; excerpt: string }[] }> {
+    const d = discipline ? `&discipline=${encodeURIComponent(discipline)}` : "";
+    return jget(`/api/reuse-pack?projects=${encodeURIComponent(projects.join(","))}${d}`);
   },
 
   /* QA */

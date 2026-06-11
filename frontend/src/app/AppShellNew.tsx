@@ -9,7 +9,7 @@ import { useMe } from "../features/auth/useAuth";
 import { useUI } from "../lib/store";
 import { useRoleGate } from "../features/nav/nav";
 import { Icon, FullLogo, ZeroMark } from "../lib/icon";
-import { Avatar, Kbd, IconButton, Dropdown } from "../components/ui";
+import { Avatar, Kbd, IconButton, Dropdown, DISC } from "../components/ui";
 import { useHoverState } from "../lib/hooks";
 import { Landing } from "../views/Landing";
 import { Wizard } from "../wizard/Wizard";
@@ -22,14 +22,18 @@ import { live, api } from "../lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-/* The demo roster shown in the persona switcher (the 5 real seeded accounts). */
+/* The demo roster shown in the persona switcher (mirrors the 3 composable seeded accounts in team.json).
+   `is_manager` is the Tech-Lead capability (flagged with an icon); the sub-label is the user's actual
+   lanes (Teddy = Tester, Tony = Backend · DevOps, Sam = Frontend) — never the word "manager". */
 export const DEMO_PERSONAS = [
-  { username: "Onsraa", name: "Teddy", role: "manager", discipline: null },
-  { username: "sprint0-se", name: "Jean Gabriel", role: "developer", discipline: "backend" },
-  { username: "sprint0-sse", name: "Tony Stark", role: "developer", discipline: "devops" },
-  { username: "sprint0-fe", name: "Sam Dupont", role: "developer", discipline: "frontend" },
-  { username: "sprint0-qa", name: "Pascal Alice", role: "qa", discipline: "qa" },
+  { username: "Onsraa", name: "Teddy", is_manager: true, disciplines: ["qa"] },
+  { username: "sprint0-sse", name: "Tony Stark", is_manager: false, disciplines: ["backend", "devops"] },
+  { username: "sprint0-fe", name: "Sam Dupont", is_manager: false, disciplines: ["frontend"] },
 ];
+
+/* persona sub-label = the lanes a user covers, by their display label (qa → "Tester"). */
+export const personaLanes = (p: { disciplines?: string[] }) =>
+  (p.disciplines ?? []).map((d) => DISC[d as keyof typeof DISC]?.label ?? d).join(" · ");
 
 /* nav items carry a `roles` allowlist + capability flags — per-role chrome. */
 /* v4 two-plane: the Overview group reads first (Relays) → Work → Explore → System.
@@ -196,10 +200,13 @@ function Workspace() {
       {DEMO_PERSONAS.map((p) => (
         <button key={p.username} onClick={() => { switchPersona(p.username); setOpen(false); }}
           style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: p.username === me.username ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>
-          <Avatar name={p.name} size={26} tone={p.role === "manager" ? "ink" : undefined} />
+          <Avatar name={p.name} size={26} tone={p.is_manager ? "ink" : undefined} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
-            <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, fontWeight: 500 }}>
+              {p.name}
+              {p.is_manager && <Icon name="ratify" size={11} style={{ color: "var(--text-tertiary)" }} />}
+            </div>
+            <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.is_manager ? "tech lead · " : ""}{personaLanes(p)}</div>
           </div>
           {p.username === me.username && <Icon name="check" size={15} style={{ color: "var(--text-primary)" }} />}
         </button>
@@ -291,10 +298,13 @@ function SidebarFooter() {
         {DEMO_PERSONAS.map((p) => (
           <button key={p.username} onClick={() => { switchPersona(p.username); setOpen(false); }}
             style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px", borderRadius: "var(--r-md)", background: p.username === me.username ? "var(--bg-hover)" : "transparent", textAlign: "left" }}>
-            <Avatar name={p.name} size={26} tone={p.role === "manager" ? "ink" : undefined} />
+            <Avatar name={p.name} size={26} tone={p.is_manager ? "ink" : undefined} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
-              <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.role}{p.discipline ? " · " + p.discipline : ""}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, fontWeight: 500 }}>
+                {p.name}
+                {p.is_manager && <Icon name="ratify" size={11} style={{ color: "var(--text-tertiary)" }} />}
+              </div>
+              <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)" }}>{p.is_manager ? "tech lead · " : ""}{personaLanes(p)}</div>
             </div>
             {p.username === me.username && <Icon name="check" size={15} style={{ color: "var(--text-primary)" }} />}
           </button>

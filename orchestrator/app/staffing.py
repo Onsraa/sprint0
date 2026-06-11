@@ -40,7 +40,9 @@ def _needed(plan: PlanJSON) -> set[str]:
 
 
 def _qualified(member: DeveloperProfile, discipline: str) -> bool:
-    return member.discipline == discipline and _RANK.get(member.trust_in(discipline), 0) >= 1
+    # coverage = whether the member can cover the lane (presence), NOT a trust threshold. Trust is a
+    # scoring/auto-pass signal, not a coverage gate — a present low-trust dev is COVERED, not a gap.
+    return member.covers(discipline)
 
 
 def recommend(discipline: str, devs: list[DeveloperProfile]) -> dict:
@@ -76,22 +78,25 @@ def recommend(discipline: str, devs: list[DeveloperProfile]) -> dict:
 
 
 def coverage(plan: PlanJSON, members: list[DeveloperProfile]) -> list[dict]:
-    """Per needed discipline: covered (a qualified + available member exists) or a gap + recommendation."""
-    devs = [m for m in members if m.role == "developer"]
+    """Per needed discipline: covered (SOMEONE covers the lane — presence, not availability) or a true
+    gap + recommendation. A busy coverer is still a dedicated dev (not a dashed gap); availability only
+    picks WHICH coverer leads. Every member counts — a manager who covers a lane staffs it like anyone."""
+    devs = list(members)
     out = []
     for disc in sorted(_needed(plan)):
-        lead = next((m for m in devs if _qualified(m, disc) and _available(m)), None)
+        coverers = [m for m in devs if _qualified(m, disc)]
+        lead = next((m for m in coverers if _available(m)), coverers[0] if coverers else None)
         out.append({
             "discipline": disc,
-            "covered": lead is not None,
+            "covered": bool(coverers),
             "lead": lead.username if lead else None,
-            "recommendation": None if lead else recommend(disc, devs),
+            "recommendation": None if coverers else recommend(disc, devs),
         })
     return out
 
 
 def is_orphan(discipline: str, members: list[DeveloperProfile]) -> bool:
-    """No developer leads this discipline at all → its relay gate has no one to ratify it and
-    falls to the manager. Ratify ownership is about who *leads* the discipline, not trust or
-    capacity (those gate work assignment + the Trust Dial auto-pass, not who signs the gate off)."""
-    return not any(m.discipline == discipline for m in members if m.role == "developer")
+    """No one covers this discipline at all → its relay gate has no one to ratify it and falls to the
+    manager. Ownership is about who *covers* the lane, not trust or capacity (those gate work assignment
+    + the Trust Dial auto-pass, not who signs the gate off). A manager who covers the lane counts."""
+    return not any(m.covers(discipline) for m in members)

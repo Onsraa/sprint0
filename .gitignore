@@ -37,3 +37,6 @@ docs/
 # …but the public repo needs its front door (root only):
 !/README.md
 !/LICENSE
+
+# local Claude Code tooling (worktrees, settings, plans)
+.claude/

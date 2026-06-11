@@ -7,6 +7,7 @@
 import { useState, useEffect } from "react";
 import { Icon, ZeroMark } from "../lib/icon";
 import { Button } from "../components/ui";
+import { api, type TraceStep } from "../lib/api";
 
 type Step = { id: string; label: string; sub: string };
 
@@ -102,6 +103,137 @@ export function SequenceLoader({ kicker, headline, lines, stepMs = 720, onDone }
   );
 }
 
+/* ───────── ReAct trace (live agent reasoning) ─────────
+   Polls GET /api/briefs/{id}/trace and renders the REAL Gemini · MongoDB · GitLab steps the
+   gateway emits during a phase (clarify/arch/plan). Visual is the v5 mockup's ReActTrace ported
+   1:1; the data is live (no canned REACT_STEPS). `onDone` fires after a minimum dwell so even a
+   fast (cached) phase shows a beat of reasoning — runLoader keeps the loader up until the real
+   call ALSO resolves, so a slow phase streams its whole trace. */
+const ACTOR_META: Record<string, { label: string; bg: string; fg: string }> = {
+  gemini:  { label: "Gemini",  bg: "oklch(0.28 0.09 265)", fg: "#fff" },
+  mongodb: { label: "MongoDB", bg: "oklch(0.28 0.13 148)", fg: "#fff" },
+  gitlab:  { label: "GitLab",  bg: "oklch(0.28 0.10 22)",  fg: "#fff" },
+  voyage:  { label: "Voyage",  bg: "oklch(0.28 0.10 290)", fg: "#fff" },
+  gcp:     { label: "GCP",     bg: "oklch(0.30 0.13 250)", fg: "#fff" },
+  server:  { label: "server",  bg: "var(--bg-active)",     fg: "var(--text-secondary)" },
+};
+const KIND_DOT: Record<string, string> = {
+  thought: "var(--text-quaternary)",
+  action:  "var(--blue)",
+  result:  "var(--green)",
+};
+const PHASE_LABEL: Record<string, string> = { clarify: "clarify", memory: "memory", arch: "architecture", plan: "plan", review: "review", create: "create" };
+
+export function ReActTrace({ runId, phase, onDone, minDwellMs = 1500 }: {
+  runId: string | null; phase: string; onDone: () => void; minDwellMs?: number;
+}) {
+  const [steps, setSteps] = useState<TraceStep[]>([]);
+  const [revealed, setRevealed] = useState(0);
+
+  // poll the PHASE-SCOPED trace (runId = briefId). Append-only — never let the rendered list shrink, so a
+  // re-begin / slow poll can't cause the flicker. `inFlight` stops overlapping polls on the tick.
+  useEffect(() => {
+    if (!runId) return;
+    let alive = true;
+    let inFlight = false;
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const r = await api.trace(runId, phase);
+        if (alive && r.steps?.length) setSteps((prev) => (r.steps.length >= prev.length ? r.steps : prev));
+      } catch { /* trace is best-effort */ }
+      finally { inFlight = false; }
+    };
+    poll();
+    const id = setInterval(poll, 700);
+    return () => { alive = false; clearInterval(id); };
+  }, [runId, phase]);
+
+  // reveal rows ONE AT A TIME (top→bottom spawn) toward the polled count — the row-by-row animation
+  useEffect(() => {
+    if (revealed >= steps.length) return;
+    const t = setTimeout(() => setRevealed((n) => n + 1), 450);
+    return () => clearTimeout(t);
+  }, [revealed, steps.length]);
+
+  // fire onDone after a minimum dwell — runLoader holds the loader until the real call also resolves
+  useEffect(() => {
+    const t = setTimeout(onDone, minDwellMs);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONLY real steps the gateway emitted — no canned/fake lines. Before the first step lands the pane is just
+  // the pulsing header (honest "thinking"); the real steps then spawn one row at a time (revealed counter).
+  const shown = steps.slice(0, revealed);
+  const lastIdx = shown.length - 1;
+
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto", padding: "6px 0", animation: "s0-fade-in var(--t-reg) both" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
+        <span style={{ width: 36, height: 36, borderRadius: "var(--r-md)", background: "var(--bg-secondary)",
+          border: "0.5px solid var(--border)", display: "grid", placeItems: "center" }}>
+          <ZeroMark size={19} />
+        </span>
+        <div>
+          <div className="kicker" style={{ marginBottom: 3 }}>sprint0 · {PHASE_LABEL[phase] || phase}</div>
+          <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px", display: "flex", alignItems: "center", gap: 9 }}>
+            Reasoning
+            <span style={{ display: "inline-flex", gap: 4 }}>
+              {[0, 1, 2].map(i => <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-primary)",
+                animation: `s0-dot-pulse 1.1s ${i * 0.16}s infinite` }} />)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {shown.map((step, i) => {
+          const actor = ACTOR_META[step.actor] || ACTOR_META.server;
+          const kindDot = KIND_DOT[step.kind] || KIND_DOT.thought;
+          const isCurrent = i === lastIdx;
+          const isLast = i === shown.length - 1;
+          return (
+            <div key={step.seq} style={{ display: "flex", gap: 10, animation: "s0-pop-in var(--t-reg) var(--ease-out) both" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 10, flexShrink: 0 }}>
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: kindDot, flexShrink: 0,
+                  boxShadow: isCurrent ? `0 0 0 3px color-mix(in srgb, ${kindDot} 20%, transparent)` : "none",
+                  transition: "box-shadow var(--t-reg)" }} />
+                {!isLast && <span style={{ width: 1.5, flex: 1, minHeight: 22, background: "var(--border)", marginTop: 3 }} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, padding: "5px 0 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: step.detail ? 6 : 0 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", height: 17, padding: "0 7px",
+                    borderRadius: "var(--r-xs)", background: actor.bg, color: actor.fg,
+                    fontSize: 9.5, fontWeight: 700, fontFamily: "var(--font-mono)", letterSpacing: "0.05em", flexShrink: 0 }}>
+                    {actor.label}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 500,
+                    color: isCurrent ? "var(--text-primary)" : "var(--text-secondary)",
+                    transition: "color var(--t-reg)" }}>
+                    {step.label}
+                  </span>
+                  {isCurrent && <span style={{ width: 6, height: 13, borderLeft: "1.5px solid var(--text-primary)",
+                    animation: "s0-caret 1s steps(1) infinite", marginLeft: 1 }} />}
+                </div>
+                {step.detail && (
+                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-quaternary)", lineHeight: 1.5,
+                    background: "var(--bg-secondary)", padding: "5px 9px", borderRadius: "var(--r-sm)",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    animation: "s0-fade-in var(--t-reg) 0.06s both" }}>
+                    {step.detail}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ───────── draft confirm sheet ───────── */
 export function ConfirmDraft({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
   return (
@@ -121,6 +253,31 @@ export function ConfirmDraft({ name, onConfirm, onCancel }: { name: string; onCo
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Button variant="ghost" size="md" onClick={onCancel}>Cancel</Button>
           <Button variant="primary" size="md" icon="clock" onClick={onConfirm}>Save draft</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────── discard draft sheet (destructive — red) ───────── */
+export function DiscardDraft({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div onClick={onCancel} style={{ position: "fixed", inset: 0, zIndex: 60, display: "grid", placeItems: "center",
+      background: "rgba(20,18,16,0.32)", backdropFilter: "blur(2px)", animation: "s0-scrim-in var(--t-reg) both" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 380, background: "var(--bg-elevated)", borderRadius: "var(--r-xl)",
+        border: "0.5px solid var(--border)", boxShadow: "var(--shadow-3)", padding: 20, animation: "s0-sheet-in var(--t-reg) var(--ease-out) both" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <span style={{ width: 30, height: 30, borderRadius: "var(--r-md)", background: "color-mix(in srgb, var(--red) 12%, transparent)", border: "0.5px solid var(--border)", display: "grid", placeItems: "center" }}>
+            <Icon name="close" size={15} style={{ color: "var(--red)" }} />
+          </span>
+          <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.2px" }}>Discard this draft?</span>
+        </div>
+        <p style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.55, margin: "0 0 18px" }}>
+          <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>{name}</b> will be removed from Drafts. This cannot be undone. Nothing was created in GitLab, so nothing else is affected.
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Button variant="ghost" size="md" onClick={onCancel}>Cancel</Button>
+          <Button variant="secondary" size="md" icon="close" onClick={onConfirm} style={{ color: "var(--red)", borderColor: "var(--red)" }}>Discard draft</Button>
         </div>
       </div>
     </div>

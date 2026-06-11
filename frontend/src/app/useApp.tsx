@@ -22,7 +22,7 @@ import type { Member, WorkTask, ProjectSummary, Attribution, Gate, RelayState } 
 
 type MockRole = "manager" | "developer" | "qa";
 const ROLE_CHROME: Record<MockRole, { land: string; canDispatch: boolean; canOnboard: boolean; canGovern: boolean; canRefactor: boolean; seesAllGates: boolean }> = {
-  manager: { land: "relays", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: true },
+  manager: { land: "relays", canDispatch: true, canOnboard: true, canGovern: true, canRefactor: true, seesAllGates: false },
   developer: { land: "relays", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
   qa: { land: "relays", canDispatch: false, canOnboard: false, canGovern: false, canRefactor: false, seesAllGates: false },
 };
@@ -71,7 +71,7 @@ const toMockAttribution = (a: Attribution): any => ({
   gitlab_author: a.gitlab_username, candidates: a.suggested ? [a.suggested] : [], resolved: null,
   ambiguous: true, trust_delta: null, score: a.score,
 });
-const toMockGate = (g: Gate, relay?: RelayState): any => ({ ...g, baton: !!relay?.baton?.includes(g.discipline as never), depends: g.depends_on ?? [], stretched: false, owner: null });
+const toMockGate = (g: Gate, relay?: RelayState): any => ({ ...g, baton: !!relay?.baton?.includes(g.discipline as never), depends: g.depends_on ?? [], stretched: false, owner: g.owner ?? null });
 
 /* (Removed: the Autonomy posture. NO auto-approval — every gate is ratified by its owner; the AI only recommends.) */
 
@@ -96,10 +96,12 @@ export function useApp() {
   const login = useLogin();
   const switchPersona = (username: string) => login.mutate(username, {
     onSuccess: (res) => {
-      // Full identity change: EVICT every prior-persona cache (work/inbox/queue/relays/decisions keys
-      // aren't user-scoped, so the Today list was blending across switches) but KEEP `me` — useLogin
-      // already re-seeded it from this login result, so this predicate avoids a null-member frame.
-      qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "me" });
+      // Refetch ONLY the user-scoped queries (their content depends on the caller); KEEP the shared data
+      // cached — roster/projects/relays/profiles are identical across personas (the views role-gate them
+      // client-side), so evicting them blanked the whole app and caused the freeze. `me` is already
+      // re-seeded by useLogin. The per-user Today list recomputes from the fresh `me` + the cached relays.
+      const userScoped = [qk.me(), qk.myQueue(), qk.inbox(), qk.decisions(), qk.work("team"), ["access"], ["attributions"]];
+      userScoped.forEach((key) => qc.invalidateQueries({ queryKey: [...key] }));
       const r: MockRole = res.member.role === "manager" ? "manager" : res.member.discipline === "qa" ? "qa" : "developer";
       setRoute((VIEW_TO_ROUTE[ROLE_CHROME[r].land] ?? ROLE_CHROME[r].land) as never);
     },
@@ -123,8 +125,9 @@ export function useApp() {
   const pushNotif = (_n?: any) => {};
   const toasts: never[] = [];
 
-  // relay + Trust Dial (active plan from the UI store, else first active relay)
-  const { data: relaySummariesRaw } = useQuery({ queryKey: qk.allRelays(), queryFn: () => api.allRelays().then((r) => r.relays) });
+  // relay + Trust Dial (active plan from the UI store, else first active relay). Polled: gate ready flips
+  // (preparing→open), dispatch phases and fresh relays must land WITHOUT a window refocus.
+  const { data: relaySummariesRaw } = useQuery({ queryKey: qk.allRelays(), queryFn: () => api.allRelays().then((r) => r.relays), refetchInterval: 4000 });
   const relaySummaries = useMemo(() => relaySummariesRaw ?? [], [relaySummariesRaw]);
   // Honor the UI's pinned plan ONLY while it's still an in-flight relay. Once dispatched it leaves the
   // board, so drop the stale pin (else useRelay keeps polling a removed relay → 404). Fall back to the top.
@@ -148,7 +151,18 @@ export function useApp() {
 
   // work / projects
   const { data: tasksRaw } = useWork("team");
-  const tasks = useMemo(() => (tasksRaw ?? []).map(toMockTask), [tasksRaw]);
+  // dedup by (project_id, id) — one card per task, so a stray duplicate row never renders twice on the
+  // Work board (the kanban-drag duplicate). project+id is the task identity; a shared canned id across
+  // two projects is two DIFFERENT tasks and both rightly survive.
+  const tasks = useMemo(() => {
+    const seen = new Set<string>();
+    return (tasksRaw ?? []).filter((t: any) => {
+      const k = `${t.project_id ?? t.project}::${t.id}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }).map(toMockTask);
+  }, [tasksRaw]);
   const { projects: projectsRaw } = useProjects();
   const projects = useMemo(() => projectsRaw.map(toMockProject), [projectsRaw]);
   const liveProjectId = useUI((s) => s.liveProjectId);
@@ -184,7 +198,11 @@ export function useApp() {
     (access.i_can_see ?? []).some((g) => g.subject_id === u) ? "active"
       : (access.pending_out ?? []).some((g) => g.subject_id === u) ? "pending" : "none";
   const isWatching = (u: string) => watchStatus(u) === "active";
-  const requestWatch = (u: string) => { api.requestAccess(u).then(invAccess); };
+  const requestWatch = (u: string) => {
+    api.requestAccess(u)
+      .then(() => { invAccess(); toast("Watch requested", { description: `Waiting for @${u} to accept. You'll see their tickets once they grant it.` }); })
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Could not request access"));
+  };
   const unwatch = (u: string) => {  // cancel my pending request OR stop an active watch
     const g = [...(access.i_can_see ?? []), ...(access.pending_out ?? [])].find((x) => x.subject_id === u);
     if (g) api.revokeAccess(g.id).then(invAccess);
@@ -228,7 +246,7 @@ export function useApp() {
   return {
     me, role, chrome, view, setView, goTo, navPayload, switchPersona, members,
     notifs, unread, dismissNotif, bellOpen, setBellOpen, markAllRead, pushNotif, toasts, setToast,
-    agreements,
+    agreements, ratifyPending: ratifyGate.isPending,
     gates, actGate, ratifyWith, cards, staffing, planId, integration, relay,
     tasks, projects, relaySummaries, queue, drafts, addDraft,
     decisions, setVisibility, editReasoning, deprecate, removeDecision,

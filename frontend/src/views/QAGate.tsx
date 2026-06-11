@@ -15,6 +15,7 @@ import { api, type QAReport, type QAQueueEntry } from "../lib/api";
 import { toast } from "sonner";
 import { Icon } from "../lib/icon";
 import { Avatar, Badge, Button, DiscDot } from "../components/ui";
+import { isDone } from "../lib/gate";
 import { ViewChrome } from "../components/ViewChrome";
 import { ProjectSwitcher } from "../components/ProjectSwitcher";
 
@@ -40,7 +41,7 @@ export function QAGate() {
 
   // cross-project QA queue — every project with acceptance work outstanding (the Tester is no longer
   // locked to one project). The ProjectSwitcher narrows it; selecting a row scopes the acceptance below.
-  const { data: queueResp } = useQuery({ queryKey: ["qaQueue"], queryFn: () => api.qaQueue() });
+  const { data: queueResp } = useQuery({ queryKey: ["qaQueue"], queryFn: () => api.qaQueue(), refetchInterval: 8000 });
   const queue: QAQueueEntry[] = useMemo(() => queueResp?.queue ?? [], [queueResp]);
   const queueShown = projectFilter == null ? queue : queue.filter((e) => e.project_id === projectFilter);
 
@@ -127,7 +128,8 @@ export function QAGate() {
                     {projectFilter != null ? "This project's accept gate has no outstanding acceptance." : "No projects need acceptance right now."}
                   </div>
                 ) : queueShown.map((e) => (
-                  <QueueRow key={e.project_id} e={e} active={false} onClick={() => openProject(e.project_id)} />
+                  /* a project can hold several relays (initial + feature adds) → key by the RELAY, not the project */
+                  <QueueRow key={e.plan_id || e.project_id} e={e} active={false} onClick={() => openProject(e.project_id)} />
                 ))}
               </div>
             </>
@@ -161,15 +163,19 @@ export function QAGate() {
 
               <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: "var(--r-lg)",
                 border: "0.5px solid var(--border)", background: "var(--bg-secondary)", marginBottom: 20 }}>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 26, fontWeight: 600, letterSpacing: "-1px" }}>{pass}<span style={{ color: "var(--text-quaternary)" }}>/{total}</span></span>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 26, fontWeight: 600, letterSpacing: "-1px" }}>
+                  {ran ? <>{pass}<span style={{ color: "var(--text-quaternary)" }}>/{total}</span></> : (sel?.issue_count ?? 0)}
+                </span>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>acceptance checks pass</div>
-                  <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
-                    {display.map((i: any) => (
-                      <span key={i.issue_id} style={{ flex: 1, height: 5, borderRadius: 3,
-                        background: i.rerouted ? "var(--text-quaternary)" : `var(--${VERDICT_META[i.verdict].tone === "green" ? "green" : VERDICT_META[i.verdict].tone === "red" ? "red" : "amber"})` }} />
-                    ))}
-                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{ran ? "acceptance checks pass" : "acceptance checks · not run yet"}</div>
+                  {ran && (
+                    <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
+                      {display.map((i: any) => (
+                        <span key={i.issue_id} style={{ flex: 1, height: 5, borderRadius: 3,
+                          background: i.rerouted ? "var(--text-quaternary)" : `var(--${VERDICT_META[i.verdict].tone === "green" ? "green" : VERDICT_META[i.verdict].tone === "red" ? "red" : "amber"})` }} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -227,7 +233,7 @@ function TesterRouting({ tester }: { tester: { name: string; discipline?: string
 function QueueRow({ e, active, onClick }: { e: QAQueueEntry; active: boolean; onClick: () => void }) {
   const [h, setH] = useState(false);
   const statusTone = e.qa_status === "blocked" ? "red" : e.qa_status === "changes_requested" ? "amber"
-    : e.qa_status === "ratified" || e.qa_status === "auto_passed" ? "green" : "outline";
+    : isDone(e.qa_status) ? "green" : "outline";
   return (
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", textAlign: "left", width: "100%",

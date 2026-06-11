@@ -9,8 +9,18 @@ Voyage + Atlas, all no-ops in demo).
 from __future__ import annotations
 
 import posixpath
+import re
 
 from app.graph import _domain_of, normalize_and_hash
+
+
+def project_key(label: str) -> str:
+    """Canonical corpus project key from ANY project label — deterministic + collision-free. Lowercase,
+    every non-alphanumeric run → a single '-', trimmed: 'QuantaPay (2024)' → 'quantapay-2024';
+    'quantapay-2024' → 'quantapay-2024' (idempotent). The ONE way to compare project identities across
+    grounding labels, CodeChunks.project, and Decisions.project_name — never match display strings raw
+    (the old lossy first-token match collided 'quanta-pay' with 'quanta-ledger')."""
+    return re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
 
 # Per-file retrieval metadata (code-RAG routing): language from the extension, discipline from the
 # path heuristic — so code_search can filter "backend chunks for the backend gate" server-side.

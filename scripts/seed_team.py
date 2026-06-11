@@ -1,6 +1,8 @@
-"""Seed the per-account DEMO team (manager + 4 devs) into Mongo, linked to real GitLab accounts,
-plus the senior engineer's pre-existing IN-PROGRESS project (so the SE is genuinely busy and their
-dev view is full — the contrast against the idle devs). The junior is added LIVE via CV onboarding.
+"""Seed the per-account DEMO team into Mongo, linked to real GitLab accounts. The roster is COMPOSABLE:
+each member carries `disciplines` (the lanes they cover, multi) + `is_manager` (the Tech-Lead capability),
+read from seed/team.json. The 3-user demo = Teddy (Tech Lead + tester), Tony (backend + devops), Sam
+(frontend). An optional `senior_project` makes one dev busy (contrast); a junior is added LIVE via CV
+onboarding.
 
 Fill seed/team.json with real GitLab usernames first.  Run: uv run python scripts/seed_team.py
 """
@@ -82,9 +84,14 @@ def main() -> int:
     for m, v in zip(members, vecs):
         uid = _link(m["gitlab_username"])
         trust = m.get("trust", {})
+        # composable roles: `disciplines` (lanes) + `is_manager` (capability) are the truth; accept either
+        # the new shape or the legacy single `discipline`/`role` (the model reconciles on load).
+        disciplines = m.get("disciplines") or ([m["discipline"]] if m.get("discipline") else [])
+        is_manager = bool(m.get("is_manager")) or m.get("role") == "manager"
         docs.append({
             "name": m["name"], "gitlab_username": m["gitlab_username"], "username": m["gitlab_username"],
-            "email": m.get("email", ""), "role": m.get("role", "developer"), "discipline": m.get("discipline"),
+            "email": m.get("email", ""), "role": "manager" if is_manager else "developer",
+            "discipline": disciplines[0] if disciplines else None, "disciplines": disciplines, "is_manager": is_manager,
             "seniority": m.get("seniority", "mid"), "load": int(m.get("load", 0)),
             "gitlab_user_id": uid, "skills_text": m["skills_text"], "skill_embedding": v,
             "trust": trust,
@@ -92,7 +99,8 @@ def main() -> int:
             "joined": m.get("joined", ""),
             "history": [],
         })
-        print(f"   {m['name']:12} {m.get('role'):9} {str(m.get('discipline') or '-'):8} load={int(m.get('load',0)):3} gitlab_uid={uid}")
+        _tag = ("manager+" if is_manager else "") + ",".join(disciplines or ["-"])
+        print(f"   {m['name']:12} {_tag:18} load={int(m.get('load',0)):3} gitlab_uid={uid}")
     db[DEV_COLL].delete_many({})
     db[DEV_COLL].insert_many(docs)
     print(f"{GREEN}✅ {DEV_COLL}: {len(docs)} members{RST}")

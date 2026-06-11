@@ -77,10 +77,22 @@ export const AmbiguityCard = z.object({
 });
 export const ReuseItem = z.object({
   from_project: z.string(), feature: z.string(), action: z.enum(["reuse", "adapt", "drop"]),
+  reason: z.string().optional(),                   // why this is worth reusing for THIS brief
 });
+export const MemoryCandidate = z.object({          // CRAG: a reusable CAPABILITY the AI judged against this brief
+  ref: z.string(), project: z.string().optional(), year: z.string().optional(),
+  capability: z.string().optional(),               // short title, e.g. "Live-map vehicle tracking"
+  what: z.string().optional(),                     // what the capability does (the reusable part)
+  reason: z.string().optional(),                   // WHY it does/doesn't fit this brief
+  fit: z.enum(["strong", "partial", "skip"]),      // the AI's relevance call (abstain = skip) — replaces the cosine score
+  pros: z.array(z.string()).optional(), cons: z.array(z.string()).optional(),  // detail view
+  used: z.boolean().optional(),                    // the human's pick (strong pre-selected; the Memory panel toggles)
+});
+export type MemoryCandidate = z.infer<typeof MemoryCandidate>;
 export const ClarifiedSpec = z.object({
   goal: z.string(), users: z.array(z.string()), must_haves: z.array(z.string()),
   constraints: z.array(z.string()), ambiguities: z.array(AmbiguityCard), reuse: z.array(ReuseItem),
+  memory_candidates: z.array(MemoryCandidate).optional(),  // CRAG-judged reuse candidates (verdict + why)
 });
 export type ClarifiedSpec = z.infer<typeof ClarifiedSpec>;
 
@@ -101,7 +113,10 @@ export type ArchitectureOptions = z.infer<typeof ArchitectureOptions>;
 /* ── relay ───────────────────────────────────────────────────────────── */
 export const Gate = z.object({
   discipline: Discipline, status: GateStatus, depends_on: z.array(Discipline), note: z.string(),
+  owner: z.string().nullish(),      // the lead this gate routes to (lane assignee); null = gap → Tech Lead
   delegate: z.string().nullish(),   // human-in-control: a lead handed this gate to this user to ratify
+  ready: z.boolean().optional(),    // strict pipeline: pending + !ready = "preparing" (choices generating)
+  is_acceptance: z.boolean().optional(),  // the terminal acceptance gate: authors the definition of done + dispatches
   // spine (P1): the router's per-gate decision; null on legacy gates
   tier: RoutingTier.nullish(), confidence: z.number().nullish(), blast_radius: z.number().nullish(),
   expected_cost: z.number().nullish(), routed_note: z.string().optional(),
@@ -117,6 +132,7 @@ export type IntegrationSignal = z.infer<typeof IntegrationSignal>;
 
 export const RelayState = z.object({
   gates: z.array(Gate), baton: z.array(Discipline), integration_signals: z.array(IntegrationSignal),
+  dispatch: z.enum(["pending", "dispatching", "shipped", "failed"]).optional(),  // the last-gate scaffold lifecycle
 });
 export type RelayState = z.infer<typeof RelayState>;
 
@@ -208,8 +224,9 @@ export type QueueItem = z.infer<typeof QueueItem>;
 
 export const RelaySummary = z.object({
   plan_id: z.string(), project: z.string(), baton: z.array(Discipline),
-  gates: z.array(z.object({ discipline: Discipline, status: GateStatus, note: z.string(), delegate: z.string().nullish() })),
+  gates: z.array(z.object({ discipline: Discipline, status: GateStatus, note: z.string(), is_acceptance: z.boolean().optional(), owner: z.string().nullish(), delegate: z.string().nullish(), ready: z.boolean().optional() })),
   is_delta: z.boolean(), target_project_id: z.number().nullable(), all_ratified: z.boolean(),
+  dispatch: z.enum(["pending", "dispatching", "shipped", "failed"]).optional(),  // dispatching = mid-scaffold (not "open")
 });
 export type RelaySummary = z.infer<typeof RelaySummary>;
 
@@ -232,6 +249,7 @@ export const WorkTask = z.object({
   pinned: z.boolean().optional(), gitlab_issue_iid: z.number().nullish(), context_scope: ContextScope.optional(),
   kind: Kind.nullish(), context: unknownRecord.optional(), api_contract: z.string().nullish(),
   capability_tags: z.array(z.string()).optional(), stretch_flag: z.string().nullish(),
+  branch: z.string().optional(), focus_command: z.string().optional(),  // server-built: feat/<title> + the focus bootstrap command
   created_at: z.string().optional(), updated_at: z.string().optional(),
 });
 export type WorkTask = z.infer<typeof WorkTask>;
@@ -353,6 +371,7 @@ export const Agreement = z.object({
   precedent_id: z.string().nullish(),   // P3: the past ratified agreement it auto-passed from (compounded)
   producer_discipline: z.string().nullish(), consumer_discipline: z.string().nullish(),
   producer_issue_id: z.string().nullish(), consumer_issue_id: z.string().nullish(),
+  producer_actor: z.string().nullish(), consumer_actor: z.string().nullish(),  // the signing actors (gate ratifiers)
 });
 export type Agreement = z.infer<typeof Agreement>;
 export const AgreementList = z.object({ agreements: z.array(Agreement) });
@@ -370,8 +389,11 @@ export const Availability = z.object({
 });
 export type Availability = z.infer<typeof Availability>;
 export const Member = z.object({
-  username: z.string(), name: z.string(), email: z.string(), role: MemberRole,
-  discipline: Discipline.nullable(), seniority: Seniority, load: z.number(),
+  username: z.string(), name: z.string(), email: z.string(), role: MemberRole,  // role = display mirror of is_manager
+  discipline: Discipline.nullable(),                 // PRIMARY lane (disciplines[0]) — display mirror
+  disciplines: z.array(Discipline),                  // every lane this user covers (composable, multi) — server always sends it
+  is_manager: z.boolean(),                           // orthogonal capability (oversight + create/add-feature/attribution)
+  seniority: Seniority, load: z.number(),
   gitlab_user_id: z.number().nullable(), gitlab_username: z.string(), skills_text: z.string(),
   trust: z.record(z.string(), TrustLevel), trust_level: TrustLevel,
   joined: z.string().nullish(),   // ISO month joined the agency (YYYY-MM) — shown on the Passport

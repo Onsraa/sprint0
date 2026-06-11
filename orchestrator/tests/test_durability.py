@@ -66,19 +66,18 @@ def test_finished_delta_links_unpersist(monkeypatch):
     rag.reset_demo_session()
 
 
-def test_draft_tasks_rematerialize_for_inflight_plan(monkeypatch):
-    """On restart the orphan-sweep drops the prior process's placeholder drafts; _persist_draft_tasks
-    (the post-rehydrate re-materialize) regenerates them so the Work hub shows planned work again
-    for a rehydrated in-flight plan (commit 0e28b75)."""
+def test_no_draft_tasks_before_dispatch(monkeypatch):
+    """Tasks are NOT materialized at plan time or on rehydrate — only at dispatch (_finalize_scaffold).
+    An in-flight (un-dispatched) plan therefore has no tasks under the placeholder pid (this replaces the
+    old draft-preview behavior, which surfaced unratified tasks under a negative-pid placeholder)."""
     monkeypatch.setattr(demo, "DEMO_MODE", True)
     demo.set_live(False)
-    from app import canned, main
+    from app import main
     rag.reset_demo_tasks()
 
     async def scenario():
-        await main._persist_draft_tasks(canned.DEMO_PLAN, "plan_inflight")
         drafts = await rag.tasks_for_project(main._plan_pid("plan_inflight"))
-        assert len(drafts) > 0                              # drafts regenerated under the placeholder pid
+        assert drafts == []                                 # nothing materialized before dispatch
 
     asyncio.run(scenario())
     rag.reset_demo_tasks()

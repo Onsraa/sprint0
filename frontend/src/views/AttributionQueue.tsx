@@ -45,7 +45,7 @@ export function AttributionQueue() {
 }
 
 function AttributionRow({ a, members, onResolved }: { a: Attribution; members: any[]; onResolved: () => void }) {
-  const roster = members.filter((m: any) => m.role !== "manager");
+  const roster = members.filter((m: any) => m.disciplines?.length || m.discipline);  // anyone who covers a lane (incl. a working manager)
   const [pick, setPick] = useState<string>(a.suggested ?? roster[0]?.username ?? "");
   const [busy, setBusy] = useState(false);
   const suggestedName = members.find((m: any) => m.username === a.suggested)?.name;

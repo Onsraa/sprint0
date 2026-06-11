@@ -34,6 +34,44 @@ def test_acceptance_gate_always_present_and_terminal():
     assert qa.depends_on == ["backend"] and relay.is_acceptance_gate(qa)
 
 
+def test_design_lane_folds_to_the_uiux_gate():
+    # the planner sometimes emits the IssueType "design" as the lane; it must become the canonical uiux gate
+    # (matches the roster's "uiux" discipline + the DISC label) — a novel lane like "security" stays untouched.
+    state = relay.build_relay(_plan(_iss("a", "backend"), _iss("d", "design", lane="design")))
+    assert "uiux" in _lanes(state) and "design" not in _lanes(state)
+
+
+def test_gate_owner_is_the_lane_assignee():
+    a = _iss("a", "backend"); a.assignee = "jean"
+    state = relay.build_relay(_plan(a))
+    backend = next(g for g in state.gates if g.discipline == "backend")
+    assert backend.owner == "jean"  # the assignee (best profile) owns/ratifies the gate
+
+
+def test_unstaffed_gate_has_no_owner():
+    state = relay.build_relay(_plan(_iss("d", "design", lane="design")))  # no assignee (uiux is the orphan gap)
+    uiux = next(g for g in state.gates if g.discipline == "uiux")
+    assert uiux.owner is None  # gap → None → the Tech Lead ratifies it
+
+
+def test_docs_carry_the_scoped_brief():
+    # WS11: the scoped brief (feature, do/do-not, contract, directives) survives the handoff — now split
+    # across .sprint0/CONTEXT.md (feature + scope) + .sprint0/CONTRACT.md (contract + directives)
+    from app.handoff import _context_md, _contract_md
+    iss = _iss("t1", "backend")
+    iss.feature, iss.does, iss.not_does = "Auth", "Issue + refresh JWTs", "No social login"
+    iss.api_contract, iss.directives = "POST /login -> {token}", ["Use argon2"]
+    docs = _context_md(iss, []) + _contract_md(iss)
+    assert all(s in docs for s in ["Auth", "Issue + refresh JWTs", "No social login", "POST /login", "Use argon2"])
+
+
+def test_plan_prompt_includes_the_roster():
+    # WS12: the planner sees the team so it sizes/sequences with real availability
+    from app.reason import _build_plan_prompt
+    p = _build_plan_prompt("b", [], None, None, roster=[{"gitlab_username": "jean", "skills_text": "backend", "trust_level": "high"}])
+    assert "DEV ROSTER" in p and "jean" in p and "backend" in p
+
+
 def test_seed_topology_unchanged():
     state = relay.build_relay(_plan(
         _iss("u", "design"), _iss("b", "backend"), _iss("o", "devops"), _iss("f", "frontend")))

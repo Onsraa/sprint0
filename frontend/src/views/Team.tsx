@@ -3,7 +3,7 @@
    MEMBERS/STAFFING/SUBSCRIPTIONS → the useApp() adapter). Reads the live store. */
 import { useState } from "react";
 import { ViewChrome } from "../components/ViewChrome";
-import { Availability, Avatar, Badge, Button, DiscDot, DISC, Tab, TrustDot } from "../components/ui";
+import { Availability, Avatar, Badge, Button, DiscDot, DISC, discLabel, Tab, TrustDot } from "../components/ui";
 import { Icon } from "../lib/icon";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -17,10 +17,9 @@ import { qk } from "../lib/query";
 // real Member uses gitlab_username / trust_level; the mock used gitlab / trust.
 const trustOf = (m: Member) => (m as Member & { trust?: unknown }).trust_level ?? "medium";
 
-// TODO(reconcile): the mockup read STAFFING.plan_HARB_42.coverage (gaps + stretch_candidates) — there is
-// no staffing/coverage field on the useApp() adapter. Fall back to the orphan-gap discipline + a stretch
-// candidate derived from the roster so the banner still renders; wire to a real coverage endpoint later.
-const ORPHAN_GAP = "uiux";
+// Orphan disciplines = lanes with no seated developer, computed live from the roster. Setting a dev's
+// discipline invalidates the roster query (below), so the banner recomputes/clears automatically.
+const LANES = ["uiux", "backend", "frontend", "qa", "devops"];
 
 export function TeamView() {
   const { chrome, members, role } = useApp();
@@ -38,12 +37,14 @@ export function TeamView() {
       qc.invalidateQueries({ queryKey: qk.roster() });
     } catch (e) { toast.error(e instanceof Error ? e.message : "Reconcile failed"); }
   };
-  const gap = ORPHAN_GAP;
-  // strongest non-uiux candidate by trust as the stretch suggestion (mock had cov.stretch_candidates[0]).
-  const stretch =
-    members.find((m) => m.role === "developer" && m.trust_level === "high" && m.discipline !== gap) ??
-    members.find((m) => m.role === "developer");
-  const stretchScore = "0.74"; // TODO(reconcile): mock cosine match score had no real equivalent.
+  // composable: a lane is seated if ANYONE covers it (incl. a manager who also works a lane).
+  const lanesOf = (m: any): string[] => (m.disciplines?.length ? m.disciplines : [m.discipline].filter(Boolean));
+  const seated = new Set(members.flatMap(lanesOf));
+  const gaps = LANES.filter((d) => !seated.has(d));
+  // strongest candidate who doesn't already cover the gap as the stretch suggestion.
+  const stretchFor = (gap: string) =>
+    members.find((m) => m.trust_level === "high" && !lanesOf(m).includes(gap)) ??
+    members.find((m) => lanesOf(m).length > 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -52,7 +53,6 @@ export function TeamView() {
           <Tab active={tab === "roster"} onClick={() => setTab("roster")}>Roster</Tab>
           <Tab active={tab === "capabilities"} onClick={() => setTab("capabilities")}>Capabilities</Tab>
         </div>
-        {role === "manager" && needsLink.length > 0 && <Button variant="secondary" size="sm" icon="gitlab" onClick={reconcile}>Reconcile links</Button>}
         {chrome.canOnboard && <Button variant="primary" size="sm" icon="plus" onClick={openHire}>Onboard a dev</Button>}
       </ViewChrome>
       {tab === "capabilities" ? (
@@ -60,16 +60,19 @@ export function TeamView() {
       ) : (
       <div style={{ flex: 1, overflow: "auto" }}>
         {/* staffing gap banner — manager-only (it's a staffing decision; leads don't act on it) */}
-        {role === "manager" && (
-        <div style={{ margin: "16px 20px 0", border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: "13px 14px", background: "var(--bg-secondary)", display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ width: 28, height: 28, borderRadius: "var(--r-md)", display: "grid", placeItems: "center", background: "var(--bg-elevated)", border: "1px dashed var(--text-primary)" }}><DiscDot d={gap} size={9} /></span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{DISC[gap].label} is an orphan gap</div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No dedicated dev — the gate routes to the manager. Stretch: {stretch?.name} (match {stretchScore}).</div>
+        {role === "manager" && gaps.map((gap) => {
+          const stretch = stretchFor(gap);
+          return (
+          <div key={gap} style={{ margin: "16px 20px 0", border: "0.5px solid var(--text-primary)", borderRadius: "var(--r-lg)", padding: "13px 14px", background: "var(--bg-secondary)", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 28, height: 28, borderRadius: "var(--r-md)", display: "grid", placeItems: "center", background: "var(--bg-elevated)", border: "1px dashed var(--text-primary)" }}><DiscDot d={gap} size={9} /></span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{DISC[gap]?.label ?? gap} is an orphan gap</div>
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No dedicated dev — the gate routes to the manager.{stretch ? ` Stretch: ${stretch.name}.` : ""}</div>
+            </div>
+            {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus" onClick={openHire}>Onboard</Button>}
           </div>
-          {chrome.canOnboard && <Button variant="secondary" size="sm" icon="plus" onClick={openHire}>Onboard</Button>}
-        </div>
-        )}
+          );
+        })}
 
         {role === "manager" && needsLink.length > 0 && (
         <div style={{ margin: "12px 20px 0", border: "0.5px solid var(--amber)", borderRadius: "var(--r-lg)", padding: "11px 14px", background: "rgba(199,120,0,0.07)", display: "flex", alignItems: "center", gap: 10 }}>
@@ -85,7 +88,7 @@ export function TeamView() {
 
         <div style={{ display: "flex", alignItems: "center", height: 30, padding: "0 20px", marginTop: 12, borderBottom: "0.5px solid var(--border-subtle)", position: "sticky", top: 0, background: "var(--bg-elevated)", zIndex: 1 }}>
           <span className="kicker" style={{ flex: 1 }}>Member</span>
-          <span className="kicker" style={{ width: 110 }}>Discipline</span>
+          <span className="kicker" style={{ width: 230 }}>Role · lanes</span>
           <span className="kicker" style={{ width: 110 }}>Trust</span>
           <span className="kicker" style={{ width: 160 }}>Availability</span>
           <span className="kicker" style={{ width: 96, textAlign: "right" }}>Watch</span>
@@ -111,13 +114,13 @@ function TeamRow({ m }: { m: Member }) {
           <GitLabLink m={m} />
         </div>
       </div>
-      <div style={{ width: 110 }}><SeatControl m={m} /></div>
+      <div style={{ width: 230 }}><SeatControl m={m} /></div>
       <div style={{ width: 110, display: "flex", alignItems: "center", gap: 6 }}>
         <TrustDot level={trustOf(m)} /><span style={{ fontSize: 12.5, color: "var(--text-secondary)", textTransform: "capitalize" }}>{trustOf(m)}</span>
       </div>
       <div style={{ width: 160 }}><Availability a={m.availability} /></div>
       <div style={{ width: 96, display: "flex", justifyContent: "flex-end" }}>
-        {!isSelf && m.role !== "manager" && <WatchControl username={m.username} />}
+        {!isSelf && <WatchControl username={m.username} />}
       </div>
     </div>
   );
@@ -210,34 +213,44 @@ function WatchersStrip() {
 
 const DISCIPLINES = ["backend", "frontend", "devops", "qa", "uiux"] as const;
 
-/* Manager seats a member in a discipline (the onboarded junior arrives discipline-less). A seated dev
-   enters the assignment pool in-lane; before seating they sit out (so the AI doesn't stretch-flag them). */
+/* A member's composable role: a Manager badge (if is_manager) + a chip per lane they cover. The manager
+   can ADD a lane (seating appends — a member can cover several). The onboarded junior arrives lane-less. */
 function SeatControl({ m }: { m: Member }) {
   const { me } = useApp();
   const qc = useQueryClient();
+  const lanes: string[] = (m.disciplines?.length ? m.disciplines : (m.discipline ? [m.discipline] : [])) as string[];
   const seat = async (d: string) => {
-    if (!d) return;
+    if (!d || lanes.includes(d)) return;
     try {
       await api.setDiscipline(m.username, d);
-      toast.success(`${m.name} seated in ${DISC[d as keyof typeof DISC]?.label ?? d}`);
+      toast.success(`${m.name} now covers ${DISC[d as keyof typeof DISC]?.label ?? d}`);
       qc.invalidateQueries({ queryKey: qk.roster() });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not set discipline");
     }
   };
-  if (m.role === "manager") return <Badge tone="ink">Manager</Badge>;
-  if (me.role !== "manager") {
-    return m.discipline
-      ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5 }}><DiscDot d={m.discipline} />{DISC[m.discipline].label}</span>
-      : <Badge tone="outline">Unseated</Badge>;
-  }
+  const chips = (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+      {m.is_manager && <Badge tone="ink"><Icon name="ratify" size={10} style={{ marginRight: 3, verticalAlign: "-1px" }} />Tech Lead</Badge>}
+      {lanes.map((d) => (
+        <span key={d} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12 }}><DiscDot d={d} />{discLabel(d)}</span>
+      ))}
+      {!lanes.length && !m.is_manager && <Badge tone="outline">Unseated</Badge>}
+    </span>
+  );
+  if (me.role !== "manager") return chips;
+  const available = DISCIPLINES.filter((d) => !lanes.includes(d));
   return (
-    <select value={m.discipline ?? ""} onChange={(e) => seat(e.target.value)}
-      style={{ height: 26, padding: "0 6px", fontSize: 12, borderRadius: "var(--r-md)",
-        border: m.discipline ? "0.5px solid var(--border)" : "0.5px dashed var(--text-tertiary)",
-        background: "var(--bg-elevated)", color: m.discipline ? "var(--text-primary)" : "var(--text-tertiary)", cursor: "pointer" }}>
-      <option value="" disabled>Seat…</option>
-      {DISCIPLINES.map((d) => <option key={d} value={d}>{DISC[d].label}</option>)}
-    </select>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+      {chips}
+      {available.length > 0 && (
+        <select value="" onChange={(e) => seat(e.target.value)} title="Add a lane this member can cover"
+          style={{ height: 24, padding: "0 5px", fontSize: 11.5, borderRadius: "var(--r-md)",
+            border: "0.5px dashed var(--text-tertiary)", background: "var(--bg-elevated)", color: "var(--text-tertiary)", cursor: "pointer" }}>
+          <option value="" disabled>+ lane</option>
+          {available.map((d) => <option key={d} value={d}>{DISC[d].label}</option>)}
+        </select>
+      )}
+    </span>
   );
 }

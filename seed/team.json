@@ -1,70 +1,39 @@
 {
-  "_note": "Per-account demo team — 5 REAL GitLab accounts in the sprint0-demo group (native assignees). A junior is added LIVE in the demo via CV onboarding (trust low → grows). uiux = the deliberate orphan gap (manager ratifies + staffing advisor). devops covered by the SSE. Trust spread on purpose: 2 high / 2 medium so passports don't all read 'maxed'. The SE is busy (load=100) on the senior_project.",
+  "_note": "Per-account COMPOSABLE demo team — 3 REAL GitLab accounts in the sprint0-demo group (native assignees). Roles are composable: `disciplines` = the lanes a user can cover (multi), `is_manager` = the orthogonal capability (brief→project, add-feature, oversight, attributions). Teddy is the manager AND the tester (qa). Tony covers backend AND devops. Sam covers frontend. uiux = the deliberate orphan gap (no coverer → routes to the Tech Lead + the staffing advisor). The other two GitLab accounts (sprint0-se, sprint0-qa) still exist in the group but are not on this roster.",
   "manager": {
     "name": "Teddy",
     "gitlab_username": "Onsraa",
     "email": "onsraa@sprint0.dev",
-    "role": "manager",
+    "is_manager": true,
+    "disciplines": ["qa"],
     "seniority": "senior",
+    "load": 10,
     "joined": "2023-09",
-    "skills_text": "engineering manager — delivery, staffing, architecture review, stakeholder comms"
+    "trust": { "qa": "high" },
+    "skills_text": "engineering manager + tester — delivery, staffing, architecture review, stakeholder comms, acceptance criteria, end-to-end testing, release sign-off"
   },
   "members": [
-    {
-      "name": "Jean Gabriel",
-      "gitlab_username": "sprint0-se",
-      "email": "se@sprint0.dev",
-      "role": "developer",
-      "discipline": "backend",
-      "seniority": "senior",
-      "load": 100,
-      "joined": "2023-11",
-      "trust": { "backend": "high", "devops": "medium" },
-      "skills_text": "senior backend engineer — Python, Postgres, Stripe payments, double-entry ledgers, webhooks, idempotency, code review; mentors juniors"
-    },
     {
       "name": "Tony Stark",
       "gitlab_username": "sprint0-sse",
       "email": "sse@sprint0.dev",
-      "role": "developer",
-      "discipline": "devops",
+      "disciplines": ["backend", "devops"],
       "seniority": "senior",
-      "load": 0,
+      "load": 20,
       "joined": "2024-01",
-      "trust": { "devops": "high", "backend": "high" },
-      "skills_text": "senior platform/devops engineer — Docker, Kubernetes, CI/CD, Terraform, observability, secrets, also strong backend"
+      "trust": { "backend": "high", "devops": "high" },
+      "skills_text": "senior platform + backend engineer — Docker, Kubernetes, CI/CD, Terraform, observability, secrets, Python, FastAPI, Postgres, migrations"
     },
     {
       "name": "Sam Dupont",
       "gitlab_username": "sprint0-fe",
       "email": "fe@sprint0.dev",
-      "role": "developer",
-      "discipline": "frontend",
+      "disciplines": ["frontend"],
       "seniority": "mid",
-      "load": 0,
+      "load": 30,
       "joined": "2024-06",
       "trust": { "frontend": "medium" },
       "skills_text": "frontend engineer — React, TypeScript, Vite, UI state, maps, accessibility"
-    },
-    {
-      "name": "Pascal Alice",
-      "gitlab_username": "sprint0-qa",
-      "email": "qa@sprint0.dev",
-      "role": "developer",
-      "discipline": "qa",
-      "seniority": "mid",
-      "load": 0,
-      "joined": "2024-09",
-      "trust": { "qa": "medium" },
-      "skills_text": "QA engineer — end-to-end testing, acceptance criteria, Playwright, bug triage, release sign-off"
     }
-  ],
-  "senior_project": {
-    "name": "atlas-billing-revamp",
-    "client_summary": "Internal billing-ledger revamp — Jean Gabriel's current full-time engagement.",
-    "issues": [
-      "Migrate invoicing to the new double-entry ledger",
-      "Harden Stripe webhook retries + idempotency"
-    ]
-  }
+  ]
 }

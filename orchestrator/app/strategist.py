@@ -18,7 +18,7 @@ def candidate_people(impacted: list[Task], members: list[DeveloperProfile]) -> l
     """The people relevant to this reschedule: those in the impacted tasks' disciplines (plus the
     manager, who can always reassign). Keeps the prompt small — never the full roster."""
     disciplines = {t.discipline for t in impacted}
-    return [m for m in members if m.discipline in disciplines or m.role == "manager"]
+    return [m for m in members if any(d in disciplines for d in m.disciplines) or m.is_manager]
 
 
 def build_strategy_prompt(event: ChangeEvent, impacted: list[Task],

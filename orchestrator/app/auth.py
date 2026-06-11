@@ -23,7 +23,7 @@ async def current_member(x_sprint0_user: str | None = Header(default=None)) -> D
 
 async def current_manager(member: DeveloperProfile = Depends(current_member)) -> DeveloperProfile:
     """Guard manager-only routes (orchestration: brief/plan/dispatch/staffing/onboard)."""
-    if member.role != "manager":
+    if not member.is_manager:
         raise HTTPException(403, "manager only")
     return member
 

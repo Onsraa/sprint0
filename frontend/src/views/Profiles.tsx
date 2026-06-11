@@ -39,7 +39,7 @@ export function Profiles({ embedded = false }: { embedded?: boolean } = {}) {
         boxShadow: "var(--shadow-1)", background: "var(--bg-elevated)" }}>
         <div style={{ maxHeight: embedded ? "calc(100vh - 220px)" : "calc(100vh - 220px)", overflow: "auto" }}>
           {proposed.length > 0 && (
-            <FlatSection title="Proposed — awaiting confirm" hint="grown from unknown issue tags" status="proposed" count={proposed.length}>
+            <FlatSection title="Proposed — awaiting confirm" hint="grown from unknown task tags" status="proposed" count={proposed.length}>
               {proposed.map((p) => <ProfileRow key={p.id} p={p} canConfirm={canConfirm} onConfirm={() => confirmProfile(p.id)} />)}
             </FlatSection>
           )}
@@ -103,7 +103,7 @@ function ProfileRow({ p, canConfirm, onConfirm }: { p: CapabilityProfile; canCon
       <div style={{ width: 116, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
         {proposed && (canConfirm
           ? <Button variant="secondary" size="sm" icon="check" onClick={onConfirm}>Confirm</Button>
-          : <span style={{ fontSize: 11, color: "var(--text-quaternary)" }}>Manager confirms</span>)}
+          : <span style={{ fontSize: 11, color: "var(--text-quaternary)" }}>Tech Lead confirms</span>)}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ HTTPS/443, so this is unaffected by the Atlas :27017 network issue.
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 from urllib.parse import quote
 
@@ -46,14 +47,22 @@ def group_info(group: str | None = None) -> dict:
 def create_project_scaffold(
     project_name: str, labels: dict[str, str] | None = None, group: str | None = None
 ) -> dict:
-    """Create a project in the demo group + its labels. Returns ids + url."""
+    """Create a project in the demo group + its labels. Returns ids + url. On a path collision (GitLab
+    400 'has already been taken' — re-running the same brief, or a still-deletion_scheduled slug), retry
+    once with a short unique suffix so Create always succeeds."""
     group = group or DEMO_GROUP
     with _client() as c:
         gid = _group_id(c, group)
-        r = c.post(
-            "/projects",
-            json={"name": project_name, "namespace_id": gid, "initialize_with_readme": True, "visibility": "private"},
-        )
+        r = None
+        for attempt in range(2):
+            name = project_name if attempt == 0 else f"{project_name}-{secrets.token_hex(2)}"
+            r = c.post(
+                "/projects",
+                json={"name": name, "namespace_id": gid, "initialize_with_readme": True, "visibility": "private"},
+            )
+            if attempt == 0 and r.status_code == 400 and "taken" in r.text.lower():
+                continue  # path/name collision → retry once with a uniquified name
+            break
         r.raise_for_status()
         p = r.json()
         for name, color in (labels or {}).items():
@@ -67,6 +76,30 @@ def get_project(project_id: int) -> dict:
         r = c.get(f"/projects/{project_id}")
         r.raise_for_status()
         return r.json()
+
+
+TREE_PAGE_CAP = 20    # list_repo_tree pagination ceiling (~TREE_PAGE_CAP*TREE_PER_PAGE files)
+TREE_PER_PAGE = 100   # GitLab max page size
+
+
+def list_repo_tree(project_id: int, ref: str | None = None) -> set[str]:
+    """Every blob path in the repo (recursive) — the feature repo's CURRENT file set, used to classify a
+    slice file as `modify` (already there) vs `add` (new). Paginated; capped at 20 pages (~2000 files).
+    Best-effort: a non-200 (empty/uninitialized repo) returns what's gathered so far (often nothing → all add)."""
+    paths: set[str] = set()
+    with _client() as c:
+        for page in range(1, TREE_PAGE_CAP + 1):
+            params: dict = {"recursive": "true", "per_page": TREE_PER_PAGE, "page": page}
+            if ref:
+                params["ref"] = ref
+            r = c.get(f"/projects/{project_id}/repository/tree", params=params)
+            if r.status_code != 200:
+                break
+            batch = r.json()
+            paths.update(n["path"] for n in batch if n.get("type") == "blob")
+            if len(batch) < TREE_PER_PAGE:
+                break
+    return paths
 
 
 def get_file_raw(project: str | int, file_path: str, ref: str = "main") -> str:

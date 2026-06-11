@@ -56,7 +56,7 @@ const PASSPORTS: Record<string, any> = {
     ],
   },
   mira: {
-    seniority: "Manager", load: 62, joined: "2023-11",
+    seniority: "Tech Lead", load: 62, joined: "2023-11",
     trust: { uiux: 52, frontend: 60, backend: 40, devops: 38, qa: 44 },
     merges: [
       { project: "Atlas CMS", mr: "feat: optimistic autosave + conflict toast", delta: "+0.2", grade: "shipped", date: "May 15" },

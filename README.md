@@ -26,12 +26,14 @@ React (Vite) ─REST/WS─▶ FastAPI gateway
 ```
 **Core principle:** REASON (Gemini → validated JSON, no tool-loop) is split from EXECUTE (the gateway drives batched calls) — deterministic, no timeouts. MongoDB is the brain: hybrid (vector + full-text) retrieval grounds every plan, merges grow per-discipline trust, and shipped projects flow back into memory.
 
+**Guardrailed AI I/O:** every untrusted input — the brief, CVs, *and* retrieved memory/code — is delimiter-tagged as data-not-instructions; every output is schema-validated with server-owned IDs and bounded fields; model calls run low-temperature with a hard timeout; and no AI output causes a side-effect without a human ratifying it.
+
 ## Quickstart (one command)
 Fill in your secrets, run one script — it provisions everything end-to-end.
 1. `cp .env.example .env`, then fill the five secrets: `GEMINI_API_KEY`, `VOYAGE_API_KEY`, `MONGODB_URI`, `GITLAB_TOKEN`, `GITLAB_DEMO_GROUP`.
 2. `./scripts/bootstrap.sh`
 
-It checks your tools, starts a local MongoDB (Atlas Local in Docker), resets to a clean slate, seeds the agency memory + the 5-account demo team, waits for the search indexes to come online, installs the frontend, then launches both servers. Open **http://localhost:5173** and click **Try Demo**.
+It checks your tools, starts a local MongoDB (Atlas Local in Docker), resets to a clean slate, seeds the agency memory + the 3-account composable demo team, waits for the search indexes to come online, installs the frontend, then launches both servers. Open **http://localhost:5173** and click **Try Demo**.
 
 Re-runnable — every run resets to a fresh seeded state. Flags: `-y` skips the reset confirmation; `--setup-only` provisions without launching. Prereqs: Docker, [`uv`](https://docs.astral.sh/uv/), Node 18+ (pnpm is auto-enabled via corepack). A local `MONGODB_URI` (e.g. `mongodb://localhost:27018/?directConnection=true`) makes the script manage the Atlas Local container for you; a remote Atlas URI is used as-is.
 

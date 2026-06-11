@@ -11,31 +11,32 @@ import asyncio
 import difflib
 import io
 import json
+import logging
 import os
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from google.genai.errors import ClientError
 
 from pydantic import BaseModel
 
-from app import agreements, auth, canned, corpus, dedup, demo, eventlog, gitlab, gitlab_hooks, grading, graph, handoff, lineage, policy, relay, routing, runtime, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
+from app import agreements, auth, canned, const, corpus, dedup, demo, eventlog, gitlab, gitlab_hooks, grading, graph, handoff, lineage, policy, relay, routing, runtime, scheduler, solutions as soln, staffing, strategist, tasks as tasklib, team
 from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, Agreement, InterfaceDraft, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
-    Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, PlanJSON,
+    Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, NotificationType, PlanJSON,
     PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, DecisionCard, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
-from app.agent import AIOutputError, DECISION_DOMAIN_CONSTRAINTS, generate_adapted_code, generate_conflict, generate_decision_card, generate_shape
-from app.execute import execute_plan, extend_project, reserve_project, scaffold_project
+from app.agent import AIOutputError, AITimeoutError, DECISION_DOMAIN_CONSTRAINTS, generate_conflict, generate_decision_card, generate_shape
+from app.execute import execute_plan, extend_project, focus_command_for, reserve_project, scaffold_project
 from app.graphstore import store
 from app.rag import (
     access_grants_for_subject, access_grants_for_requester, all_project_records, decisions_by_owner,
@@ -57,8 +58,9 @@ from app.rag import (
     save_state, delete_state, load_states, reset_demo_session,
 )
 from app.reason import (
-    clarify_brief, close_project, delta_brief, link_gitlab, onboard_developer, propose_architectures,
-    propose_contract_options, propose_solutions, qa_review, reconcile_links, regenerate_slice, run_brief,
+    clarify_brief, close_project, delta_brief, judge_memory, link_gitlab, onboard_developer, propose_acceptance,
+    propose_architectures, propose_contract_options, propose_solutions, qa_review, reconcile_links,
+    regenerate_slice, run_brief,
 )
 
 app = FastAPI(title="sprint0", version="0.4.0")
@@ -95,7 +97,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173", "http://127.0.0.1:5173",
         "http://localhost:5174", "http://127.0.0.1:5174",
-        *([os.environ["FRONTEND_ORIGIN"]] if os.getenv("FRONTEND_ORIGIN") else []),
+        # FRONTEND_ORIGIN may be a comma-list — a Cloud Run service answers on BOTH its URL formats
+        # (PROJECTNUM.REGION.run.app and SERVICE-HASH.REGION.a.run.app), so allow each.
+        *[o.strip() for o in os.getenv("FRONTEND_ORIGIN", "").split(",") if o.strip()],
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -112,22 +116,37 @@ async def _genai_error(_request, exc: ClientError) -> JSONResponse:
     return JSONResponse(status_code=502, content={"detail": f"AI provider error ({code})."})
 
 
+@app.exception_handler(AITimeoutError)
+async def _genai_timeout(_request, exc: AITimeoutError) -> JSONResponse:
+    """A hung model stream hit the per-attempt deadline — clean 504 the wizard can toast + retry."""
+    return JSONResponse(status_code=504, content={"detail": "AI call timed out — retry."})
+
+
 # ── Rate-limit for the PUBLIC (unauthenticated) AI intake endpoints ──
 # clarify + architectures stay open by design (demo "drop a brief"), so cap anonymous Gemini
-# cost/quota abuse with a per-IP sliding window. Per-worker (in-process); swap to Redis if multi-worker.
-_AI_RATE_MAX = 5          # calls allowed
-_AI_RATE_WINDOW_S = 60    # per this many seconds, per client IP
-_ai_calls: dict[str, list[float]] = {}
+# cost/quota abuse with a sliding window. Two layers: a per-(ip,user) bucket so NAT'd teammates don't
+# starve each other, under a per-IP HARD ceiling so a spoofed username (auth is header-only) can't mint
+# fresh buckets to bypass the cap. Per-worker (in-process); swap to Redis if multi-worker.
+_AI_RATE_MAX = 5                          # calls allowed per (ip, user) bucket
+_AI_RATE_IP_MAX = _AI_RATE_MAX * 3        # hard ceiling per IP across ALL usernames (anti username-rotation)
+_AI_RATE_WINDOW_S = 60                    # sliding window seconds
+_ai_calls: dict[str, list[float]] = {}    # f"{ip}|{user}" → call times
+_ai_calls_ip: dict[str, list[float]] = {} # ip → call times (the ceiling)
 
 
 def _ai_throttle(request: Request) -> None:
     ip = request.client.host if request.client else "unknown"
+    user = (request.headers.get("X-Sprint0-User") or "").strip() or "-"
     now = time.monotonic()
-    recent = [t for t in _ai_calls.get(ip, []) if now - t < _AI_RATE_WINDOW_S]
-    if len(recent) >= _AI_RATE_MAX:
+    ip_recent = [t for t in _ai_calls_ip.get(ip, []) if now - t < _AI_RATE_WINDOW_S]
+    bucket = f"{ip}|{user}"
+    recent = [t for t in _ai_calls.get(bucket, []) if now - t < _AI_RATE_WINDOW_S]
+    if len(recent) >= _AI_RATE_MAX or len(ip_recent) >= _AI_RATE_IP_MAX:
         raise HTTPException(429, "rate limited — too many AI requests, retry shortly")
     recent.append(now)
-    _ai_calls[ip] = recent
+    ip_recent.append(now)
+    _ai_calls[bucket] = recent
+    _ai_calls_ip[ip] = ip_recent
 
 
 # Demo-grade in-memory stores.
@@ -144,23 +163,53 @@ PROJECTS: dict[int, PlanJSON] = {}  # project_id → live plan (for QA review + 
 REQA: dict[int, set] = {}  # project_id → reopened issue iids awaiting re-QA (the reject→fix→re-QA loop)
 SOLUTIONS: dict[tuple[str, str], SolutionSet] = {}  # (plan_id, discipline) → cached reuse-or-innovate set (lazy)
 CHOSEN: dict[tuple[str, str], SolutionCard] = {}    # (plan_id, discipline) → the ratified solution pick
+FOCUS_CONTEXTS: dict[str, dict] = {}                 # issue_id → {docs, reused pointers} served by /api/focus (never committed)
+
+# Per-plan lock serializing reserve + scaffold: their idempotency guards (RESERVED / RELAYS-absent) check
+# then await GitLab, so two concurrent callers (double-clicked Create; last-gate ratify racing a manual
+# dispatch) could BOTH pass the guard and create twice. The loser now re-checks after the winner finishes.
+_DISPATCH_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _dispatch_lock(plan_id: str) -> asyncio.Lock:
+    return _DISPATCH_LOCKS.setdefault(plan_id, asyncio.Lock())
+
+
+# Fire-and-forget background work (pre-generation, contract drafting). asyncio only keeps a WEAK reference
+# to a created task — an unreferenced one can be garbage-collected mid-flight (the docs say to keep a ref).
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    """create_task + a strong reference until done — the ONLY way background work is launched here."""
+    t = asyncio.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
+    return t
+
+
+_BRIEF_MAX_CHARS = 20_000
 
 
 # ── Durability: the workflow dicts above stay the fast read cache (hot paths never hit Mongo), but every
 # WRITE also persists THROUGH to the SessionState collection so a restart loses nothing. Rehydrated on
-# startup. Best-effort — a snapshot write never fails the request. ──
+# startup. Best-effort — a snapshot write never fails the request, but a failure is LOGGED: silent
+# no-persistence means "Saved ✓" in the UI while the data lives in RAM only (Atlas M0 idle-pause hits this).
+_persist_log = logging.getLogger("sprint0.persist")
+
+
 async def _persist(store: str, key, value: dict) -> None:
     try:
         await save_state(store, str(key), value)
-    except Exception:
-        pass
+    except Exception as exc:
+        _persist_log.warning("session-state write FAILED (%s/%s): %s — in-memory only until Mongo recovers", store, key, exc)
 
 
 async def _unpersist(store: str, key) -> None:
     try:
         await delete_state(store, str(key))
-    except Exception:
-        pass
+    except Exception as exc:
+        _persist_log.warning("session-state delete failed (%s/%s): %s", store, key, exc)
 
 
 async def _persist_relay(plan_id: str) -> None:
@@ -169,6 +218,21 @@ async def _persist_relay(plan_id: str) -> None:
         await _persist("plans", plan_id, PLANS[plan_id].model_dump())
     if plan_id in RELAYS:
         await _persist("relays", plan_id, RELAYS[plan_id].model_dump())
+
+
+async def _store_focus_contexts(plan: PlanJSON, pointers: dict[str, list[dict]]) -> None:
+    """Persist each code/infra issue's focus context (rendered DOCS + reuse POINTERS) keyed by issue id so the
+    /api/focus bootstrap can serve it on checkout. Reused CODE is NOT stored — the endpoint fetches it live
+    from the pointers. Nothing is committed to the repo, so a merge into main carries no sprint0.
+    KNOWN FLAW: this store is never garbage-collected (entries are tiny — docs + URLs — but unbounded)."""
+    for epic in plan.epics:
+        for issue in epic.issues:
+            if (issue.kind or "code") not in ("code", "infra"):
+                continue
+            ptrs = pointers.get(issue.id) or []
+            ctx = {"docs": handoff.render_focus_docs(issue, ptrs), "reused": ptrs}
+            FOCUS_CONTEXTS[issue.id] = ctx
+            await _persist("focus", issue.id, ctx)
 
 
 async def _rehydrate_session() -> None:
@@ -191,6 +255,9 @@ async def _rehydrate_session() -> None:
     for pid, v in (await _load("plans")).items():
         try: PLANS[pid] = PlanJSON(**v)
         except Exception: pass
+    for iid, v in (await _load("focus")).items():
+        if isinstance(v.get("docs"), dict):
+            FOCUS_CONTEXTS[iid] = {"docs": v["docs"], "reused": v.get("reused") or []}
     for pid, v in (await _load("relays")).items():
         try: RELAYS[pid] = RelayState(**v)
         except Exception: pass
@@ -205,12 +272,12 @@ async def _rehydrate_session() -> None:
         DELTA_PRIORITY[pid] = v.get("v", "normal")
     for k, v in (await _load("chosen")).items():
         try:
-            _pid, _disc = k.split("|", 1)
+            _pid, _disc = const.split_persist_key(k)
             CHOSEN[(_pid, _disc)] = SolutionCard(**v)
         except Exception: pass
     for k, v in (await _load("solutions")).items():
         try:
-            _pid, _disc = k.split("|", 1)
+            _pid, _disc = const.split_persist_key(k)
             SOLUTIONS[(_pid, _disc)] = SolutionSet(**v)
         except Exception: pass
     for pid, v in (await _load("reqa")).items():
@@ -281,10 +348,10 @@ async def _seed_demo() -> None:
     PLANS[plan_id] = plan
     PROJECTS[pid] = plan
     RELAYS[plan_id] = relay.build_relay(plan)  # gates start pending (stage-0) / locked (downstream) — NO auto-pass; the human ratifies each
-    # Contracts are JIT — generated when the producer ratifies its gate (_generate_contracts_for_lane runs in
-    # demo too, via canned options). No pre-seed → the Gate × Contract "× Contract" half is empty until the
-    # backend ratifies its gate, which is the point: the contract follows the choice.
     reset_demo_agreements()
+    # Contract-first: the canned plan's interface contracts are drafted from the feature NOW (demo uses canned
+    # options) — so the Gate × Contract "× Contract" half is populated from the start, independent of any choice.
+    await _draft_contracts(plan_id, plan)
     objs = tasklib.materialize_tasks(plan, pid, now)
     for t, st in zip(objs, ["done", "done", "in_review", "in_progress", "in_progress"]):
         t.status = st  # a lively board; the rest stay planned
@@ -370,13 +437,8 @@ async def _startup() -> None:
                 RELAYS.setdefault(_pid, _st)
         except Exception:
             pass
-        try:  # durability: the orphan-sweep above dropped the prior process's draft tasks (the _plan_pid
-            # placeholder is per-process), so re-materialize drafts for every rehydrated in-flight plan —
-            # the Work hub shows planned work again after a restart (idempotent: clears this plan's prior first).
-            for _pid, _pl in list(PLANS.items()):
-                await _persist_draft_tasks(_pl, _pid)
-        except Exception:
-            pass
+        # No draft-task re-materialization on restart: tasks exist only after a plan is dispatched
+        # (_finalize_scaffold), so an in-flight (un-dispatched) plan's Work hub is correctly empty.
     except Exception:
         pass  # Atlas may be momentarily unreachable; lazy-load on first authed request
 
@@ -450,13 +512,11 @@ def _my_gates(member: DeveloperProfile, members: list[DeveloperProfile]) -> list
                 continue
             if g.status not in ("pending", "changes_requested"):
                 continue
-            # a delegated gate belongs to the delegate (the lead handed it off); else the discipline lead
-            # (or the manager for an orphan). The manager always sees every gate.
-            if g.delegate:
-                mine = (g.delegate == member.username) or member.role == "manager"
-            else:
-                mine = (member.discipline == g.discipline) or (member.role == "manager" and staffing.is_orphan(g.discipline, members))
-            if not mine:
+            if not _gate_ready(plan_id, g):      # strict pipeline: never queue a gate whose choices aren't ready yet
+                continue
+            # the gate queues for the ONE user who owns it (ratifier ?? a coverer ?? the manager for a true
+            # orphan) — never a blanket manager grant. Mirrors the ratify permission + the frontend.
+            if not relay.owns_gate(member, g, members):
                 continue
             issue_count = sum(
                 1 for e in plan.epics for i in e.issues
@@ -492,7 +552,7 @@ async def _push_ws(user_id: str, payload: dict) -> None:
             _WS_CLIENTS.get(user_id, set()).discard(ws)
 
 
-async def notify(user_id: str, type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed", "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned", "task_completed", "drift_flagged", "agreement_proposed"], title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
+async def notify(user_id: str, type: NotificationType, title: str, *, body: str = "", ref: dict | None = None, actionable: bool = False) -> None:
     """Best-effort: append a Notification to a member's Inbox feed + push it live over WS (System 5)."""
     try:
         if await notification_exists(user_id, type, ref or {}):
@@ -504,6 +564,15 @@ async def notify(user_id: str, type: Literal["ratify_needed", "access_requested"
         await _push_ws(user_id, {"kind": "notification", "notification": n.model_dump()})
     except Exception:
         pass
+
+
+def _relay_recipients(plan: PlanJSON, state: RelayState) -> set[str]:
+    """EVERY relay participant — issue assignees ∪ gate ratifiers ∪ managers. The one recipient rule for
+    relay-lifecycle pings (created / shipped / failed), so no event invents its own audience."""
+    recips = {i.assignee for e in plan.epics for i in e.issues if i.assignee}
+    recips |= {relay.ratifier_of(g) for g in state.gates if relay.ratifier_of(g)}
+    recips |= {m.username for m in team.all_members() if m.is_manager}
+    return {r for r in recips if r}
 
 
 _EVENT_TO_TYPE = {"assigned": "task_assigned", "completed": "task_completed",
@@ -540,7 +609,7 @@ async def inbox(member: DeveloperProfile = Depends(auth.current_member)) -> dict
         pass
     try:
         for prop in await open_reschedule_proposals():
-            is_mgr = member.role == "manager"
+            is_mgr = member.is_manager
             if is_mgr or member.username in prop.get("affected_users", []):
                 st = prop.get("strategy", {})
                 needs_action.append({
@@ -668,35 +737,53 @@ async def list_relays(member: DeveloperProfile = Depends(auth.current_member)) -
             continue
         out.append({
             "plan_id": plan_id, "project": plan.project_name, "baton": list(state.baton),
-            "gates": [{"discipline": g.discipline, "status": g.status, "note": g.note, "delegate": g.delegate} for g in state.gates],
+            "gates": [_gate_summary(plan_id, g) for g in state.gates],
             "is_delta": plan_id in DELTA_TARGET, "target_project_id": DELTA_TARGET.get(plan_id),
-            "all_ratified": relay.all_ratified(state),
+            "all_ratified": relay.all_ratified(state), "dispatch": state.dispatch,
         })
     return {"count": len(out), "relays": out}
 
 
+def _gate_summary(plan_id: str, g) -> dict:
+    """THE gate projection for list payloads — one place to extend, so a new Gate field (ready,
+    is_acceptance, owner…) can never be added to the detail endpoint and silently missed here."""
+    return {"discipline": g.discipline, "status": g.status, "note": g.note, "owner": g.owner,
+            "delegate": g.delegate, "ready": _gate_ready(plan_id, g),
+            "is_acceptance": relay.is_acceptance_gate(g)}
+
+
 @app.get("/api/qa/queue", response_model=QAQueue)
 async def qa_queue(_: DeveloperProfile = Depends(auth.current_member)) -> QAQueue:
-    """Cross-project Tester queue: every dispatched project with QA work outstanding. QA runs off the
-    live plan (PROJECTS — persisted + rebuilt on startup); the relay state (RELAYS, if still active this
-    session) supplies the accept-gate status + baton. So a tester sees all their acceptance work across
-    projects in one place, not one locked project."""
-    plan_id_by_name: dict[str, str] = {}
-    for plan_id, plan in PLANS.items():
-        plan_id_by_name.setdefault(plan.project_name, plan_id)
+    """Cross-project Tester queue — one row per ACTIVE RELAY with an acceptance gate (plan→project resolved
+    by ID via RESERVED / DELTA_TARGET, never by name: two relays on one project are two rows), plus one row
+    per dispatched project with no active relay (its post-dispatch acceptance + any reopened re-QA items).
+    So a tester sees all their acceptance work across projects in one place, not one locked project."""
     entries: list[QAQueueEntry] = []
-    for pid, plan in PROJECTS.items():
-        plan_id = plan_id_by_name.get(plan.project_name, "")
-        state = RELAYS.get(plan_id) if plan_id else None
-        qa_gate = next((g for g in state.gates if g.discipline == "qa"), None) if state else None
-        status = qa_gate.status if qa_gate else "pending"
+    covered: set[int] = set()  # project_ids already represented by an active relay's row
+    for plan_id, state in RELAYS.items():
+        plan = PLANS.get(plan_id)
+        qa_gate = next((g for g in state.gates if relay.is_acceptance_gate(g)), None)
+        if plan is None or qa_gate is None:
+            continue
+        pid = (RESERVED.get(plan_id) or {}).get("project_id") or DELTA_TARGET.get(plan_id)
+        if not pid:
+            continue  # not Created yet — the tester queue starts once the project exists
         reqa = sorted(REQA.get(pid, set()))
-        if status in ("ratified", "auto_passed") and not reqa:
-            continue  # accepted and nothing reopened → no outstanding QA
+        covered.add(pid)  # an active relay OWNS its project's row — even done-skipped, don't double-list below
+        if qa_gate.status in const.DONE and not reqa:
+            continue  # accepted and nothing reopened → no outstanding QA on this relay
         entries.append(QAQueueEntry(
             project_id=pid, project_name=plan.project_name, plan_id=plan_id,
-            qa_status=status, baton=bool(state and "qa" in state.baton),
+            qa_status=qa_gate.status, baton="qa" in state.baton,
             issue_count=sum(len(e.issues) for e in plan.epics), awaiting_reqa=reqa,
+        ))
+    for pid, plan in PROJECTS.items():  # dispatched (relay popped): live acceptance + reopened items
+        if pid in covered:
+            continue
+        entries.append(QAQueueEntry(
+            project_id=pid, project_name=plan.project_name, plan_id="",
+            qa_status="pending", baton=False,
+            issue_count=sum(len(e.issues) for e in plan.epics), awaiting_reqa=sorted(REQA.get(pid, set())),
         ))
     entries.sort(key=lambda e: (e.baton, e.issue_count), reverse=True)
     return QAQueue(count=len(entries), queue=entries)
@@ -785,6 +872,9 @@ async def create_brief(text: Optional[str] = Form(None), file: Optional[UploadFi
             content = raw.decode("utf-8", "ignore").strip()
     if not content:
         raise HTTPException(400, "empty brief")
+    # cap the brief — a pasted 50kB doc would blow the clarify prompt budget (the UI caps at 8k;
+    # PDFs can extract more, so truncate rather than reject)
+    content = content[:_BRIEF_MAX_CHARS]
     bid = f"brief_{uuid.uuid4().hex[:8]}"
     BRIEFS[bid] = content
     await _persist("briefs", bid, {"v": content})
@@ -824,6 +914,8 @@ async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
     """Intake: extract the spec, flag unclear features as ambiguity cards, propose reuse."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
+    from app import trace
+    trace.clear(f"{brief_id}:clarify"); trace.begin(f"{brief_id}:clarify")   # phase-scoped run (no cross-phase bleed)
     spec = await clarify_brief(BRIEFS[brief_id], constraints or Constraints())
     SPECS[brief_id] = spec
     await _persist("specs", brief_id, spec.model_dump())
@@ -832,29 +924,54 @@ async def clarify(brief_id: str, constraints: Optional[Constraints] = None,
 
 @app.post("/api/briefs/{brief_id}/clarify/resolve", response_model=ClarifiedSpec)
 async def resolve_clarify(brief_id: str, res: ClarifyResolution,
-                          _: DeveloperProfile = Depends(auth.current_manager)) -> ClarifiedSpec:
-    """Manager answers the ambiguity cards (id → resolution); folds into the living spec."""
+                          _: DeveloperProfile = Depends(auth.current_manager),
+                          _t: None = Depends(_ai_throttle)) -> ClarifiedSpec:
+    """Manager answers the ambiguity cards (id → resolution); folds into the living spec, THEN judges agency
+    memory on the RESOLVED spec (CRAG) — so the answers can shift which past work grounds the architecture."""
     spec = SPECS.get(brief_id)
     if spec is None:
         raise HTTPException(404, "clarify the brief first")
     for amb in spec.ambiguities:
         if amb.id in res.answers:
             amb.resolution = res.answers[amb.id]
+    from app import trace
+    trace.clear(f"{brief_id}:memory"); trace.begin(f"{brief_id}:memory")   # phase-scoped run
+    spec.memory_candidates = await judge_memory(spec)   # reuse judged on the RESOLVED spec, not the raw brief
+    SPECS[brief_id] = spec
     await _persist("specs", brief_id, spec.model_dump())
     return spec
 
 
 @app.post("/api/briefs/{brief_id}/architectures", response_model=ArchitectureOptions)
 async def architectures(brief_id: str, constraints: Optional[Constraints] = None,
+                        grounded: Optional[list[str]] = Query(None), decided: bool = Query(False),
                         _: DeveloperProfile = Depends(auth.current_manager),
                         _t: None = Depends(_ai_throttle)) -> ArchitectureOptions:
-    """Idea 1: 2-3 grounded Architecture Cards for the manager to pick from."""
+    """Idea 1: 2-3 grounded Architecture Cards. `grounded` = the human's ratified memory-candidate refs
+    (Use/Skip from the Memory panel). `decided` distinguishes a human verdict of "keep none → fresh build"
+    (decided + empty grounded → []) from "no panel shown → the AI judges all retrieved candidates" (None)."""
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
-    opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints())
+    eff_grounded = grounded if grounded is not None else ([] if decided else None)
+    from app import trace
+    trace.clear(f"{brief_id}:arch"); trace.begin(f"{brief_id}:arch")   # phase-scoped run
+    opts = await propose_architectures(BRIEFS[brief_id], constraints or Constraints(), grounded=eff_grounded)
     ARCHS[brief_id] = opts  # cache for wizard resume
     await _persist("archs", brief_id, opts.model_dump())
     return opts
+
+
+@app.get("/api/briefs/{brief_id}/trace")
+async def brief_trace(brief_id: str, phase: Optional[str] = Query(None),
+                      _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The ReAct trace for a brief's run — the agent's REAL Reason→Action steps (Gemini · MongoDB · GitLab).
+    Trace runs are PHASE-scoped (`{brief_id}:{phase}`) so each wizard phase polls only its own steps (no
+    cross-phase bleed / clear-flicker). `phase` omitted = the legacy brief-keyed run. MEMBER-readable —
+    leads watch their gate's contract drafting and the Tester watches the dispatch (manager-only here
+    silently 403'd those LiveTraces); the steps are non-sensitive ReAct labels."""
+    from app import trace
+    key = f"{brief_id}:{phase}" if phase else brief_id
+    return {"brief_id": brief_id, "phase": phase, "steps": trace.get(key)}
 
 
 def _manifest_of(plan: PlanJSON) -> list[str]:
@@ -867,23 +984,6 @@ def _plan_pid(plan_id: str) -> int:
     """Negative placeholder project_id for a plan's Tasks before dispatch assigns the real GitLab
     project_id; re-keyed on dispatch. Process-stable (fine for the draft→dispatch flow). (Phase A)"""
     return -(abs(hash(plan_id)) % 2_000_000_000)
-
-
-async def _persist_draft_tasks(plan: PlanJSON, plan_id: str) -> None:
-    """Best-effort: store a plan's Tasks (status 'planned') under the placeholder id so the Work
-    hub sees drafted work. Idempotent — clears any prior draft for this plan first. (Phase A)"""
-    try:
-        now = datetime.now(timezone.utc).isoformat()
-        pid = _plan_pid(plan_id)
-        await delete_tasks_for_project(pid)
-        objs = tasklib.materialize_tasks(plan, pid, now)
-        pri = DELTA_PRIORITY.get(plan_id)
-        if pri:
-            for o in objs:
-                o.priority = pri  # the feature's urgency rides on its tasks → drives the cascade in the preview
-        await save_tasks([o.model_dump() for o in objs])
-    except Exception:
-        pass  # mirrors save_project_record — never fail planning over persistence
 
 
 def _reflow_change_events(rows: list[dict]) -> list[ChangeEvent]:
@@ -905,6 +1005,8 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
     if brief_id not in BRIEFS:
         raise HTTPException(404, "brief not found")
     req = req or PlanRequest()
+    from app import trace
+    trace.clear(f"{brief_id}:plan"); trace.begin(f"{brief_id}:plan")   # phase-scoped run
     # REASON: RAG (MongoDB MCP) → Gemini → assign. chosen_stack locks the stack (Idea 1).
     plan = await run_brief(BRIEFS[brief_id], chosen_stack=req.chosen_stack, constraints=req.constraints)
     plan_id = f"plan_{brief_id}"
@@ -912,12 +1014,13 @@ async def make_plan(brief_id: str, req: Optional[PlanRequest] = None, _: Develop
     RELAYS[plan_id] = relay.build_relay(plan, setup_owner=req.setup_owner)  # +setup gate if the stack was redirected to a lead
     await _persist_relay(plan_id)  # durable: snapshot the plan + open relay so they survive a restart
     try:  # durable runtime (P8): the spine records the plan so an in-flight relay survives a restart
-        await eventlog.emit("plan_created", created_at=datetime.now(timezone.utc).isoformat(),
+        await eventlog.emit(const.EventKind.PLAN_CREATED, created_at=datetime.now(timezone.utc).isoformat(),
                             payload={"plan_id": plan_id, "plan": plan.model_dump()})
     except Exception:
         pass
-    await _persist_draft_tasks(plan, plan_id)
-    await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
+    # Tasks are NOT materialized here — only at _finalize_scaffold (after the relay's gates ratify), so the
+    # Work hub stays empty until the plan is dispatched (no pre-ratification tasks, no negative-pid placeholders).
+    # (Subteam pacts CUT 2026-06-09 — _seed_subteam_agreements no longer called; interface contracts stay JIT.)
     return {"plan_id": plan_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
 
@@ -936,8 +1039,8 @@ def _apply_api_contract(plan_id: str, issue_id: str, contract: str) -> None:
 
 async def _seed_subteam_agreements(plan_id: str, plan: PlanJSON) -> None:
     """At plan time, route any sub-team proposals (a 2nd dev warranted for a heavy slice). Interface
-    contracts are NOT drafted here — they are generated JIT from each producer's ratified gate choice
-    (`_generate_contracts_for_lane`), so a contract always matches the chosen implementation, never a guess."""
+    contracts are NOT drafted here — they are drafted from the feature at reserve (`_draft_contracts`,
+    contract-first), independent of any gate choice."""
     try:
         members = team.all_members()
         drafts = agreements.propose_subteams(plan, members)
@@ -955,74 +1058,97 @@ async def _seed_subteam_agreements(plan_id: str, plan: PlanJSON) -> None:
         pass
 
 
-async def _generate_contracts_for_lane(plan_id: str, plan: PlanJSON, discipline: str, chosen, by_user: str) -> None:
-    """JIT: the producer just ratified this gate — (re)generate the interface contracts its slice PRODUCES,
-    grounded on the chosen solution. The AI may answer `needed=false` (no real API boundary) → no contract,
-    no noise. Any prior live contract for the edge is superseded (regenerate on a changed choice). The
-    producer then picks a shape + signs (sign-async); the consumer agrees or counters. Best-effort — the
-    integration gate is the net. In DEMO this runs too (propose_contract_options returns canned options), so
-    ratifying a gate visibly drives its contract."""
+async def _draft_contracts(plan_id: str, plan: PlanJSON) -> None:
+    """Contract-FIRST: at reserve, draft EVERY producer→consumer interface contract from the FEATURE (the two
+    slices' descriptions) — independent of any gate choice. The contract is the external interface both sides
+    implement against; a gate's reuse-or-innovate choice SATISFIES it, never authors it. The producer (its
+    gate owner) signs a shape; the consumer agrees or counters. Idempotent — an edge that already has a live
+    contract is skipped — and best-effort (the integration gate is the net). Emits a ReAct trace
+    ({plan_id}:contracts) so the drafting is visible, INCLUDING a 'no contract needed' result for a bare edge.
+    In DEMO this runs too (propose_contract_options returns canned options)."""
+    from app import trace
+    run = f"{plan_id}:contracts"
     try:
         by_id = {i.id: i for e in plan.epics for i in e.issues}
         edges: dict[tuple[str, str], object] = {}             # (producer_issue, consumer_lane) → consumer issue
         for cons in by_id.values():
             for dep in cons.depends_on:
                 prod = by_id.get(dep)
-                if not prod or prod.discipline != discipline or cons.discipline == discipline:
-                    continue                                  # only THIS lane's outgoing cross-discipline edges
+                if not prod or prod.discipline == cons.discipline:
+                    continue                                  # only cross-discipline dependency edges produce a contract
+                if prod.discipline not in const.API_PRODUCER_DISCIPLINES:
+                    continue                                  # frontend/uiux/devops serve no consumed API → no contract
                 edges.setdefault((prod.id, cons.discipline), cons)
         if not edges:
             return
+        trace.begin(run)
+        trace.step("server", "thought", "Drafting interface contracts", f"{len(edges)} producer→consumer edge(s), from the feature")
         members = team.all_members()
-        existing = await agreements_for_plan(plan_id)         # this plan's prior contracts (to supersede on a changed choice)
+        existing = await agreements_for_plan(plan_id)         # idempotent re-draft: skip an edge already under contract
         pool = await all_agreements()                         # the cross-plan precedent pool (compound from past ratified shapes)
         now = datetime.now(timezone.utc).isoformat()
-        for (prod_id, cons_disc), cons in edges.items():
+        # each side's signer = its gate OWNER (delegate ?? owner — known at reserve); the lane lead is the fallback
+        _state = RELAYS.get(plan_id)
+        gate_owners = {g.discipline: relay.ratifier_of(g) for g in (_state.gates if _state else []) if relay.ratifier_of(g)}
+        async def _edge(prod_id: str, cons_disc: str, cons) -> None:
+            """Draft ONE producer→consumer edge — runs concurrently with its siblings (N edges in parallel,
+            not N sequential Gemini calls). Distinct edges by construction (the edges dict dedups), so the
+            concurrent saves can't duplicate; trace steps interleave but each row is labeled by edge."""
             prod = by_id[prod_id]
-            prior = [a for a in existing if a.get("type") == "interface"
-                     and a.get("producer_issue_id") == prod_id and a.get("consumer_discipline") == cons_disc
-                     and a.get("state") in ("proposed", "active", "ratified", "auto_passed")]
+            prod_disc = prod.discipline
+            trace.step("gemini", "action", f"{prod_disc} → {cons_disc}", f"What does {cons_disc} need from {prod.title}?")
             try:
-                opts = await propose_contract_options(plan, prod, cons, chosen)
+                opts = await propose_contract_options(plan, prod, cons)   # feature-grounded (no gate choice)
             except Exception:
-                continue                                      # best-effort; the integration gate still catches drift
+                logging.getLogger("sprint0.contracts").warning(
+                    "contract draft failed for %s→%s (%s) — the integration gate is the net", prod_disc, cons_disc, plan_id)
+                return                                        # best-effort; the integration gate still catches drift
             if not opts.needed or not opts.proposals:
-                for old in prior:                             # the choice removed the boundary → retire the stale contract
-                    await update_agreement(old["id"], {"state": "superseded", "updated_at": now})
-                continue
+                trace.step("server", "result", f"No contract needed · {prod_disc}→{cons_disc}", "no API boundary between these slices")
+                return
             top = opts.proposals[0].interface
             a = Agreement(
                 id=f"agr_{uuid.uuid4().hex[:8]}", type="interface", plan_id=plan_id,
-                subject=f"{discipline}→{cons_disc} · {top.path or prod.title}",
+                subject=f"{prod_disc}→{cons_disc} · {top.path or prod.title}",
                 interface=top, proposals=opts.proposals,
                 producer_issue_id=prod_id, consumer_issue_id=cons.id,
-                producer_discipline=discipline, consumer_discipline=cons_disc,
+                producer_discipline=prod_disc, consumer_discipline=cons_disc,
+                producer_actor=gate_owners.get(prod_disc) or "",
+                consumer_actor=gate_owners.get(cons_disc) or agreements.lead_of(cons_disc, members) or "",
                 state="proposed", created_at=now, updated_at=now)
-            a.ratifiers = agreements.ratifiers_for(a, members)
+            a.ratifiers = agreements.ratifiers_for(a, members, gate_ratifiers={prod_disc: a.producer_actor, cons_disc: a.consumer_actor})
             precedent = agreements.find_precedent(a.model_dump(), pool)
             if precedent:                                     # COMPOUND → a RECOMMENDATION (not auto-pass): badge it; the producer still signs
                 a.precedent_id = precedent                    # state stays "proposed"; no mock seeded until the human signs
-            for old in prior:
-                await update_agreement(old["id"], {"state": "superseded", "superseded_by": a.id, "updated_at": now})
             await save_agreement(a.model_dump())
-            existing.append(a.model_dump())
-            if a.state == "proposed":                         # route to the producer to pick a shape + sign (sign-async)
-                await notify(by_user, "agreement_proposed", f"Sign your contract · {a.subject}",
+            trace.step("mongodb", "result", f"Contract drafted · {a.subject}", (f"{top.method or ''} {top.path or ''}").strip() or "interface")
+            if a.producer_actor:                              # route to the producer to pick a shape + sign (sign-async)
+                await notify(a.producer_actor, "agreement_proposed", f"Sign your contract · {a.subject}",
                              body=f"Pick the API shape {cons_disc} builds against, then sign.",
                              ref={"agreement_id": a.id, "plan_id": plan_id}, actionable=True)
+
+        def _edge_live(prod_id: str, cons_disc: str) -> bool:  # idempotent re-draft: skip an edge already under contract
+            return any(a.get("type") == "interface" and a.get("producer_issue_id") == prod_id
+                       and a.get("consumer_discipline") == cons_disc
+                       and a.get("state") in const.AGREEMENT_LIVE for a in existing)
+
+        await asyncio.gather(*(_edge(pid_, disc_, cons) for (pid_, disc_), cons in edges.items()
+                               if not _edge_live(pid_, disc_)))
     except Exception:
-        pass
+        logging.getLogger("sprint0.contracts").exception("contract drafting failed wholesale (%s)", plan_id)
 
 
 @app.get("/api/plans/{plan_id}/agreements")
 async def list_agreements(plan_id: str, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    return {"agreements": await agreements_for_plan(plan_id)}
+    rows = await agreements_for_plan(plan_id)
+    return {"agreements": [a for a in rows if a.get("type") != "subteam"]}  # subteam pacts cut — hide legacy rows
 
 
 @app.get("/api/me/agreements")
 async def my_agreements(member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """The agreements awaiting MY signature — the Inbox queue (minimal-ratifier routing, no broadcast)."""
-    return {"agreements": await agreements_for_ratifier(member.username)}
+    rows = await agreements_for_ratifier(member.username)
+    return {"agreements": [a for a in rows if a.get("type") != "subteam"]}
 
 
 class RatifyAgreementBody(BaseModel):
@@ -1048,10 +1174,12 @@ async def ratify_agreement(agreement_id: str, body: RatifyAgreementBody,
     if not raw:
         raise HTTPException(404, "agreement not found")
     a = Agreement(**raw)
-    if member.username not in a.ratifiers and member.role != "manager":
+    if member.username not in a.ratifiers and not member.is_manager:
         raise HTTPException(403, "not a ratifier of this agreement")
     now = datetime.now(timezone.utc).isoformat()
-    is_producer = member.discipline is not None and member.discipline == a.producer_discipline
+    # the producer ACTOR (the producing gate's ratifier, possibly out-of-discipline) — discipline fallback for legacy rows
+    is_producer = (member.username == a.producer_actor) if a.producer_actor \
+        else member.covers(a.producer_discipline)
     # the producer picks WHICH shape they're signing (reuse / fresh / write-your-own) → becomes the agreed interface
     if is_producer and body.decision == "ratified":
         if body.interface is not None:                       # write-your-own → the producer authored the shape
@@ -1086,7 +1214,7 @@ async def counter_agreement(agreement_id: str, body: CounterAgreementBody,
     if not raw:
         raise HTTPException(404, "agreement not found")
     a = Agreement(**raw)
-    if member.username not in a.ratifiers and member.role != "manager":
+    if member.username not in a.ratifiers and not member.is_manager:
         raise HTTPException(403, "not a ratifier of this agreement")
     now = datetime.now(timezone.utc).isoformat()
     iface = None
@@ -1138,7 +1266,7 @@ async def verify_agreements(plan_id: str, member: DeveloperProfile = Depends(aut
     state = RELAYS.get(plan_id)
     results, now = [], datetime.now(timezone.utc).isoformat()
     for raw in await agreements_for_plan(plan_id):
-        if raw.get("type") != "interface" or raw.get("state") not in ("ratified", "auto_passed"):
+        if raw.get("type") != "interface" or raw.get("state") not in const.DONE:
             continue
         prod = issues.get(raw.get("producer_issue_id"))
         if not prod or not prod.api_contract:
@@ -1161,11 +1289,12 @@ async def verify_agreements(plan_id: str, member: DeveloperProfile = Depends(aut
 
 
 @app.get("/api/reuse-pack")
-async def get_reuse_pack(projects: str = "", _: DeveloperProfile = Depends(auth.current_member)) -> dict:
-    """The REUSE agreement made executable: the cited source files for a chosen memory solution — the dev
-    pulls them (link → file list → seed the focus branch). 'it was built before' → 'it's in your branch'."""
+async def get_reuse_pack(projects: str = "", discipline: str = "", _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The REUSE agreement made executable: the cited source files for a chosen memory solution, scoped to
+    the gate's `discipline` (the devops card cites devops files, not the whole tree) — the dev pulls them
+    (link → file list → seed the focus branch). 'it was built before' → 'it's in your branch'."""
     names = [p.strip() for p in projects.split(",") if p.strip()]
-    files = await reuse_pack(names)
+    files = await reuse_pack(names, discipline=discipline or None)
     return {"count": len(files), "files": files}
 
 
@@ -1176,11 +1305,92 @@ async def get_plan(plan_id: str) -> PlanJSON:
     return PLANS[plan_id]
 
 
+def _gate_ready(plan_id: str, g) -> bool:
+    """Strict pipeline (P2): a pending gate is 'ready' (open) once its choices are cached; a gate with no
+    slice (the qa acceptance gate, setup) has nothing to generate → always ready."""
+    if g.status not in ("pending", "changes_requested"):
+        return True
+    if (plan_id, g.discipline) in SOLUTIONS:
+        return True
+    plan = PLANS.get(plan_id)
+    return not plan or not any(i.discipline == g.discipline for e in plan.epics for i in e.issues)
+
+
 @app.get("/api/plans/{plan_id}/relay", response_model=RelayState)
 async def get_relay(plan_id: str) -> RelayState:
     if plan_id not in RELAYS:
         raise HTTPException(404, "relay not found")
-    return RELAYS[plan_id]
+    state = RELAYS[plan_id]
+    for g in state.gates:  # stamp the strict-pipeline readiness + the acceptance flag at serialization time
+        g.ready = _gate_ready(plan_id, g)
+        g.is_acceptance = relay.is_acceptance_gate(g)
+    return state
+
+
+def _can_author_acceptance(member: DeveloperProfile, state) -> bool:
+    """Only the acceptance gate's OWNER (the Tester — its ratifier ?? the qa coverer ?? the manager when qa
+    is an orphan) authors the definition of done. No blanket manager grant — owns_gate decides."""
+    g = next((g for g in state.gates if relay.is_acceptance_gate(g)), None)
+    return bool(g) and relay.owns_gate(member, g, team.all_members())
+
+
+ACCEPTANCE_MAX = 240  # an authored pass-condition stays one concise line
+
+
+class AcceptanceItem(BaseModel):
+    issue_id: str
+    text: str = ""
+
+
+class AcceptanceSave(BaseModel):
+    criteria: list[AcceptanceItem]
+
+
+@app.get("/api/plans/{plan_id}/acceptance")
+async def get_acceptance(plan_id: str, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The acceptance criteria (definition of done) the Tester authors at the terminal gate — one per plan
+    issue. Each seeds from the issue's generic line until the Tester sharpens it; the checklist + this share
+    `handoff.acceptance_line`, so the editor shows exactly what dispatch will post to the role:qa issue."""
+    plan = PLANS.get(plan_id)
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    # Lazy AI pass (cached): seed each issue with a SPECIFIC testable criterion the first time the Tester opens
+    # the gate, so they refine real conditions, not "works end-to-end". Best-effort; the generic line stands on
+    # failure / demo. Cached on the plan's issues + persisted so it's a one-shot.
+    if not demo.is_demo() and not any(i.acceptance for e in plan.epics for i in e.issues):
+        try:
+            crit = await propose_acceptance(plan)
+            if crit:
+                for e in plan.epics:
+                    for i in e.issues:
+                        if crit.get(i.id):
+                            i.acceptance = crit[i.id]
+                await _persist("plans", plan_id, plan.model_dump())
+        except Exception:
+            logging.getLogger("sprint0.acceptance").warning("acceptance criteria generation failed (%s)", plan_id)
+    items = [{"issue_id": i.id, "title": i.title, "discipline": i.discipline, "type": i.type,
+              "text": handoff.acceptance_line(i)} for e in plan.epics for i in e.issues]
+    return {"plan_id": plan_id, "criteria": items}
+
+
+@app.post("/api/plans/{plan_id}/acceptance")
+async def save_acceptance(plan_id: str, req: AcceptanceSave,
+                          member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The Tester saves the authored criteria onto the plan's issues — they flow into the role:qa GitLab
+    checklist at dispatch. Authored by the acceptance gate's owner (delegate ?? owner) or the manager."""
+    plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
+    if plan is None or state is None:
+        raise HTTPException(404, "plan not found")
+    await team.ensure_loaded()
+    if not _can_author_acceptance(member, state):
+        raise HTTPException(403, "only the acceptance gate's owner or the manager can author the definition of done")
+    by_id = {i.id: i for e in plan.epics for i in e.issues}
+    for c in req.criteria:
+        iss = by_id.get(c.issue_id)
+        if iss is not None:
+            iss.acceptance = c.text.strip()[:ACCEPTANCE_MAX]
+    await _persist("plans", plan_id, plan.model_dump())
+    return {"plan_id": plan_id, "saved": sum(1 for c in req.criteria if c.issue_id in by_id)}
 
 
 # (Removed: the Autonomy dial / auto-pass endpoint. NO auto-approval — the human ratifies every gate, the AI only
@@ -1192,25 +1402,26 @@ async def ratify_gate(
     plan_id: str, discipline: str, req: RatifyRequest,
     member: DeveloperProfile = Depends(auth.current_member),
 ) -> RelayState:
-    """The discipline lead — or the MANAGER, for an orphan gate (no one holds that discipline) —
-    adjusts the slice and passes the baton."""
+    """Only the gate's OWNER ratifies it — its assigned lead (ratifier), or, for an orphan gate that nobody
+    covers, the manager. A gate is one user's; no role grants ratify on someone else's slice."""
     state, plan = RELAYS.get(plan_id), PLANS.get(plan_id)
     if state is None or plan is None:
         raise HTTPException(404, "plan not found")
     _gate = next((g for g in state.gates if g.discipline == discipline), None)
     if _gate is None:
         raise HTTPException(404, f"no {discipline} gate")
-    # a delegated gate is the delegate's call (not the original lead's); else the lead's. Manager always may.
-    _owner_ok = member.role == "manager" or (_gate.delegate == member.username if _gate.delegate else member.discipline == discipline)
-    if not _owner_ok:
-        raise HTTPException(403, f"only this gate's owner ({_gate.delegate or discipline + ' lead'}) or the manager can ratify it")
+    await team.ensure_loaded()
+    if not relay.owns_gate(member, _gate, team.all_members()):
+        _ratifier = relay.ratifier_of(_gate)
+        raise HTTPException(403, f"only this gate's owner ({_ratifier or discipline + ' lead'}) can ratify it")
     if next(g.status for g in state.gates if g.discipline == discipline) == "blocked":
         raise HTTPException(409, "gate is blocked by an open integration failure — mark it api-ok first")
     if discipline == "setup" and req.tech_stack is not None:  # the redirected lead confirms or OVERRIDES the stack
         plan.tech_stack = req.tech_stack                      # propagates to the scaffold (README/focus) at relay-close
     relay.ratify(state, plan, discipline, req.edits, req.approve, req.note)  # type: ignore[arg-type]
+    _pregenerate_open_gates(plan_id)  # strict pipeline: the gates this ratify just unlocked start preparing (P2)
     try:  # durable runtime (P8): record the ratification so the relay's progress survives a restart
-        await eventlog.emit("gate_ratified", created_at=datetime.now(timezone.utc).isoformat(),
+        await eventlog.emit(const.EventKind.GATE_RATIFIED, created_at=datetime.now(timezone.utc).isoformat(),
                             payload={"plan_id": plan_id, "discipline": discipline,
                                      "approve": req.approve, "note": req.note})
     except Exception:
@@ -1220,7 +1431,7 @@ async def ratify_gate(
         sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
         if chosen is not None:  # reuse-or-innovate: record the pick
             CHOSEN[(plan_id, discipline)] = chosen
-            await _persist("chosen", f"{plan_id}|{discipline}", chosen.model_dump())  # durable
+            await _persist("chosen", const.persist_key(plan_id, discipline), chosen.model_dump())  # durable
             pre_files = soln.gate_slice_files(plan, discipline)  # footprint before the choice
             if chosen.source == "user":  # write-your-own → the AI rewrites THIS gate's issues to match
                 try:
@@ -1237,7 +1448,7 @@ async def ratify_gate(
                 except Exception:
                     pass  # best-effort; the choice is still recorded
                 SOLUTIONS.pop((plan_id, discipline), None)  # cached set is stale after a rewrite
-                await _unpersist("solutions", f"{plan_id}|{discipline}")
+                await _unpersist("solutions", const.persist_key(plan_id, discipline))
             # Cross-gate impact: ONLY when the choice ADDED files (a user rewrite) that touch another gate.
             # A memory/ai pick changes no files → never bounces another discipline's already-ratified gate.
             added = sorted(soln.gate_slice_files(plan, discipline) - pre_files)
@@ -1245,17 +1456,17 @@ async def ratify_gate(
                 await team.ensure_loaded()
                 for d in soln.cross_gate_overlap(plan, discipline, added):
                     for g in state.gates:
-                        if g.discipline == d and g.status in ("ratified", "auto_passed"):
+                        if g.discipline == d and g.status in const.DONE:
                             g.status = "changes_requested"
                             g.note = f"re-ratify — {discipline}'s chosen solution now touches your slice"
-                    owner = next((m.username for m in team.all_members() if m.discipline == d), None)
+                    owner = next((m.username for m in team.all_members() if m.covers(d)), None)
                     if owner:
                         await notify(owner, "ratify_needed",
                                      f"Re-ratify {d}: {discipline}'s choice now touches your slice",
                                      ref={"plan_id": plan_id, "discipline": d}, actionable=True)
                 relay._recompute_baton(state)  # bounced gates re-enter the baton
-            # JIT: (re)generate the interface contracts THIS slice produces, from the just-chosen solution.
-            await _generate_contracts_for_lane(plan_id, plan, discipline, chosen, member.username)
+            # Contract-first: the interface contracts were drafted from the feature at reserve (_draft_contracts),
+            # independent of this choice — ratifying a gate no longer generates them.
         now = datetime.now(timezone.utc).isoformat()
         deviated = req.deviated or (chosen is not None and chosen.source == "user")
         if chosen is not None and chosen.title:
@@ -1281,16 +1492,34 @@ async def ratify_gate(
             await save_decision(dec.model_dump())
         except Exception:
             pass  # best-effort persistence, mirrors save_project_record at dispatch
-    if relay.all_ratified(state):           # relay fully cleared → ping the plan's assignees + their watchers
-        for a in sorted({i.assignee for e in plan.epics for i in e.issues if i.assignee}):
-            await notify(a, "task_completed", f"{plan.project_name}: all relay gates ratified", ref={"plan_id": plan_id})
-            await notify_watchers(a, "completed", f"{plan.project_name} cleared the relay", ref={"plan_id": plan_id})
-        if plan_id in RESERVED or plan_id in DELTA_TARGET:  # two-phase: the relay just CLOSED → auto-scaffold to GitLab
-            try:
-                pid = (RESERVED.get(plan_id) or {}).get("project_id") or DELTA_TARGET.get(plan_id)
-                await _finalize_scaffold(plan_id, plan, project_id=pid)  # issues/branches/focus/QA + real tasks + pop relay
-            except Exception:
-                pass  # a scaffold failure must never 500 the lead's ratify — surfaced via notifications
+    if relay.all_ratified(state) and (plan_id in RESERVED or plan_id in DELTA_TARGET):
+        # the LAST gate just ratified → DISPATCH (a slow, validated phase). Mark "dispatching" FIRST so a
+        # concurrent manager poll sees the truth (not an "open" relay it can act on). NO premature "ratified"
+        # ping — the only success signal is the VALIDATED ship below.
+        state.dispatch = "dispatching"
+        await _persist_relay(plan_id)
+        await team.ensure_loaded()
+        result: dict = {}
+        try:
+            pid = (RESERVED.get(plan_id) or {}).get("project_id") or DELTA_TARGET.get(plan_id)
+            result = await _finalize_scaffold(plan_id, plan, project_id=pid)  # validated; pops the relay on a clean ship
+        except Exception:
+            logging.getLogger("sprint0.dispatch").exception("scaffold threw after the last ratify (%s)", plan_id)
+        if result.get("ok"):
+            # SHIPPED → tell EVERY relay participant (assignees ∪ gate ratifiers ∪ managers), concise + direct.
+            n = result.get("tasks_created", 0)
+            for _u in sorted(_relay_recipients(plan, state)):
+                await notify(_u, "project_shipped", f"{plan.project_name}: relay shipped · {n} tasks created",
+                             ref={"plan_id": plan_id, "project_id": result.get("project_id")})
+        else:
+            st = RELAYS.get(plan_id)
+            if st is not None:            # soft-fail set this inside _finalize_scaffold; a THROW didn't → ensure it
+                st.dispatch = "failed"
+            _msg = f"{plan.project_name}: the relay cleared but the dispatch FAILED"
+            for _u in sorted({member.username, *(m.username for m in team.all_members() if m.is_manager)}):
+                await notify(_u, "dispatch_failed", _msg,
+                             body="GitLab issues or tasks did not land — nothing shipped. Retry from the relay (Dispatch).",
+                             ref={"plan_id": plan_id}, actionable=True)
     await _persist_relay(plan_id)  # durable: snapshot the plan + relay after this ratify (no-op if a scaffold just popped it)
     return state
 
@@ -1309,9 +1538,9 @@ def _owns_issue(member: DeveloperProfile, issue) -> bool:
 def _is_qa_owner(member: DeveloperProfile, members: list[DeveloperProfile]) -> bool:
     """The acceptance-gate owner: a member in an acceptance lane (qa today), or — when no developer
     holds one — the manager (orphan-inheritance). Decoupled from the literal name 'qa'."""
-    member_owns = relay.lane_stage(member.discipline or "") == "accept"
-    has_owner = any(relay.lane_stage(m.discipline or "") == "accept" for m in members if m.role == "developer")
-    return member_owns or (member.role == "manager" and not has_owner)
+    member_owns = any(relay.lane_stage(d) == "accept" for d in member.disciplines)
+    has_owner = any(relay.lane_stage(d) == "accept" for m in members for d in m.disciplines)
+    return member_owns or (member.is_manager and not has_owner)
 
 
 async def _reopen_producer(plan_id: str, issue) -> None:
@@ -1417,18 +1646,22 @@ async def plan_staffing(plan_id: str) -> dict:
     return {"coverage": staffing.coverage(plan, members)}
 
 
-async def _can_read_contract(member: DeveloperProfile, discipline: str) -> bool:
-    """Contract visibility: a gate's Contract (solutions + decision card) is private to the gate OWNER (the
-    dev in that lane), the MANAGER, or anyone holding a GRANTED Watch on the owner. Tickets stay fully open —
-    this gates only the Contract reads (the per-gate reuse-or-innovate set + decision card)."""
-    if member.role == "manager":
+async def _can_read_contract(member: DeveloperProfile, discipline: str, plan_id: str | None = None) -> bool:
+    """Contract visibility: a gate's Contract (solutions + decision card) is private to the gate's OWNER
+    (owns_gate: ratifier ?? a discipline coverer ?? the manager for a true orphan) or anyone holding a
+    GRANTED Watch on that owner. NO blanket manager read. Tickets stay open — this gates only the Contract."""
+    await team.ensure_loaded()
+    members = team.all_members()
+    gate = None
+    if plan_id and (st := RELAYS.get(plan_id)):
+        gate = next((g for g in st.gates if g.discipline == discipline), None)
+    if gate and relay.owns_gate(member, gate, members):
         return True
-    if member.discipline == discipline:
-        return True
-    owner = next((m.username for m in team.all_members() if m.discipline == discipline), None)
-    if owner:
+    ratifier = relay.ratifier_of(gate) if gate else None
+    subject = ratifier or next((m.username for m in members if m.covers(discipline)), None)
+    if subject:
         for g in await access_grants_for_requester(member.username):
-            if g.get("subject_id") == owner and g.get("status") == "granted":
+            if g.get("subject_id") == subject and g.get("status") == "granted":
                 return True
     return False
 
@@ -1463,9 +1696,10 @@ async def handoff_gate(plan_id: str, discipline: str, assignee: str = "", member
     gate = next((g for g in state.gates if g.discipline == discipline), None)
     if gate is None:
         raise HTTPException(404, f"no {discipline} gate")
-    owner_ok = member.role == "manager" or (gate.delegate == member.username if gate.delegate else member.discipline == discipline)
-    if not owner_ok:
-        raise HTTPException(403, f"only this gate's owner ({gate.delegate or discipline + ' lead'}) or the manager can hand it off")
+    await team.ensure_loaded()
+    if not relay.owns_gate(member, gate, team.all_members()):
+        _ratifier = relay.ratifier_of(gate)
+        raise HTTPException(403, f"only this gate's owner ({_ratifier or discipline + ' lead'}) can hand it off")
     new = assignee or None
     gate.delegate = new
     # reassign the slice — plan issues always; if any are dispatched Tasks, reassign + reschedule those projects.
@@ -1495,44 +1729,50 @@ async def handoff_gate(plan_id: str, discipline: str, assignee: str = "", member
     return state
 
 
-@app.get("/api/plans/{plan_id}/gates/{discipline}/solutions", response_model=SolutionSet)
-async def gate_solutions(
-    plan_id: str, discipline: str, member: DeveloperProfile = Depends(auth.current_member),
-) -> SolutionSet:
-    """Reuse-or-innovate (the Contract spine): lazily generate — then cache — the solution set for ONE gate:
-    a memory-grounded option + 1-2 fresh AI options + a write-your-own slot. One LLM call per gate, ever."""
-    plan = PLANS.get(plan_id)
-    if plan is None:
-        raise HTTPException(404, "plan not found")
-    # the gate's DELEGATE (a lead handed it off) can read its Contract too — else they could ratify but not
-    # see the proposed solutions. Falls back to the owner / manager / granted-Watch rule.
-    _st = RELAYS.get(plan_id)
-    _is_delegate = bool(_st and any(g.discipline == discipline and g.delegate == member.username for g in _st.gates))
-    if not _is_delegate and not await _can_read_contract(member, discipline):
-        return SolutionSet(discipline=discipline, solutions=[])  # private — owner / delegate / manager / granted Watch only
-    key = (plan_id, discipline)
-    if key in SOLUTIONS:
-        SOLUTIONS[key].chosen = CHOSEN.get(key)   # may have changed since cache (ratify writes CHOSEN)
-        return SOLUTIONS[key]
-    slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
-    if not slice_issues:
-        raise HTTPException(404, "no slice for this discipline in the plan")
+async def _gate_generation_context(plan_id: str, discipline: str) -> tuple[dict, list[dict]]:
+    """The feature context a gate's solutions are grounded on (P7): the CHOSEN solutions of this plan's
+    already-ratified gates + the signed interface shapes flowing INTO this gate — so the proposals stay
+    consistent with the decisions already made, never blind to the feature."""
+    upstream = {d: sol for (pid, d), sol in CHOSEN.items() if pid == plan_id and d != discipline}
     try:
-        sset = await propose_solutions(plan, discipline)  # MongoDB MCP grounding + one Gemini call
+        rows = await agreements_for_plan(plan_id)
+        # contract-first: include DRAFT (proposed) inbound contracts too — the choice is interface-AWARE, never
+        # interface-BLOCKED (a contract still in negotiation is context, "may change", not a dependency).
+        inbound = [a for a in rows if a.get("type") == "interface" and a.get("consumer_discipline") == discipline
+                   and a.get("state") in const.AGREEMENT_LIVE]
+    except Exception:
+        inbound = []
+    return upstream, inbound
+
+
+async def _generate_gate_solutions(plan_id: str, plan: PlanJSON, discipline: str) -> SolutionSet:
+    """Generate + cache + persist ONE gate's reuse-or-innovate set (full feature context, P7). Shared by the
+    lazy GET (the never-strand fallback) and the strict-pipeline pre-generation (P2)."""
+    key = (plan_id, discipline)
+    upstream, inbound = await _gate_generation_context(plan_id, discipline)
+    try:
+        sset = await propose_solutions(plan, discipline, upstream_choices=upstream, inbound_contracts=inbound)  # MongoDB MCP grounding + one Gemini call
     except Exception:  # a transient model/DB error must NOT 500 the Contract — degrade to a stub + user slot
         sset = SolutionSet(solutions=[SolutionCard(
             source="ai", title="Define this slice",
             summary="AI proposal unavailable — describe the approach, or write your own.")])
     slice_files = soln.gate_slice_files(plan, discipline)
     dependents: dict[str, list[str]] = {}
-    pid = DELTA_TARGET.get(plan_id)  # the code graph exists only for a dispatched repo (delta flow)
+    existing: set[str] = set()  # the feature repo's CURRENT tree → classify each file modify vs add
+    pid = DELTA_TARGET.get(plan_id)  # a code graph + a live tree exist only for a dispatched repo (delta flow)
     if pid is not None:
         try:
             edges = [GraphEdge(**e) for e in await graph_edges(str(pid))]
             dependents = {f: graph.dependents_of(f, edges) for f in slice_files}
         except Exception:
             dependents = {}
-    sset = soln.finalize_solution_set(sset, discipline, soln.impacted_files(slice_files, dependents))
+        if not demo.is_demo():  # SECURITY: a demo delta plan must NEVER fire a real GitLab call
+            try:
+                existing = await run_in_threadpool(gitlab.list_repo_tree, pid)
+            except Exception:
+                existing = set()
+    # a brand-new project (pid None) has no slice files in its repo yet → existing stays empty → all `add`
+    sset = soln.finalize_solution_set(sset, discipline, soln.impacted_files(slice_files, dependents), existing)
     # #33 — server-derive each option's grade (memory-grounded only) + the green/orange/grey triage signal
     # from the graded-decisions memory. conflict is already on the card (LLM-flagged live / canned in demo).
     try:
@@ -1545,51 +1785,91 @@ async def gate_solutions(
         c.signal = grading.signal_for(c)
     sset.chosen = CHOSEN.get(key)   # the ratified pick → the done-gate review shows it (None when auto-passed)
     SOLUTIONS[key] = sset
-    await _persist("solutions", f"{key[0]}|{key[1]}", sset.model_dump())  # durable cache
+    await _persist("solutions", const.persist_key(key[0], key[1]), sset.model_dump())  # durable cache
     return sset
 
 
-async def _build_reuse_seeds(plan_id: str, plan: PlanJSON) -> dict[str, list[dict]]:
-    """Reuse layer-2: for each gate whose ratified pick is memory-grounded, fetch the cited source files,
-    AI-adapt them to this stack, and map them to that discipline's code/infra issue branches. The result
-    flows to handoff.commit_context_branches, which commits them into the dev's focus branch + a manifest.
-    Live only — demo `execute_plan` is a stub, so we never spend a fetch/Gemini call there."""
+def _pregenerate_open_gates(plan_id: str) -> None:
+    """Strict pipeline (P2): fire-and-forget generation for every PENDING gate that has no cached solution
+    set yet, so a gate is 'preparing' the moment it unlocks and opens with its choices ready. Called at
+    reserve (the parallel first wave) and after each ratify (the newly unlocked gates). The lazy GET stays
+    as the fallback, so a failed background task can never strand a gate."""
+    plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
+    if plan is None or state is None:
+        return
+
+    async def _one(disc: str) -> None:
+        try:
+            await _generate_gate_solutions(plan_id, plan, disc)
+        except Exception:
+            logging.getLogger("sprint0.pregen").warning(
+                "pre-generation failed for %s/%s — the lazy GET will retry on open", plan_id, disc)
+
+    for g in state.gates:
+        if g.status in ("pending", "changes_requested") and (plan_id, g.discipline) not in SOLUTIONS \
+                and any(i.discipline == g.discipline for e in plan.epics for i in e.issues):
+            _spawn(_one(g.discipline))
+
+
+@app.get("/api/plans/{plan_id}/gates/{discipline}/solutions", response_model=SolutionSet)
+async def gate_solutions(
+    plan_id: str, discipline: str, member: DeveloperProfile = Depends(auth.current_member),
+) -> SolutionSet:
+    """Reuse-or-innovate (the Contract spine): the strict pipeline pre-generates (P2); this GET serves the
+    cache — and remains the lazy fallback that generates on the spot if pre-generation hasn't landed."""
+    plan = PLANS.get(plan_id)
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    # visibility = the gate's RATIFIER (delegate ?? owner ?? discipline lead), the manager, or a granted Watch
+    if not await _can_read_contract(member, discipline, plan_id):
+        return SolutionSet(discipline=discipline, solutions=[])  # private — ratifier / manager / granted Watch only
+    key = (plan_id, discipline)
+    if key in SOLUTIONS:
+        SOLUTIONS[key].chosen = CHOSEN.get(key)   # may have changed since cache (ratify writes CHOSEN)
+        return SOLUTIONS[key]
+    slice_issues = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
+    if not slice_issues:
+        raise HTTPException(404, "no slice for this discipline in the plan")
+    return await _generate_gate_solutions(plan_id, plan, discipline)
+
+
+async def _build_reuse_pointers(plan_id: str, plan: PlanJSON) -> dict[str, list[dict]]:
+    """Reuse layer-2: for each gate whose ratified pick is memory-grounded, build POINTERS (GitLab blob
+    coordinates) to the cited source files — NO fetch, NO Gemini adapt here. The /api/focus endpoint fetches
+    each pointer's RAW file live when the dev curls, and materializes it under .sprint0/reused/<source-project>/.
+    Storing pointers (not content) keeps the focus store tiny. Live only — demo execute is a stub."""
     if demo.is_demo():
         return {}
-    ts = plan.tech_stack
-    stack = f"frontend={ts.frontend}, backend={ts.backend}, db={ts.db}, infra={ts.infra}"
-    seeds: dict[str, list[dict]] = {}
+    pointers: dict[str, list[dict]] = {}
     for (pid_key, disc), chosen in list(CHOSEN.items()):
-        if pid_key != plan_id or not chosen.grounded_on:  # only memory-grounded (reuse) picks seed code
+        if pid_key != plan_id or not chosen.grounded_on:  # only memory-grounded (reuse) picks
             continue
         targets = [i.id for e in plan.epics for i in e.issues
                    if i.discipline == disc and (i.kind or "code") in ("code", "infra")]
         if not targets:
-            continue  # no code/infra branch in this gate → don't spend a GitLab fetch + a Gemini adapt
+            continue  # no code/infra branch in this gate → don't spend a reuse_pack call
         try:
-            rows = await reuse_pack(chosen.grounded_on, limit=6)
+            rows = await reuse_pack(chosen.grounded_on, discipline=disc, limit=6)
         except Exception:
             continue
-        seed_files: list[dict] = []
+        gate_pointers: list[dict] = []
         for f in rows:
             info = gitlab.file_ref_from_blob_url(str(f.get("web_url", "")))
             if not info:
                 continue
             proj, ref, src_path = info
-            try:
-                raw = await run_in_threadpool(gitlab.get_file_raw, proj, src_path, ref)
-            except Exception:
-                continue  # cross-org / deleted / permission — the manifest link still cites it
-            adapted = await generate_adapted_code(raw, stack, f"{disc} slice of {plan.project_name}")
-            seed_files.append({
-                "path": f"reused/{src_path}", "content": adapted,
+            # Namespace by source project so two repos' `app/main.py` don't collide; group under .sprint0/reused.
+            proj_slug = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in str(f.get("project", ""))) or "memory"
+            gate_pointers.append({
+                "path": f".sprint0/reused/{proj_slug}/{src_path}",
+                "project": proj, "ref": ref, "src_path": src_path,
                 "source_url": str(f.get("web_url", "")), "source_project": str(f.get("project", "")),
             })
-        if not seed_files:
+        if not gate_pointers:
             continue
         for iid in targets:
-            seeds[iid] = seed_files  # every branch in the reusing gate opens with the reference code
-    return seeds
+            pointers[iid] = gate_pointers  # every branch in the reusing gate points at the reference code
+    return pointers
 
 
 @app.post("/api/plans/{plan_id}/approve")
@@ -1599,14 +1879,38 @@ async def approve_plan(plan_id: str, req: ApproveRequest, _: DeveloperProfile = 
         raise HTTPException(404, "plan not found")
     state = RELAYS.get(plan_id)  # create-late (decision 5): never scaffold before the relay clears
     if state is not None and not relay.all_ratified(state):
-        pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
+        pending = [g.discipline for g in state.gates if g.status not in const.DONE]
         raise HTTPException(409, f"Sign the Contract for {len(pending)} open gate(s) first: {', '.join(pending)}.")
     # EXECUTE: scaffold real GitLab infra (sync httpx → threadpool); seed reuse drafts into focus branches.
-    seeds = await _build_reuse_seeds(plan_id, plan)
+    seeds = await _build_reuse_pointers(plan_id, plan)
+    await _store_focus_contexts(plan, seeds)  # /api/focus serves these on checkout (nothing committed)
     result = await run_in_threadpool(lambda: execute_plan(plan, reuse_seeds=seeds))
     RESULTS[plan_id] = result
     await _persist("results", plan_id, result)
     return {"plan_id": plan_id, "mode": req.mode, **result}
+
+
+@app.get("/api/focus/{issue_id}", response_class=PlainTextResponse)
+async def focus_bootstrap(issue_id: str, t: str = Query(default="")) -> str:
+    """The dev's `curl ... | bash` target: a one-shot script that writes the task's agent docs + reused code
+    locally (UNTRACKED), so nothing sprint0 is committed and merging the focus branch leaves main pristine.
+    Reused code is fetched RAW from GitLab here (pointers were stored, not content). Token-gated — the per-issue
+    token is the access control, since the served files include reused code."""
+    ctx = FOCUS_CONTEXTS.get(issue_id)
+    if ctx is None:
+        raise HTTPException(404, "no focus context for this task (re-dispatch, or wrong id)")
+    if t != handoff.focus_token(issue_id):
+        raise HTTPException(403, "bad or missing focus token")
+    gen = dict(ctx["docs"])
+    reused = ctx.get("reused") or []
+    for p in reused:  # fetch each reused file's RAW content live; a moved/deleted source is just skipped
+        try:
+            gen[p["path"]] = await run_in_threadpool(gitlab.get_file_raw, p["project"], p["src_path"], p["ref"])
+        except Exception:
+            continue
+    if reused:
+        gen[".sprint0/reused/REUSE_MANIFEST.md"] = handoff.reuse_manifest(reused)
+    return handoff.focus_script(gen)
 
 
 @app.get("/api/plans/{plan_id}/dispatch/preview")
@@ -1618,14 +1922,21 @@ async def dispatch_preview(plan_id: str) -> dict:
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
+    from app import trace
+    bid = plan_id.removeprefix("plan_")  # the wizard polls /trace by brief_id
+    trace.clear(f"{bid}:review"); trace.begin(f"{bid}:review")   # phase-scoped run
     await team.ensure_loaded()
+    trace.step("server", "action", "Resolve the project name", plan.project_name)
     issues = [i for e in plan.epics for i in e.issues]
+    trace.step("server", "action", "Count the tasks to scaffold", f"{len(issues)} task(s) across the relay")
     repo_members = sorted({
         i.assignee for i in issues
         if i.assignee and (mb := team.get(i.assignee)) and mb.gitlab_user_id and policy.needs_repo(mb.discipline)
     })
     cap = 5  # GitLab free-tier members-per-group cap
     state = RELAYS.get(plan_id)
+    trace.step("server", "result", f"{len(repo_members)} member invite(s) · cap {cap}",
+               "over the free-tier cap" if len(repo_members) > cap else "ready to reserve on GitLab")
     return {
         "plan_id": plan_id, "project_name": plan.project_name, "is_delta": plan_id in DELTA_TARGET,
         "creates": {"project": 0 if plan_id in DELTA_TARGET else 1, "issues": len(issues)},
@@ -1639,10 +1950,24 @@ async def _finalize_scaffold(plan_id: str, plan: PlanJSON, *, project_id: int | 
     """Phase 2 (the relay has CLOSED): scaffold the real GitLab infra — issues, branches, focus files, QA —
     onto a project, re-key the draft tasks → real (in_progress), persist the record, then drop the relay from
     the in-flight board. Called by the dispatch endpoint AND the ratify-close hook. `project_id`: a delta
-    target / a reserved pid; None = create fresh (reserve+scaffold in one). Idempotent (RELAYS-absent guard)."""
+    target / a reserved pid; None = create fresh (reserve+scaffold in one). Idempotent (RELAYS-absent guard,
+    serialized per plan by _dispatch_lock so concurrent callers can't both pass the guard)."""
+    async with _dispatch_lock(plan_id):
+        result = await _finalize_scaffold_locked(plan_id, plan, project_id=project_id)
+    _DISPATCH_LOCKS.pop(plan_id, None)  # finished (or no-op) — don't leak a lock per dispatched plan
+    return result
+
+
+async def _finalize_scaffold_locked(plan_id: str, plan: PlanJSON, *, project_id: int | None = None) -> dict:
     if plan_id not in RELAYS:  # already finalized (a re-ratify after the relay was popped) → no double-scaffold
         return RESULTS.get(plan_id, {})
-    seeds = await _build_reuse_seeds(plan_id, plan)  # reuse layer-2: adapted reference code → focus branches
+    from app import trace
+    run = f"{plan_id}:dispatch"
+    trace.clear(run); trace.begin(run)  # the dispatch is a real, slow process — make it VISIBLE (was trace-silent)
+    trace.step("server", "thought", "Dispatching the relay to GitLab",
+               f"{sum(len(e.issues) for e in plan.epics)} issue(s) · focus branches · acceptance checklist")
+    seeds = await _build_reuse_pointers(plan_id, plan)  # reuse layer-2: pointers → fetched live by /api/focus
+    await _store_focus_contexts(plan, seeds)  # /api/focus serves these on checkout (nothing committed)
     if plan_id in DELTA_TARGET:  # mid-prod: append to the existing project
         pid = DELTA_TARGET[plan_id]
         result = await run_in_threadpool(lambda: extend_project(plan, pid, reuse_seeds=seeds))
@@ -1692,7 +2017,10 @@ async def _finalize_scaffold(plan_id: str, plan: PlanJSON, *, project_id: int | 
             await record_reuse_lineage(plan_id, plan, result["project_id"])
         except Exception:
             pass
+    trace.step("gitlab", "result", "Project scaffolded on GitLab",
+               f"{result.get('issues_created', 0)} issue(s) · {result.get('context_branches', 0)} focus branch(es) · QA checklist")
     # Re-key the plan's Tasks from the placeholder to the real project_id + flip to in_progress.
+    objs: list = []  # the materialized tasks — the dispatch-validation count (always defined, even if the block throws)
     try:
         real_pid = result["project_id"]
         now = datetime.now(timezone.utc).isoformat()
@@ -1723,13 +2051,28 @@ async def _finalize_scaffold(plan_id: str, plan: PlanJSON, *, project_id: int | 
             await _maybe_strategize(ev, moved, prior)
     except Exception:
         pass  # never block the scaffold on task persistence
+    # Callback VALIDATION — confirm the dispatch REALLY landed (GitLab issues + Mongo tasks) before declaring it
+    # shipped. A soft failure (0 issues / 0 tasks) keeps the relay on the board (dispatch="failed") for retry.
+    result["tasks_created"] = len(objs)
+    result["ok"] = result.get("issues_created", 0) > 0 and result["tasks_created"] > 0
     RESULTS[plan_id] = result
     await _persist("results", plan_id, result)
+    if not result["ok"]:
+        st = RELAYS.get(plan_id)
+        if st is not None:
+            st.dispatch = "failed"
+            await _persist_relay(plan_id)
+        trace.step("server", "result", "Dispatch failed", "GitLab issues or tasks did not land — kept for retry")
+        return result
     try:  # durable runtime: scaffolded → leaves the in-flight pool on replay (PROJECTS owns it now)
-        await eventlog.emit("plan_scaffolded", created_at=datetime.now(timezone.utc).isoformat(),
+        await eventlog.emit(const.EventKind.PLAN_SCAFFOLDED, created_at=datetime.now(timezone.utc).isoformat(),
                             payload={"plan_id": plan_id, "project_id": result.get("project_id")})
     except Exception:
         pass
+    trace.step("server", "result", "Relay shipped", f"{plan.project_name} is live — {result['tasks_created']} tasks in Projects + Tester")
+    _st = RELAYS.get(plan_id)
+    if _st is not None:  # stamp the FINAL phase on the state object — the ratify response carries it after the pop
+        _st.dispatch = "shipped"
     # The relay is FINISHED → drop it from the in-flight board (the project now lives in Projects + Tester).
     RELAYS.pop(plan_id, None)
     PLANS.pop(plan_id, None)
@@ -1747,6 +2090,11 @@ async def reserve_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile =
     only — and KEEP the relay OPEN so the leads ratify their gates live. The real scaffold (issues, branches,
     focus files, QA + the work tasks) fires AUTOMATICALLY when the relay closes (the last gate's ratify).
     No GitLab work here beyond the empty repo; nothing is auto-approved."""
+    async with _dispatch_lock(plan_id):  # a double-clicked Create must hit the RESERVED guard, not create twice
+        return await _reserve_locked(plan_id, req)
+
+
+async def _reserve_locked(plan_id: str, req: DispatchRequest) -> dict:
     plan, state = PLANS.get(plan_id), RELAYS.get(plan_id)
     if plan is None or state is None:
         raise HTTPException(404, "plan not found")
@@ -1755,7 +2103,15 @@ async def reserve_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile =
         return {"project_id": r["project_id"], "web_url": r.get("web_url", ""), "relay_open": True}
     if req.project_name and req.project_name.strip():  # the manager validated/edited the AI-filled name
         plan.project_name = req.project_name.strip()[:80]
-    res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))
+    from app import trace
+    bid = plan_id.removeprefix("plan_"); trace.clear(f"{bid}:create"); trace.begin(f"{bid}:create")  # phase-scoped run
+    trace.step("gitlab", "action", "Create the GitLab project", plan.project_name)
+    try:
+        res = await run_in_threadpool(lambda: reserve_project(plan, plan.project_name))  # contextvar can't cross the threadpool — bracket the real op here
+    except Exception as e:  # a GitLab failure must return a clean 502 (CORS headers attach), never an unhandled 500
+        trace.step("gitlab", "result", "GitLab rejected the create", str(e)[:140])
+        raise HTTPException(502, f"GitLab could not reserve the project: {str(e)[:200]}")
+    trace.step("gitlab", "result", f"project #{res['project_id']} reserved", res.get("web_url", ""))
     RESERVED[plan_id] = res
     await _persist("reserved", plan_id, res)          # durable: survive a restart between reserve and close
     await _persist_relay(plan_id)                     # the (possibly edited) name lives on the plan snapshot
@@ -1772,10 +2128,39 @@ async def reserve_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile =
     except Exception:
         pass
     try:  # durable runtime: re-fold RESERVED on a restart from this event
-        await eventlog.emit("project_reserved", created_at=datetime.now(timezone.utc).isoformat(),
+        await eventlog.emit(const.EventKind.PROJECT_RESERVED, created_at=datetime.now(timezone.utc).isoformat(),
                             payload={"plan_id": plan_id, "reserved": res})
     except Exception:
         pass
+    _spawn(_draft_contracts(plan_id, plan))  # contract-first: draft the interfaces from the feature, in parallel
+    # Creation is announced the moment it's REAL: the project ping first, then the relay ping (a relay can
+    # also be born alone via add-feature, which fires only relay_created).
+    await team.ensure_loaded()
+    _gate_count = len(state.gates)
+    for _u in sorted(_relay_recipients(plan, state)):
+        await notify(_u, "project_created", f"Project {plan.project_name} created",
+                     ref={"plan_id": plan_id, "project_id": res["project_id"]})
+        await notify(_u, "relay_created", f"{plan.project_name}: relay created · {_gate_count} gates",
+                     ref={"plan_id": plan_id, "project_id": res["project_id"]})
+    # The wizard's Create finishes only when the FIRST WAVE is OPEN — await its option drafting (visible in
+    # the create trace; Gemini/MCP steps from inside the drafting land here too). Downstream waves keep
+    # pre-generating in the background on each ratify (the board shows them as "preparing"). A per-gate
+    # failure degrades to the lazy GET — it can slow the Create but never fail it.
+    first_wave = [g.discipline for g in state.gates
+                  if g.status in ("pending", "changes_requested") and (plan_id, g.discipline) not in SOLUTIONS
+                  and any(i.discipline == g.discipline for e in plan.epics for i in e.issues)]
+
+    async def _draft_one(disc: str) -> None:
+        trace.step("gemini", "action", f"Drafting {disc} options", "reuse-or-innovate, grounded on agency memory")
+        try:
+            sset = await _generate_gate_solutions(plan_id, plan, disc)
+            trace.step("gemini", "result", f"{disc} options ready", f"{len(sset.solutions)} choice(s) for the lead")
+        except Exception:
+            trace.step("server", "result", f"{disc} options delayed", "the gate drafts them on open instead")
+
+    if first_wave:
+        await asyncio.gather(*(_draft_one(d) for d in first_wave))
+    trace.step("server", "result", "Relay open", "each gate is its lead's to ratify; tasks scaffold to GitLab on close")
     return {"project_id": res["project_id"], "web_url": res.get("web_url", ""), "relay_open": True}
 
 
@@ -1787,7 +2172,7 @@ async def dispatch_plan(plan_id: str, req: DispatchRequest, _: DeveloperProfile 
     if plan is None or state is None:
         raise HTTPException(404, "plan not found")
     if not relay.all_ratified(state):  # never scaffold an un-ratified relay
-        pending = [g.discipline for g in state.gates if g.status not in ("ratified", "auto_passed")]
+        pending = [g.discipline for g in state.gates if g.status not in const.DONE]
         raise HTTPException(409, f"relay not cleared — {len(pending)} open gate(s): {', '.join(pending)}")
     if req.project_name and req.project_name.strip():  # manager validated/edited the AI-filled name
         plan.project_name = req.project_name.strip()[:80]
@@ -1821,7 +2206,7 @@ async def reject_issue(
     to the runner's profile (never a new relay) — so ping their Inbox to make that routing visible.
     Authorized to the acceptance/qa-gate owner or the manager — it triggers a real GitLab reopen."""
     await team.ensure_loaded()
-    if not (_is_qa_owner(member, team.all_members()) or member.role == "manager"):
+    if not (_is_qa_owner(member, team.all_members()) or member.is_manager):
         raise HTTPException(403, "only the acceptance/qa owner or the manager can reject an item")
     res = await run_in_threadpool(handoff.reroute, project_id, iid, req.comment, req.to_runner)
     REQA.setdefault(project_id, set()).add(iid)
@@ -1848,11 +2233,17 @@ async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile 
     RELAYS[plan_id] = relay.build_relay(plan)
     DELTA_TARGET[plan_id] = project_id
     DELTA_PRIORITY[plan_id] = req.priority
+    _spawn(_draft_contracts(plan_id, plan))  # contract-first: draft the delta's interfaces from the feature
+    _pregenerate_open_gates(plan_id)  # the delta's first wave starts preparing now (board pulses, no lazy-GET stall)
     await _persist_relay(plan_id)  # durable: the delta plan + relay survive a restart
     await _persist("delta_target", plan_id, {"v": project_id})
     await _persist("delta_priority", plan_id, {"v": req.priority})
-    await _persist_draft_tasks(plan, plan_id)
-    await _seed_subteam_agreements(plan_id, plan)  # sub-teams now; interface contracts are JIT (on gate-ratify)
+    await team.ensure_loaded()  # a relay born WITHOUT a project create → only the relay ping
+    for _u in sorted(_relay_recipients(plan, RELAYS[plan_id])):
+        await notify(_u, "relay_created", f"{plan.project_name}: relay created · {len(RELAYS[plan_id].gates)} gates",
+                     ref={"plan_id": plan_id, "project_id": project_id})
+    # No pre-ratification draft tasks (see make_plan): the delta's tasks materialize at _finalize_scaffold.
+    # (Subteam pacts CUT 2026-06-09 — interface contracts stay JIT.)
     return {"plan_id": plan_id, "project_id": project_id, "plan": plan.model_dump(), "relay": RELAYS[plan_id].model_dump()}
 
 
@@ -1906,13 +2297,13 @@ async def create_task(project_id: int, req: QuickTaskRequest, member: DeveloperP
     """Tier D ad-hoc quick-add: a manager or the discipline lead adds a task. It still flows through the
     engine — auto-routed by load, scheduled + reflowed (an urgent one cascades) — tagged with human
     provenance (assigned_by = the creator), never a side-door ticket."""
-    if not (member.role == "manager" or member.discipline == req.discipline):
-        raise HTTPException(403, "only the manager or the discipline lead can add a task here")
+    if not (member.is_manager or member.covers(req.discipline)):
+        raise HTTPException(403, "only the manager or a lane coverer can add a task here")
     await team.ensure_loaded()
     devs = team.all_members()
     assignee = req.assignee
-    if not assignee:  # auto-route: lowest-load dev in the discipline
-        cand = min((m for m in devs if m.discipline == req.discipline and m.load < 100), key=lambda m: m.load, default=None)
+    if not assignee:  # auto-route: lowest-load coverer of the discipline
+        cand = min((m for m in devs if m.covers(req.discipline) and m.load < 100), key=lambda m: m.load, default=None)
         assignee = cand.username if cand else None
     now = datetime.now(timezone.utc).isoformat()
     t = Task(id=f"adhoc_{uuid.uuid4().hex[:8]}", project_id=project_id, title=req.title, description="",
@@ -1957,16 +2348,15 @@ class TaskPatch(BaseModel):
 async def work(scope: str = "me", member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Aggregate of Tasks for the Work hub. scope = me | team | user:<username>. Team visibility is OPEN —
     every logged-in member sees everyone's tasks in full (no consent gating)."""
+    who = member.username if scope == "me" else (scope.split(":", 1)[1] if scope.startswith("user:") else None)
     try:
-        rows = await all_tasks()
+        rows = await all_tasks(assignee=who)   # me | user:<name> filtered server-side; team (who=None) → all
     except Exception:
         rows = []
-    if scope == "me":
-        rows = [t for t in rows if t.get("assignee") == member.username]
-    elif scope.startswith("user:"):
-        who = scope.split(":", 1)[1]
-        rows = [t for t in rows if t.get("assignee") == who]
-    # else: team → every task, full detail
+    for r in rows:  # conventional branch + gateway bootstrap command (token-gated), built server-side
+        if (r.get("kind") or "code") in ("code", "infra"):
+            r["branch"] = handoff.branch_for(r.get("title", ""), r["id"])
+            r["focus_command"] = focus_command_for(r["id"], r.get("title", ""))
     return {"scope": scope, "count": len(rows), "tasks": rows}
 
 
@@ -2005,8 +2395,8 @@ async def claim_task(task_id: str, member: DeveloperProfile = Depends(auth.curre
     t = await _load_task_or_404(task_id)
     if t.assignee:
         raise HTTPException(409, "task already assigned — ask a lead or the manager to reassign")
-    if member.discipline != t.discipline:
-        raise HTTPException(403, "you can only claim tasks in your own discipline")
+    if not member.covers(t.discipline):
+        raise HTTPException(403, "you can only claim tasks in a lane you cover")
     updated = tasklib.claim(t, user=member.username, now=datetime.now(timezone.utc).isoformat())
     await update_task(task_id, updated.model_dump())
     await _reschedule_project(updated.project_id)  # owner changed → re-pack the calendar
@@ -2066,13 +2456,13 @@ def _rank_candidates(discipline: str, members: list[DeveloperProfile], *, exclud
     manager is never recommended as a worker. Best first."""
     out = []
     for m in members:
-        if m.role == "manager" or m.username == exclude:
+        if m.is_manager or m.username == exclude:
             continue
         trust_tier = m.trust_in(discipline)
         trust = _TRUST_W.get(trust_tier, 0.0)
         fid = m.availability.free_in_days if m.availability else None
         avail = max(0.0, 1 - min(int(fid), 15) / 15) if fid is not None else 1 - min(100, m.load) / 100
-        in_lane = m.discipline == discipline
+        in_lane = m.covers(discipline)
         sen = _SEN_W.get(m.seniority, 0.67)
         s = 0.40 * trust + 0.30 * avail + 0.20 * (1.0 if in_lane else 0.0) + 0.10 * sen
         why = " · ".join([
@@ -2125,14 +2515,14 @@ async def _on_task_status_change(t: Task, prev: str, actor: DeveloperProfile) ->
         await team.ensure_loaded()
         members = team.all_members()
         if t.status == "in_review":
-            reviewers = [m for m in members if m.discipline == "qa"] or [m for m in members if m.role == "manager"]
+            reviewers = [m for m in members if any(relay.lane_stage(d) == "accept" for d in m.disciplines)] or [m for m in members if m.is_manager]
             for r in reviewers:
                 if r.username != actor.username:
                     await notify(r.username, "ratify_needed", f"Ready for review: {t.title}",
                                  body=f"@{actor.username} moved '{t.title}' to In Review.",
                                  ref={"task_id": t.id, "project_id": t.project_id}, actionable=True)
         elif t.status == "done":
-            mgr = next((m for m in members if m.role == "manager"), None)
+            mgr = next((m for m in members if m.is_manager), None)
             if mgr and mgr.username != actor.username:
                 await notify(mgr.username, "task_completed", f"Task done: {t.title}",
                              body=f"@{actor.username} marked '{t.title}' done.",
@@ -2152,7 +2542,7 @@ async def pin_task(task_id: str, pinned: bool = True, member: DeveloperProfile =
     """Lock (or unlock) a task's dates so the reflow engine never moves it (Reclaim-style lock).
     The scheduler already honors Task.pinned — this is the only path that sets it."""
     t = await _load_task_or_404(task_id)
-    if member.role != "manager" and t.assignee != member.username:
+    if not member.is_manager and t.assignee != member.username:
         raise HTTPException(403, "only the manager or the task's owner can pin/unpin it")
     now = datetime.now(timezone.utc).isoformat()
     await update_task(task_id, {"pinned": pinned, "updated_at": now})
@@ -2260,7 +2650,7 @@ async def _maybe_strategize(ev: ChangeEvent, moved: list[dict], prior: dict | No
                 await save_reschedule_proposal(prop.model_dump())
             except Exception:
                 pass
-            mgr = next((m for m in team.all_members() if m.role == "manager"), None)
+            mgr = next((m for m in team.all_members() if m.is_manager), None)
             if mgr:
                 await notify(mgr.username, "reschedule_proposed", "AI reschedule strategy proposed",
                              body=strategy.impact_summary or strategy.rationale,
@@ -2347,7 +2737,7 @@ async def apply_reschedule(proposal_id: str, member: DeveloperProfile = Depends(
     prop = await get_reschedule_proposal(proposal_id)
     if not prop:
         raise HTTPException(404, "no such proposal")
-    if member.role != "manager" and member.username not in prop.get("affected_users", []):
+    if not member.is_manager and member.username not in prop.get("affected_users", []):
         raise HTTPException(403, "only the manager or an affected member can apply this")
     if prop.get("status") != "proposed":
         raise HTTPException(409, "proposal already resolved")
@@ -2369,7 +2759,7 @@ async def reject_reschedule(proposal_id: str, member: DeveloperProfile = Depends
     prop = await get_reschedule_proposal(proposal_id)
     if not prop:
         raise HTTPException(404, "no such proposal")
-    if member.role != "manager" and member.username not in prop.get("affected_users", []):
+    if not member.is_manager and member.username not in prop.get("affected_users", []):
         raise HTTPException(403, "only the manager or an affected member can reject this")
     if prop.get("status") != "proposed":
         raise HTTPException(409, "proposal already resolved")
@@ -2458,7 +2848,7 @@ async def _owned_decision_or_403(decision_id: str, member: DeveloperProfile) -> 
     d = await get_decision(decision_id)
     if not d:
         raise HTTPException(404, "no such decision")
-    if member.role != "manager" and d.get("owner_id") != member.username:
+    if not member.is_manager and d.get("owner_id") != member.username:
         raise HTTPException(403, "only the decision owner or a manager can change it")
     return d
 
@@ -2546,7 +2936,7 @@ async def decision_card_for_gate(plan_id: str, discipline: str,
     plan = PLANS.get(plan_id)
     if plan is None:
         raise HTTPException(404, "plan not found")
-    if not await _can_read_contract(member, discipline):  # Contract is private — redacted for non-owner/manager/watcher
+    if not await _can_read_contract(member, discipline, plan_id):  # Contract is private — redacted for non-ratifier/manager/watcher
         return {"card": None, "signal": "grey", "low_confidence": True, "past": {"own": [], "team": []}, "error": "private"}
     sl = [i for e in plan.epics for i in e.issues if i.discipline == discipline]
     tags = sorted({i.required_skill for i in sl if i.required_skill})
@@ -2599,7 +2989,7 @@ async def confirm_profile(profile_id: str,
                           member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """The confirm gate (decision A): the manager promotes a discovered profile proposed → confirmed,
     keeping the lane taxonomy bounded. Only the manager can grow the vocabulary."""
-    if member.role != "manager":
+    if not member.is_manager:
         raise HTTPException(403, "only the manager can confirm a capability profile")
     await update_profile(profile_id, {"status": "confirmed"})
     return {"profile_id": profile_id, "status": "confirmed"}
@@ -2656,8 +3046,8 @@ class GovernanceRuleRequest(BaseModel):
 async def graph_add_governance(req: GovernanceRuleRequest,
                                member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Graph B: register a decision-governance rule (a path pattern + constraint)."""
-    if member.role != "manager" and member.discipline != req.domain:
-        raise HTTPException(403, "only the manager or the domain lead can set governance for this domain")
+    if not member.is_manager and not member.covers(req.domain):
+        raise HTTPException(403, "only the manager or a domain coverer can set governance for this domain")
     rule = GovernanceRule(id=f"gov_{uuid.uuid4().hex[:8]}", governs_pattern=req.governs_pattern,
                           constraint=req.constraint, domain=req.domain, decision_id=req.decision_id,
                           created_at=datetime.now(timezone.utc).isoformat())
@@ -2691,15 +3081,15 @@ class RefactorRequest(BaseModel):
 def _lead_for_discipline(disc: str) -> str | None:
     """Who leads a discipline (ratifies its gate): the first developer with that discipline; falls back
     to the manager for an orphan discipline (e.g. uiux has no dev)."""
-    lead = next((m.username for m in team.all_members() if m.role == "developer" and m.discipline == disc), None)
-    return lead or next((m.username for m in team.all_members() if m.role == "manager"), None)
+    lead = next((m.username for m in team.all_members() if m.covers(disc)), None)
+    return lead or next((m.username for m in team.all_members() if m.is_manager), None)
 
 
 @app.post("/api/graph/refactor")
 async def graph_refactor(req: RefactorRequest, member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Drift report → a maintenance Task in the work hub / relay, ASSIGNED to the domain lead + a live
     `drift_flagged` ping (Code Graph #4 → notifications #5). Same relay system as feature work."""
-    if member.role != "manager":
+    if not member.is_manager:
         raise HTTPException(403, "only the manager can schedule a refactor task")
     r = req.report
     now = datetime.now(timezone.utc).isoformat()
@@ -2739,7 +3129,7 @@ async def _project_source_change(ev: ChangeEvent) -> list[dict]:
     """Projection of a `source_changed` event: traverse inbound `derived_from` → one PROPOSED sync Task +
     `drift_flagged` ping per dependent project. Tasks are `planned` (the dependent's owner ratifies)."""
     try:
-        await eventlog.emit("source_changed", created_at=ev.created_at, payload=ev.payload)  # the spine — append first
+        await eventlog.emit(const.EventKind.SOURCE_CHANGED, created_at=ev.created_at, payload=ev.payload)  # the spine — append first
     except Exception:
         pass
     nodes = [GraphNode(**n) for n in await graph_nodes("lineage")]
@@ -2797,7 +3187,7 @@ async def record_reuse_lineage(plan_id: str, plan: PlanJSON, project_id: int) ->
         if pid_key != plan_id or not chosen.grounded_on:   # only memory-grounded (reuse) picks record lineage
             continue
         try:
-            rows = await reuse_pack(chosen.grounded_on, limit=6)
+            rows = await reuse_pack(chosen.grounded_on, discipline=disc, limit=6)
         except Exception:
             continue
         source_text = "\n".join(str(r.get("excerpt", "")) for r in rows).strip()
@@ -2811,7 +3201,7 @@ async def record_reuse_lineage(plan_id: str, plan: PlanJSON, project_id: int) ->
             await store.add_nodes(new_nodes)
             await store.add_edges(new_edges)
             existing.extend(new_nodes)   # a later gate in this loop dedups against what we just added
-            await eventlog.emit("reuse_recorded", created_at=now,
+            await eventlog.emit(const.EventKind.REUSE_RECORDED, created_at=now,
                                 payload={"project_id": project_id, "discipline": disc, "source": src})
             recorded += 1
         except Exception:
@@ -2824,7 +3214,7 @@ async def lineage_simulate_change(req: SourceChangeRequest,
                                   member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Simulate what a GitLab merge webhook WOULD post when a reused source feature changes: append a
     `source_changed` event → propose a sync Task in every dependent project (human ratifies)."""
-    if member.role != "manager":
+    if not member.is_manager:
         raise HTTPException(403, "only the manager can simulate a source change")
     now = datetime.now(timezone.utc).isoformat()
     ev = ChangeEvent(id=f"src_{uuid.uuid4().hex[:8]}", kind="source_changed", created_at=now,
@@ -2844,11 +3234,11 @@ async def lineage_retire(req: RetireNodeRequest,
                          member: DeveloperProfile = Depends(auth.current_member)) -> dict:
     """Tombstone a feature/node: CLOSE the current version (valid_to=now, deleted=True) instead of deleting —
     it drops from the current view but stays queryable via `?as_of=`. Code deletion that never loses history."""
-    if member.role != "manager":
+    if not member.is_manager:
         raise HTTPException(403, "only the manager can retire a node")
     now = datetime.now(timezone.utc).isoformat()
     await store.close_node(req.path, req.project_id, {"valid_to": now, "deleted": True})
-    await eventlog.emit("node_retired", created_at=now, payload={"path": req.path, "project_id": req.project_id})
+    await eventlog.emit(const.EventKind.NODE_RETIRED, created_at=now, payload={"path": req.path, "project_id": req.project_id})
     return {"retired": req.path, "at": now}
 
 
@@ -2917,7 +3307,7 @@ async def reembed_corpus(project_id: int, ref: str, files: list[str]) -> int:
         except Exception:
             pass
     if to_embed:
-        await eventlog.emit("corpus_reembedded", created_at=now, payload={"project_id": project_id, "files": to_embed})
+        await eventlog.emit(const.EventKind.CORPUS_REEMBEDDED, created_at=now, payload={"project_id": project_id, "files": to_embed})
     return len(to_embed)
 
 
@@ -3022,7 +3412,7 @@ async def _verify_on_merge(req: MergeRequest) -> Optional[dict]:
     prod = next((i for e in plan.epics for i in e.issues if i.id == req.issue_id), None)
     results: list[dict] = []
     for raw in await agreements_for_plan(req.plan_id):  # a producer can own >1 contract (one per consuming lane) — check ALL
-        if raw.get("type") != "interface" or raw.get("state") not in ("ratified", "auto_passed"):
+        if raw.get("type") != "interface" or raw.get("state") not in const.DONE:
             continue
         if raw.get("producer_issue_id") != req.issue_id:
             continue
@@ -3125,7 +3515,7 @@ async def list_developers() -> list[DeveloperProfile]:
     # surfaces as an assignable candidate.
     members = await _attach_availability(team.all_members() or CANNED_DEVELOPERS)
     # flag repo-needing devs with no GitLab link → the Team view shows "link this dev" (the manager + a uiux dev never need one)
-    return [m.model_copy(update={"needs_link": m.role != "manager" and policy.needs_repo(m.discipline) and not m.gitlab_user_id}) for m in members]
+    return [m.model_copy(update={"needs_link": not m.is_manager and any(policy.needs_repo(d) for d in m.disciplines) and not m.gitlab_user_id}) for m in members]
 
 
 @app.post("/api/developers")

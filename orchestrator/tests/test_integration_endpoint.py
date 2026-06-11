@@ -240,7 +240,7 @@ def test_reject_unauthorized_dev_gets_403(monkeypatch):
     assert ei.value.status_code == 403
 
 
-# --- JIT contracts: the producer's ratified gate choice (re)generates the interface contracts its slice produces ---
+# --- Contract-first: at reserve, _draft_contracts drafts each producer→consumer interface from the FEATURE ---
 
 def _iface_old(aid, producer_id, consumer_id, state, path="/api/old", fields=()):
     return {"id": aid, "type": "interface", "plan_id": "p1", "state": state,
@@ -259,20 +259,18 @@ def _opts(needed=True, path="/api/v2/auth", fields=("token",)):
         InterfaceProposal(id="p1", source="ai", interface=iface, why="standard token login", confidence=70)])
 
 
-def _genlane(monkeypatch, opts, existing=None, pool=None):
-    """Drive _generate_contracts_for_lane (backend slice b1 → frontend consumer f1) with the AI + rag deps
-    stubbed; returns (saved, updated, pings, applied)."""
-    saved, updated, pings, applied = [], [], [], []
+def _draftcontracts(monkeypatch, opts, existing=None, pool=None):
+    """Drive _draft_contracts (backend slice b1 → frontend consumer f1) with the AI + rag deps stubbed;
+    returns (saved, pings). The relay is built so each gate carries an owner — the contract's actor."""
+    saved, pings = [], []
     async def _afp(_pid):
         return existing or []
     async def _all():
         return pool or []
-    async def _pco(_plan, _prod, _cons, _chosen):
+    async def _pco(_plan, _prod, _cons):                                  # feature-grounded — no `chosen` arg
         return opts
     async def _save(doc):
         saved.append(doc)
-    async def _upd(aid, patch):
-        updated.append((aid, patch))
     async def _notify(u, *a, **k):
         pings.append(u)
     monkeypatch.setattr(main.demo, "is_demo", lambda: False)
@@ -280,59 +278,52 @@ def _genlane(monkeypatch, opts, existing=None, pool=None):
     monkeypatch.setattr(main, "all_agreements", _all)
     monkeypatch.setattr(main, "propose_contract_options", _pco)
     monkeypatch.setattr(main, "save_agreement", _save)
-    monkeypatch.setattr(main, "update_agreement", _upd)
     monkeypatch.setattr(main, "notify", _notify)
-    monkeypatch.setattr(main, "_apply_api_contract", lambda pid, iid, c: applied.append((pid, iid, c)))
-    plan = _plan([_issue("b1", "backend"), _issue("f1", "frontend", deps=["b1"])])
-    asyncio.run(main._generate_contracts_for_lane("p1", plan, "backend", None, "sprint0-se"))
-    return saved, updated, pings, applied
+    plan = _plan([_issue("b1", "backend", assignee="sprint0-se"),
+                  _issue("f1", "frontend", assignee="sprint0-fe", deps=["b1"])])
+    main.RELAYS["p1"] = relay.build_relay(plan)   # gate owners (sprint0-se backend, sprint0-fe frontend) = the actors
+    asyncio.run(main._draft_contracts("p1", plan))
+    return saved, pings
 
 
-def test_jit_generates_contract_from_choice(monkeypatch):
-    saved, updated, pings, _ap = _genlane(monkeypatch, _opts())
+def test_draft_generates_contract_from_feature(monkeypatch):
+    saved, pings = _draftcontracts(monkeypatch, _opts())
     assert len(saved) == 1                                                # one contract per producer→consumer edge
     assert saved[0]["state"] == "proposed" and saved[0]["producer_issue_id"] == "b1"
     assert saved[0]["consumer_discipline"] == "frontend"
-    assert saved[0]["interface"]["path"] == "/api/v2/auth"                # the shape generated from the choice
+    assert saved[0]["interface"]["path"] == "/api/v2/auth"                # the shape drafted from the feature
     assert len(saved[0]["proposals"]) == 1                                # the producer picks from the offered shapes
-    assert updated == []                                                  # nothing to supersede
+    assert saved[0]["producer_actor"] == "sprint0-se"                     # the backend gate OWNER signs (not a ratifier)
     assert pings == ["sprint0-se"]                                        # routed to the producer to pick + sign
 
 
-def test_jit_regenerates_and_supersedes_on_change(monkeypatch):
-    # a changed gate choice → supersede the prior live contract for the edge and recreate from the new choice
-    saved, updated, pings, _ap = _genlane(monkeypatch, _opts(path="/api/v3/auth"),
-                                          existing=[_iface_old("agOLD", "b1", "f1", "active")])
-    assert len(saved) == 1 and saved[0]["interface"]["path"] == "/api/v3/auth"
-    assert len(updated) == 1 and updated[0][0] == "agOLD"
-    assert updated[0][1]["state"] == "superseded" and updated[0][1]["superseded_by"] == saved[0]["id"]
+def test_draft_is_idempotent_skips_a_live_edge(monkeypatch):
+    # contract-first drafts ONCE at reserve — an edge already under a live contract is not re-drafted
+    saved, pings = _draftcontracts(monkeypatch, _opts(),
+                                   existing=[_iface_old("agOLD", "b1", "f1", "active")])
+    assert saved == [] and pings == []                                   # the existing live contract stands
 
 
-def test_jit_skips_when_not_needed(monkeypatch):
-    # necessity-aware: the AI says no real API boundary → no contract is created (no noise), prior is retired
-    saved, updated, pings, applied = _genlane(monkeypatch, _opts(needed=False),
-                                              existing=[_iface_old("agOLD", "b1", "f1", "active")])
-    assert saved == [] and pings == [] and applied == []                 # nothing created, nobody pinged
-    assert len(updated) == 1 and updated[0][1]["state"] == "superseded"  # the stale contract is superseded
+def test_draft_skips_when_not_needed(monkeypatch):
+    # necessity-aware: no real API boundary → no contract created, nobody pinged (a 'no contract needed' result)
+    saved, pings = _draftcontracts(monkeypatch, _opts(needed=False))
+    assert saved == [] and pings == []
 
 
-def test_jit_compounds_on_precedent(monkeypatch):
-    # a past plan ratified this exact shape → a RECOMMENDATION (precedent_id badge), NOT auto-pass. No auto-approval:
-    # the producer still signs, so state stays proposed + no mock is seeded until they do.
+def test_draft_compounds_on_precedent(monkeypatch):
+    # a past plan ratified this exact shape → a RECOMMENDATION (precedent_id badge), NOT auto-pass: the producer
+    # still signs, so state stays proposed.
     precedent = _iface_old("agPAST", "x", "y", "ratified", path="/api/v2/auth", fields=("token",))
-    saved, updated, pings, applied = _genlane(monkeypatch, _opts(path="/api/v2/auth", fields=("token",)),
-                                              pool=[precedent])
+    saved, pings = _draftcontracts(monkeypatch, _opts(path="/api/v2/auth", fields=("token",)), pool=[precedent])
     assert len(saved) == 1 and saved[0]["state"] == "proposed" and saved[0]["precedent_id"] == "agPAST"
-    assert applied == []                                                 # no mock until the human signs
     assert pings == ["sprint0-se"]                                       # the producer is still asked to sign
 
 
-def test_jit_leaves_superseded_contracts_alone(monkeypatch):
-    # an already-superseded prior is not re-touched; the edge still gets a fresh contract from the new choice
-    saved, updated, _p, _ap = _genlane(monkeypatch, _opts(),
-                                       existing=[_iface_old("agOLD", "b1", "f1", "superseded")])
+def test_draft_redrafts_over_a_superseded_edge(monkeypatch):
+    # a superseded prior is not 'live' → the edge still gets a fresh contract drafted
+    saved, pings = _draftcontracts(monkeypatch, _opts(),
+                                   existing=[_iface_old("agOLD", "b1", "f1", "superseded")])
     assert len(saved) == 1                                               # the edge still gets a contract
-    assert updated == []                                                 # the already-superseded one is left alone
 
 
 def test_demo_solutions_have_distinct_per_card_file_changes():
@@ -416,6 +407,107 @@ def test_producer_signs_a_write_your_own_shape(monkeypatch):
     assert res["state"] == "active"
     assert res["interface"]["path"] == "/api/auth/custom"               # the written shape is the agreed interface
     assert res["chosen_proposal_id"] == "user"
+
+
+# --- F3: a scaffold failure after the LAST ratify must be surfaced (dispatch_failed), never silent ---
+
+def test_scaffold_failure_after_last_ratify_pings_dispatch_failed(monkeypatch):
+    plan, state = _seed("pf", _be_fe())                       # backend+frontend ratified → qa is the last gate
+    monkeypatch.setitem(main.RESERVED, "pf", {"project_id": 123})
+    pings: list[tuple[str, str]] = []
+    async def _notify(user, kind, *a, **k):
+        pings.append((user, kind))
+    async def _boom(*a, **k):
+        raise RuntimeError("GitLab down")
+    async def _noop(*a, **k):
+        return None
+    monkeypatch.setattr(main, "notify", _notify)
+    monkeypatch.setattr(main, "notify_watchers", _noop)
+    monkeypatch.setattr(main, "_finalize_scaffold", _boom)
+    monkeypatch.setattr(main, "_persist_relay", _noop)
+    monkeypatch.setattr(main, "save_decision", _noop)
+    res = asyncio.run(main.ratify_gate("pf", "qa", RatifyRequest(approve=True), member=_by("gabinvr")))
+    assert res is not None                                    # the ratify itself never 500s
+    failed = [u for (u, kind) in pings if kind == "dispatch_failed"]
+    assert "gabinvr" in failed and "Onsraa" in failed         # the ratifier AND the manager are pinged
+    assert main.RELAYS["pf"].dispatch == "failed"             # the relay is marked failed (kept for retry), not silently open
+
+
+def test_validated_ship_marks_dispatching_then_notifies_everyone(monkeypatch):
+    plan, state = _seed("ps", _be_fe())                       # b1 → sprint0-se, f1 → sprint0-fe assignees
+    monkeypatch.setitem(main.RESERVED, "ps", {"project_id": 7})
+    seen_dispatch: list[str] = []
+    pings: list[tuple[str, str, str]] = []
+    async def _notify(user, kind, title="", *a, **k):
+        pings.append((user, kind, title))
+    async def _noop(*a, **k):
+        return None
+    async def _finalize(plan_id, plan_, *, project_id=None):
+        seen_dispatch.append(main.RELAYS[plan_id].dispatch)   # the relay must be "dispatching" by the time scaffold runs
+        main.RELAYS.pop(plan_id, None)                        # a real ship pops the relay
+        return {"ok": True, "tasks_created": 5, "project_id": 7, "issues_created": 5}
+    monkeypatch.setattr(main, "notify", _notify)
+    monkeypatch.setattr(main, "notify_watchers", _noop)
+    monkeypatch.setattr(main, "_finalize_scaffold", _finalize)
+    monkeypatch.setattr(main, "_persist_relay", _noop)
+    monkeypatch.setattr(main, "save_decision", _noop)
+    asyncio.run(main.ratify_gate("ps", "qa", RatifyRequest(approve=True), member=_by("gabinvr")))
+    assert seen_dispatch == ["dispatching"]                   # marked BEFORE the scaffold (the manager-window fix)
+    shipped = {u for (u, kind, _t) in pings if kind == "project_shipped"}
+    assert {"sprint0-se", "sprint0-fe", "Onsraa"} <= shipped  # every participant (assignees ∪ ratifiers ∪ managers)
+    assert any("5 tasks" in t for (_u, kind, t) in pings if kind == "project_shipped")
+    assert "ps" not in main.RELAYS                            # shipped → left the board
+
+
+# --- WS-E: the acceptance gate authors the definition of done; it flows into the qa checklist ---
+
+def test_build_relay_stamps_is_acceptance():
+    state = relay.build_relay(_plan(_be_fe()))
+    assert next(g for g in state.gates if g.discipline == "qa").is_acceptance is True       # terminal accept gate
+    assert next(g for g in state.gates if g.discipline == "backend").is_acceptance is False  # a build slice
+
+
+def test_acceptance_line_prefers_authored():
+    from app import handoff
+    i = _issue("b1", "backend")
+    assert handoff.acceptance_line(i) == "works end-to-end (backend)"   # generic fallback when unauthored
+    i.acceptance = "rejects a wrong password"
+    assert handoff.acceptance_line(i) == "rejects a wrong password"     # the Tester's authored criterion wins
+
+
+def test_acceptance_get_seeds_from_issues_and_save_writes_them(monkeypatch):
+    plan = _plan(_be_fe())
+    main.PLANS["pa"], main.RELAYS["pa"] = plan, relay.build_relay(plan)
+    async def _noop(*a, **k):
+        return None
+    monkeypatch.setattr(main, "_persist", _noop)
+    got = asyncio.run(main.get_acceptance("pa", _by("gabinvr")))
+    assert {c["issue_id"] for c in got["criteria"]} == {"b1", "f1"}
+    assert got["criteria"][0]["text"].startswith("works end-to-end")   # seeded from the issue
+    body = main.AcceptanceSave(criteria=[main.AcceptanceItem(issue_id="b1", text="returns 200 + a token")])
+    res = asyncio.run(main.save_acceptance("pa", body, member=_by("gabinvr")))  # qa = the acceptance gate's discipline
+    assert res["saved"] == 1
+    assert next(i for e in plan.epics for i in e.issues if i.id == "b1").acceptance == "returns 200 + a token"
+
+
+def test_acceptance_save_unauthorized_gets_403(monkeypatch):
+    plan = _plan(_be_fe())
+    main.PLANS["pb"], main.RELAYS["pb"] = plan, relay.build_relay(plan)
+    body = main.AcceptanceSave(criteria=[main.AcceptanceItem(issue_id="b1", text="x")])
+    with pytest.raises(HTTPException) as ei:                            # a backend dev is not the qa owner / manager
+        asyncio.run(main.save_acceptance("pb", body, member=_by("sprint0-se")))
+    assert ei.value.status_code == 403
+
+
+def test_qa_checklist_carries_authored_criteria(monkeypatch):
+    from app import handoff
+    plan = _plan(_be_fe())
+    next(i for e in plan.epics for i in e.issues if i.id == "b1").acceptance = "rejects a wrong password"
+    captured: dict = {}
+    monkeypatch.setattr(handoff.gl, "create_issues", lambda pid, issues: (captured.update(issues[0]) or [{"iid": 9}]))
+    handoff.create_qa_issue(1, plan)
+    assert "rejects a wrong password" in captured["description"]        # the authored criterion is in the checklist
+    assert "works end-to-end (frontend)" in captured["description"]     # f1 unauthored → the generic line
 
 
 def test_draft_shape_seeds_the_editor(monkeypatch):

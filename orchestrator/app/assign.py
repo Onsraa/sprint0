@@ -1,10 +1,10 @@
 """Assignment — scored attribution (spine refactor P3).
 
-Each issue's required_skill is vector-matched to developers (skill_dev); we pick the best by a
-weighted score (scoring.best_assignment): skill cosine × per-lane trust × load × lane-match ×
-seniority-vs-risk × history. The lane/discipline is ONE signal, not a hard gate — a high-skill
-out-of-lane dev can win. A weak best score (below the floor) or an out-of-lane pick sets stretch_flag
-so the manager looks. Mutates the PlanJSON in place (assignee + stretch_flag).
+Each issue's required_skill is vector-matched to developers (skill_dev); among the candidates who
+COVER the lane (composable disciplines) we pick the best by a weighted score (scoring.best_assignment):
+skill cosine × per-lane trust × load × lane-match × seniority-vs-risk × history. A weak best score
+(below the floor) sets stretch_flag so the manager looks. An uncovered lane → no assignee → the gate
+falls to the manager + the staffing advisor. Mutates the PlanJSON in place (assignee + stretch_flag).
 """
 from __future__ import annotations
 
@@ -24,8 +24,5 @@ def assign_developers(plan: PlanJSON, skill_dev: dict[str, list[dict]]) -> None:
             user = chosen.get("gitlab_username")
             issue.assignee = user
             assigned[user] = assigned.get(user, 0.0) + float(issue.estimate_days or 1)
-            lane = issue.lane or issue.discipline
-            out_of_lane = chosen.get("discipline") != lane
-            if below or out_of_lane:
-                why = f"no prior {lane}" if out_of_lane else f"low match ({s})"
-                issue.stretch_flag = f"{chosen.get('name', 'dev')} — scored stretch · {why}"
+            if below:  # a weak best score among the lane's coverers — the manager should eyeball it
+                issue.stretch_flag = f"{chosen.get('name', 'dev')} — scored stretch · low match ({s})"

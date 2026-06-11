@@ -71,6 +71,12 @@ class Issue(BaseModel):
     # ── spine refactor (P0, additive) ──
     capability_tags: list[str] = Field(default_factory=list)  # dynamic AI-discovered skills; closed list[str] (Gemini-safe)
     lane: Optional[Lane] = None  # relay-DAG gate node; defaults to `discipline` (the transition shim)
+    acceptance: str = ""  # the Tester's authored pass condition (the definition of done); blank → the generic line
+    # ── per-task dev payload (WS11): the scoped brief Gemini writes for whoever picks up this task ──
+    feature: str = ""                                       # the parent feature this task belongs to
+    does: str = ""                                          # ≤200 — what this task SHOULD do (scoped exactly to it)
+    not_does: str = ""                                      # ≤200 — what it should NOT do (the scope boundary)
+    directives: list[str] = Field(default_factory=list)     # 1-3 light, concise code recommendations from the planner
 
     @model_validator(mode="after")
     def _fill_kind(self) -> "Issue":
@@ -129,8 +135,10 @@ class DeveloperProfile(BaseModel):
     # ── member/account fields (per-account demo: this profile IS the login account) ──
     username: str = ""                          # sprint0 login id; defaults to gitlab_username
     email: str = ""
-    role: Role = "developer"
-    discipline: Optional[Discipline] = None     # set for devs; None for the manager
+    role: Role = "developer"                    # display mirror of is_manager — reconciled below (back-compat)
+    discipline: Optional[Discipline] = None      # display mirror = the PRIMARY lane (disciplines[0]) — reconciled below
+    disciplines: list[Discipline] = Field(default_factory=list)  # every lane this user can cover (composable, multi)
+    is_manager: bool = False                     # orthogonal capability: brief→project, add-feature, oversight, attributions
     seniority: Seniority = "mid"
     load: int = 0                               # 0-100 capacity used; >=100 → unavailable
     gitlab_user_id: Optional[int] = None        # real GitLab user → native assignee; None = label-only
@@ -140,10 +148,23 @@ class DeveloperProfile(BaseModel):
     needs_link: bool = False                    # server-derived (roster API): a repo-needing dev with no GitLab link
 
     @model_validator(mode="after")
-    def _default_username(self) -> "DeveloperProfile":
+    def _reconcile_identity(self) -> "DeveloperProfile":
         if not self.username:
             self.username = self.gitlab_username
+        # roles are composable: `disciplines` (the lanes) + `is_manager` (the capability) are the truth;
+        # `discipline`/`role` are kept as display mirrors so legacy construction + persisted docs + the
+        # frontend keep working. Reconcile both directions so EITHER construction style stays valid.
+        if not self.disciplines and self.discipline:
+            self.disciplines = [self.discipline]
+        if self.role == "manager":
+            self.is_manager = True
+        self.discipline = self.disciplines[0] if self.disciplines else None  # primary lane (display)
+        self.role = "manager" if self.is_manager else "developer"            # display mirror
         return self
+
+    def covers(self, lane: str | None) -> bool:
+        """Whether this user can own/work a lane — the composable replacement for `discipline == lane`."""
+        return bool(lane) and lane in self.disciplines
 
     def trust_in(self, discipline: str | None) -> TrustLevel:
         """Per-discipline trust, falling back to the overall trust_level."""
@@ -175,6 +196,49 @@ class ReuseItem(BaseModel):
     from_project: str
     feature: str
     action: Literal["reuse", "adapt", "drop"] = "reuse"
+    reason: str = ""                                       # ≤140 — why this is worth reusing for THIS brief
+
+
+class MemoryCandidate(BaseModel):
+    """A reusable CAPABILITY the AI found in agency memory and judged against THIS brief (CRAG: a reasoned fit
+    verdict, not a similarity score). Capability-level, not file-level — paths belong to the gate's impacted
+    files, not the choice. The human ratifies which capabilities ground the plan."""
+    ref: str                                               # grounding key — the source project (select_grounded)
+    project: str = ""                                      # source project name
+    year: str = ""                                         # shipped year, parsed from the project name
+    capability: str = ""                                   # short name, e.g. "Live-map vehicle tracking"
+    what: str = ""                                         # ≤120 — what this capability does (the reusable part)
+    reason: str = ""                                       # ≤140 — WHY it does or doesn't fit this brief
+    fit: Literal["strong", "partial", "skip"] = "skip"     # the AI's relevance call — abstain = skip
+    pros: list[str] = Field(default_factory=list)          # detail view — why grounding on it helps
+    cons: list[str] = Field(default_factory=list)          # detail view — caveats / what differs
+    used: bool = False                                     # the human's pick (server defaults strong→True; the UI toggles)
+
+    @field_validator("what")
+    @classmethod
+    def _trunc_what(cls, v: str) -> str:
+        return (v or "")[:120]
+
+    @field_validator("reason")
+    @classmethod
+    def _trunc_reason(cls, v: str) -> str:
+        return (v or "")[:140]
+
+    @field_validator("pros", "cons")
+    @classmethod
+    def _trunc_proscons(cls, v: list[str]) -> list[str]:
+        return [_trunc_words(x, 8) for x in (v or [])[:3]]
+
+
+class MemoryJudgment(BaseModel):
+    """The memory-judge agent's output (judge_memory): a reuse verdict per retrieved candidate, graded on the
+    RESOLVED spec — after the manager answered the ambiguities, so their answers can shift the grounding."""
+    candidates: list[MemoryCandidate] = []
+
+    @field_validator("candidates")
+    @classmethod
+    def _cap_candidates(cls, v: list[MemoryCandidate]) -> list[MemoryCandidate]:
+        return (v or [])[:8]  # the UI panel renders a handful; an over-eager judge must not flood it
 
 
 class ArchitectureCard(BaseModel):
@@ -193,6 +257,16 @@ class ArchitectureCard(BaseModel):
     @classmethod
     def _trunc_proscons(cls, v: list[str]) -> list[str]:
         return [_trunc_words(x, 8) for x in (v or [])[:3]]
+
+    @field_validator("summary", "fit_to_constraints")
+    @classmethod
+    def _trunc_summary(cls, v: str) -> str:
+        return (v or "")[:140]
+
+    @field_validator("rationale")
+    @classmethod
+    def _trunc_rationale(cls, v: str) -> str:
+        return (v or "")[:240]
 
 
 class ArchitectureOptions(BaseModel):
@@ -227,16 +301,43 @@ class AmbiguityCard(BaseModel):
     options: list[str]                 # 2-3 candidate interpretations
     resolution: Optional[str] = None   # manager's pick or free-text escape
 
+    @field_validator("options")
+    @classmethod
+    def _cap_options(cls, v: list[str]) -> list[str]:
+        return (v or [])[:4]
+
 
 class ClarifiedSpec(BaseModel):
     """Emitted by the clarify agent (goal/users/must_haves/constraints/ambiguities);
-    `reuse` is filled server-side from the memory match."""
+    `reuse` is filled server-side from the memory match. List bounds mirror the instruction
+    ("2-4 ambiguities", short lists) — an instruction-ignoring generation must not flood the UI."""
     goal: str
     users: list[str] = Field(default_factory=list)
     must_haves: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     ambiguities: list[AmbiguityCard] = Field(default_factory=list)
     reuse: list[ReuseItem] = Field(default_factory=list)
+    memory_candidates: list[MemoryCandidate] = Field(default_factory=list)  # CRAG: judged reuse candidates (verdict + why)
+
+    @field_validator("users")
+    @classmethod
+    def _cap_users(cls, v: list[str]) -> list[str]:
+        return (v or [])[:5]
+
+    @field_validator("must_haves")
+    @classmethod
+    def _cap_musts(cls, v: list[str]) -> list[str]:
+        return (v or [])[:8]
+
+    @field_validator("constraints")
+    @classmethod
+    def _cap_constraints(cls, v: list[str]) -> list[str]:
+        return (v or [])[:6]
+
+    @field_validator("ambiguities")
+    @classmethod
+    def _cap_ambiguities(cls, v: list[AmbiguityCard]) -> list[AmbiguityCard]:
+        return (v or [])[:5]
 
 
 # ── Relay: the ratification DAG ({uiux ∥ be} → fe → qa) ──
@@ -245,7 +346,10 @@ class Gate(BaseModel):
     status: GateStatus = "pending"
     depends_on: list[Lane] = Field(default_factory=list)  # gates that must finish first
     note: str = ""
+    owner: Optional[str] = None  # the lead this gate routes to (the lane's assignee = best profile); None = gap → Tech Lead
     delegate: Optional[str] = None  # human-in-control: a lead handed this gate (+ its slice) to this user to ratify
+    ready: bool = True  # strict pipeline (P2): a pending gate is ready once its choices are cached — stamped at serialization
+    is_acceptance: bool = False  # the terminal acceptance gate (reviews the whole relay; authors the definition of done) — stamped at build
     # ── spine refactor (P0, additive): the router's per-gate decision; all null on legacy gates ──
     tier: Optional[RoutingTier] = None            # auto_pass | one_expert | two_expert (the router's call)
     confidence: Optional[int] = None              # AI confidence (0-100) feeding P(error)
@@ -273,6 +377,10 @@ class RelayState(BaseModel):
     gates: list[Gate]
     baton: list[Lane] = Field(default_factory=list)  # active gates: unblocked, not yet done
     integration_signals: list[IntegrationSignal] = Field(default_factory=list)  # api-failing/ok flags (B+C+D)
+    # dispatch lifecycle: the relay is "dispatching" the moment its last gate ratifies (the slow GitLab+Mongo
+    # scaffold runs), then leaves the board on a VALIDATED ship; "failed" keeps it for retry. Not "open" → the
+    # manager can't mistake a mid-dispatch relay for one awaiting action.
+    dispatch: Literal["pending", "dispatching", "shipped", "failed"] = "pending"
 
 
 class CapabilityProfile(BaseModel):
@@ -408,6 +516,26 @@ class ContractProposalSet(BaseModel):
     def _skip(cls, v: str) -> str:
         return (v or "")[:140]
 
+    @field_validator("proposals")
+    @classmethod
+    def _cap_proposals(cls, v: list[InterfaceProposal]) -> list[InterfaceProposal]:
+        return (v or [])[:3]  # instruction says 1-2 options; the picker renders at most a few
+
+
+class AcceptanceCriterion(BaseModel):
+    issue_id: str = ""
+    criterion: str = ""   # ONE specific, testable pass-condition (the definition of done)
+
+    @field_validator("criterion")
+    @classmethod
+    def _crit(cls, v: str) -> str:
+        return (v or "")[:200]
+
+
+class AcceptanceCriteriaSet(BaseModel):
+    """The AI's specific acceptance criteria, one per plan issue (the Tester refines these). Gemini-safe."""
+    items: list[AcceptanceCriterion] = Field(default_factory=list)
+
 
 class SubteamDraft(BaseModel):
     """For 2+ devs on ONE discipline's slice — the AI proposes pair (high-risk → review / junior+senior →
@@ -440,18 +568,28 @@ class Agreement(BaseModel):
     consumer_issue_id: Optional[str] = None
     producer_discipline: Optional[str] = None
     consumer_discipline: Optional[str] = None
+    # the ACTORS (usernames): each side's gate ratifier at draft time (delegate ?? owner ?? lane lead) —
+    # the people who pick/sign/counter. Disciplines above stay for display + verify routing.
+    producer_actor: str = ""
+    consumer_actor: str = ""
     created_at: str = ""
     updated_at: str = ""
 
 
+# THE notification vocabulary — single source for the model AND main.notify()'s signature (they had
+# drifted: notify() was missing dispatch_failed). Frontend mirror: src/features/notify/notifMeta.ts.
+NotificationType = Literal["ratify_needed", "access_requested", "access_granted", "qa_failed",
+                           "project_created", "relay_created",
+                           "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned",
+                           "task_completed", "drift_flagged", "agreement_proposed", "dispatch_failed"]
+
+
 class Notification(BaseModel):
-    """A row in a member's Inbox feed. `type` covers ratify, access, QA, ship, and (Phase E)
+    """A row in a member's Inbox feed. `type` covers create, ratify, access, QA, ship, and (Phase E)
     reschedule events; `ref` carries deep-link ids (plan_id/grant_id/task_id)."""
     id: str
     user_id: str                  # recipient username
-    type: Literal["ratify_needed", "access_requested", "access_granted", "qa_failed",
-                  "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned",
-                  "task_completed", "drift_flagged", "agreement_proposed"]
+    type: NotificationType
     title: str
     body: str = ""
     ref: dict = Field(default_factory=dict)
@@ -572,6 +710,11 @@ class QAItemResult(BaseModel):
     note: str = ""
     runner: Optional[str] = None    # the responsible dev (issue.assignee) — reject reroutes here
     disc: Optional[Discipline] = None  # the gate this item belongs to — drives the QA route pills
+
+    @field_validator("note")
+    @classmethod
+    def _trunc_note(cls, v: str) -> str:
+        return (v or "")[:200]
 
 
 class TesterPick(BaseModel):

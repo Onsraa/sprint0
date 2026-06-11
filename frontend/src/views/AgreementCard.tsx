@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge, Button, DISC } from "../components/ui";
+import { isDone } from "../lib/gate";
 import { Icon } from "../lib/icon";
 import { api } from "../lib/api";
 import type { Agreement, InterfaceProposal, InterfaceDraft } from "../lib/schemas";
@@ -29,14 +30,16 @@ export function AgreementCard({ a, me, compact = false }: { a: Agreement; me?: a
   });
   const busy = run.isPending;
 
+  // the ACTORS: each side's gate ratifier (delegate ?? owner ?? lane lead — may be out-of-discipline when
+  // availability stretched the work). Username first; discipline fallback for legacy agreements w/o actors.
   const myDisc: string | undefined = me?.discipline;
-  const isProducer = !!myDisc && myDisc === a.producer_discipline;
-  const isConsumer = !!myDisc && myDisc === a.consumer_discipline;
+  const isProducer = a.producer_actor ? me?.username === a.producer_actor : (!!myDisc && myDisc === a.producer_discipline);
+  const isConsumer = a.consumer_actor ? me?.username === a.consumer_actor : (!!myDisc && myDisc === a.consumer_discipline);
   const isRatifier = (a.ratifiers ?? []).includes(me?.username);
   const ratifs: any[] = (a.ratifications ?? []) as any[];
   const lastCounter = [...ratifs].reverse().find((r) => r.kind === "counter");
   const proposals = a.proposals ?? [];
-  const consumerName = a.consumer_discipline ? DISC[a.consumer_discipline]?.label : "the consumer";
+  const consumerName = a.consumer_actor ? `@${a.consumer_actor}` : (a.consumer_discipline ? DISC[a.consumer_discipline]?.label : "the consumer");
 
   // producer's initial pick — a proposal id, or "user" for write-your-own
   const [picked, setPicked] = useState<string | null>(a.chosen_proposal_id ?? proposals[0]?.id ?? null);
@@ -60,7 +63,10 @@ export function AgreementCard({ a, me, compact = false }: { a: Agreement; me?: a
     }).then(() => { setCountering(false); setCounterWhy(""); setCounterDraft(null); }));
 
   // which mode is this viewer in?
-  const done = a.state === "ratified" || a.state === "auto_passed";
+  const done = isDone(a.state);
+  // one person owns BOTH ends (an availability stretch) → their single sign auto-completes it (no counterpart
+  // to negotiate with). Label it so "agreed" on a fresh dispatch isn't surprising.
+  const sameOwner = !!a.producer_actor && a.producer_actor === a.consumer_actor;
   const rejected = a.state === "rejected";
   const producerPicks = isProducer && a.state === "proposed" && proposals.length > 0 && !lastCounter;
   const producerSeesCounter = isProducer && a.state === "proposed" && !!lastCounter;
@@ -128,13 +134,13 @@ export function AgreementCard({ a, me, compact = false }: { a: Agreement; me?: a
       {!countering && (
         <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 13px", borderTop: "0.5px solid var(--border-subtle)" }}>
           <span style={{ fontSize: 11, color: "var(--text-tertiary)", flex: 1, minWidth: 0 }}>
-            {done ? "Agreed — the mock is live, both sides build to this." :
+            {done ? (sameOwner ? "Both ends are yours — agreed automatically (no counterpart to negotiate)." : "Agreed — the mock is live, both sides build to this.") :
              rejected ? "Declined — no contract here." :
              producerSent ? `Signed by you · sent to ${consumerName} — they agree or counter.` :
              producerPicks ? "Pick a shape (or write your own), then send it to the consumer." :
-             consumerActs ? `${DISC[a.producer_discipline ?? ""]?.label ?? "The producer"} signed — agree, or counter your own.` :
+             consumerActs ? `${a.producer_actor ? `@${a.producer_actor}` : DISC[a.producer_discipline ?? ""]?.label ?? "The producer"} signed — agree, or counter your own.` :
              producerSeesCounter ? "Your move — agree to the counter, or counter back." :
-             "Awaiting the producer."}
+             `Awaiting ${a.producer_actor ? `@${a.producer_actor}` : "the producer"}.`}
           </span>
           {producerPicks && <Button variant="primary" size="sm" icon="check" disabled={busy || !canSign} onClick={sign}>Sign + send</Button>}
           {(consumerActs || producerSeesCounter) && <>

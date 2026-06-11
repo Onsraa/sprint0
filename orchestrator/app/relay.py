@@ -9,7 +9,7 @@ functions over RelayState — no I/O, so it's trivially testable.
 from __future__ import annotations
 
 from app import routing
-from app.contracts import DeveloperProfile, Gate, IntegrationSignal, Issue, Lane, PlanJSON, RelayState, TesterPick
+from app.contracts import _TYPE_TO_DISCIPLINE, DeveloperProfile, Gate, IntegrationSignal, Issue, Lane, PlanJSON, RelayState, TesterPick
 
 _DONE = {"auto_passed", "ratified"}
 
@@ -36,6 +36,29 @@ def is_acceptance_gate(gate: Gate) -> bool:
     return lane_stage(gate.discipline) == "accept"
 
 
+def ratifier_of(gate: Gate) -> str | None:
+    """THE ratifier rule, in one place: a handed-off gate is the delegate's to ratify, else the assigned
+    owner's (lane lead); None = no specific person → callers fall back to discipline-match / the manager.
+    Every surface (queue, handoff, contract visibility, contract actors, acceptance authoring) routes
+    through this — never inline `delegate or owner` again."""
+    return gate.delegate or gate.owner
+
+
+def owns_gate(member: DeveloperProfile, gate: Gate, members: list[DeveloperProfile]) -> bool:
+    """THE per-user gate-ownership rule (UNIQUE, never role-based). A gate belongs to exactly one user:
+      1. its ratifier (delegate ?? owner) — the assigned lead (backend/devops→Tony, frontend→Sam);
+      2. unowned (owner=None): a discipline COVERER owns it (the qa acceptance gate → the tester, who
+         covers qa); if NO ONE covers the discipline (a true orphan, e.g. uiux), the MANAGER inherits it.
+    The manager is NOT special here — they own only their own gates (setup they were handed, the tester
+    gate they cover, orphans nobody covers). Manager ORCHESTRATION powers are a separate axis (auth)."""
+    r = ratifier_of(gate)
+    if r:
+        return member.username == r
+    if any(m.covers(gate.discipline) for m in members):
+        return member.covers(gate.discipline)
+    return member.is_manager  # true orphan → the manager inherits it
+
+
 def is_setup_gate(gate: Gate) -> bool:
     """The special architecture/stack setup gate (only present when the manager redirected the stack choice
     to a lead). It's gate-0: it gates EVERY discipline gate (nothing starts until the stack is ratified),
@@ -43,11 +66,19 @@ def is_setup_gate(gate: Gate) -> bool:
     return gate.discipline == "setup"
 
 
+def _canon_lane(issue: Issue) -> str:
+    """The canonical relay lane for an issue. Live plans are normalized to a valid discipline lane upstream
+    (reason._normalize_plan_lanes), so the lane is already a discipline here; this still folds an IssueType-
+    as-lane (design→uiux, db→backend) as a belt-and-suspenders for any non-normalized source (canned/tests)."""
+    lane = issue.lane or issue.discipline
+    return _TYPE_TO_DISCIPLINE.get(lane, lane)
+
+
 def _issues_by_lane(plan: PlanJSON) -> dict[str, list[Issue]]:
     out: dict[str, list[Issue]] = {}
     for epic in plan.epics:
         for issue in epic.issues:
-            out.setdefault(issue.lane or issue.discipline, []).append(issue)
+            out.setdefault(_canon_lane(issue), []).append(issue)
     return out
 
 
@@ -98,7 +129,12 @@ def build_relay(plan: PlanJSON, *, setup_owner: str | None = None) -> RelayState
         lanes = sorted(lane for lane in present if lane_stage(lane) == stage)
         deps = list(prev)
         for lane in lanes:
-            gates.append(Gate(discipline=lane, depends_on=deps, status="locked" if deps else "pending"))
+            # owner = the lane's assignee (assign_developers already picked the best profile by skill+availability);
+            # the most-common assignee leads. No assignee → gap → None → the Tech Lead ratifies it.
+            assignees = [i.assignee for i in by_lane.get(lane, []) if i.assignee]
+            owner = max(set(assignees), key=assignees.count) if assignees else None
+            gates.append(Gate(discipline=lane, owner=owner, depends_on=deps, status="locked" if deps else "pending",
+                              is_acceptance=(stage == "accept")))
         if lanes:
             prev = lanes  # the next stage converges on this one
     if setup_owner:  # gate-0: the architecture decision, owned by the redirected lead (delegate)
@@ -202,9 +238,9 @@ def best_tester(members: list[DeveloperProfile]) -> TesterPick | None:
     """Pick the best person to run the acceptance (Tester) gate — by passport, not job title.
     Verification trust (trust in an 'accept'-lane discipline, i.e. qa today) is the dominant signal;
     ties break on availability then seniority. Usually the QA, but a strong verifier in another lane
-    can win, and when no developer qualifies it falls back to the manager — the same ownership rule
-    as `_is_qa_owner`, now scored + explainable for the UI."""
-    pool = [m for m in members if m.role == "developer"] or [m for m in members if m.role == "manager"]
+    can win, and when no one has verification trust it falls to the most-available person (often the
+    manager) — picked by passport, not job title, now scored + explainable for the UI."""
+    pool = list(members)  # everyone is a candidate — a manager who covers the accept lane competes like anyone
     if not pool:
         return None
 
@@ -221,7 +257,7 @@ def best_tester(members: list[DeveloperProfile]) -> TesterPick | None:
         return _TESTER_SENIORITY.get(m.seniority, 0.7)
 
     def in_accept_lane(m: DeveloperProfile) -> int:
-        return 1 if lane_stage(m.discipline or "") == "accept" else 0
+        return 1 if any(lane_stage(d) == "accept" for d in m.disciplines) else 0
 
     chosen = max(pool, key=lambda m: (accept_trust(m), in_accept_lane(m), avail(m), seniority(m), m.username))
     at = accept_trust(chosen)
@@ -231,7 +267,7 @@ def best_tester(members: list[DeveloperProfile]) -> TesterPick | None:
         reason = f"verification trust {lvl_name} · owns the accept lane"
     elif at:
         reason = "strongest verification trust on the team"
-    elif chosen.role == "manager":
+    elif chosen.is_manager:
         reason = "no verifier on the team — the manager inherits the gate"
     else:
         reason = f"no QA seeded — {chosen.seniority} dev, most available to verify"
