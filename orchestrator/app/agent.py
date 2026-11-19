@@ -284,16 +284,13 @@ async def generate_cv_profile(cv_text: str) -> ParsedCV:
     return _parse(ParsedCV, await _run_agent(onboard_agent, f"<cv>\n{cv_text}\n</cv>"), onboard_agent.name)
 
 
-INSTRUCTION_QA = """You are a QA engineer doing a first-pass acceptance review of a delivered \
-sprint, BEFORE the human QA tester signs off — your job is to do the grunt work so the human \
-only adjudicates what matters. You are given the ISSUES (id, title, type, risk, description). \
-For EACH issue return a QAItemResult with its `issue_id`, `title`, and a `verdict`:
-- "pass" — straightforward, low-risk, clearly satisfiable by a competent implementation.
-- "needs_human" — security/payments/data, high risk, or acceptance that truly needs a human to \
-eyeball on staging.
-- "fail" — only if the issue as written is internally contradictory or clearly under-specified.
-Add a one-line `note` per item. Be conservative: route risk to humans. Return only the \
-structured QAReport; leave `reopened` empty."""
+INSTRUCTION_QA = """You are a QA risk-spotter assisting the human tester — you flag what to look at, \
+you NEVER judge. You are given the ISSUES (id, title, type, risk, description). For EACH issue \
+return a QAItemResult with its `issue_id`, `title`, and a one-line `note` telling the tester what \
+deserves their eyes: security/payments/data exposure, tricky edge cases, visual checks on staging, \
+under-specified acceptance — or "low risk" when truly routine. Do NOT set `verdict`, `state`, \
+`criterion` or `hint` — leave them at their defaults; verdicts are human decisions, made against \
+real merge state. Return only the structured QAReport; leave `reopened` empty."""
 
 qa_agent = Agent(name="sprint0_qa", model=MODEL, instruction=INSTRUCTION_QA, output_schema=QAReport, generate_content_config=_GEN_CFG)
 
@@ -391,10 +388,15 @@ async def generate_adapted_code(source_code: str, target_stack: str, context: st
 
 # ── Interface Contract (CDD): the API shape options a PRODUCER slice gives a CONSUMER slice ──
 INSTRUCTION_CONTRACT = """You set the API contract a PRODUCER slice gives a CONSUMER slice of one feature. \
-First decide if a contract is even needed.
-If the consumer does not call the producer's API here (they only share a data model, the link is just \
-ordering, or it repeats another contract) set needed=false with a short skip_reason and no proposals.
-Else set needed=true and give 1 or 2 shape options the producer can pick from. For each option:
+First pick ONE action from this list, judged by what the CONSUMER actually consumes:
+- needed=false — the consumer never calls the producer's API here (they only share a data model, the link is \
+just ordering, or it repeats a contract another consumer already has). Set a short skip_reason and no proposals.
+- feature API — the consumer builds product behavior against the producer (a frontend or another service): \
+give 1 or 2 business endpoint shape options.
+- ops surface — the consumer is OPERATIONAL (devops, qa). It never consumes business endpoints, so never \
+propose one. If it genuinely probes the producer (deploy checks, monitoring) the contract is that operational \
+surface only, a health or readiness endpoint, metrics, or a smoke route. Otherwise prefer needed=false.
+When needed=true give 1 or 2 shape options the producer can pick from. For each option:
 - `method` and `path`, a `request_fields` list and a `response_fields` list. Each field has a `name`, a JSON \
 `type` in {string, number, integer, boolean, object, array, null}, and `required`. Add likely `errors` like \
 "401 unauthorized".

@@ -53,3 +53,26 @@ def test_create_project_raises_on_a_non_collision_400(monkeypatch):
         assert False, "should raise"
     except RuntimeError as e:
         assert "400" in str(e)
+
+
+def test_create_issues_idempotent_reuses_existing_titles(monkeypatch):
+    # a retried scaffold (the relay's 'Retry from Dispatch' after a flake) must NOT double-create: an
+    # issue whose title already exists is reused (its iid returned), only genuinely new titles are POSTed.
+    posted: list[str] = []
+
+    class _C:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, path, params=None):                 # list_issue_titles — one page, one pre-existing issue
+            return _Resp(200, js=[{"iid": 5, "title": "[Auth] Existing", "web_url": "u5"}])
+        def post(self, path, json=None):
+            posted.append(json["title"])
+            return _Resp(201, js={"iid": 9, "title": json["title"], "web_url": "u9"})
+
+    monkeypatch.setattr(gitlab, "_client", lambda: _C())
+    out = gitlab.create_issues(7, [
+        {"title": "[Auth] Existing", "description": "d", "labels": []},   # already there → reuse iid 5
+        {"title": "[Auth] New", "description": "d", "labels": []},        # new → POST
+    ])
+    assert posted == ["[Auth] New"]                       # only the genuinely-new issue created
+    assert [o["iid"] for o in out] == [5, 9]              # existing reused (iid map preserved), new created

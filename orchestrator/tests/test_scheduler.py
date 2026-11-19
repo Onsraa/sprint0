@@ -183,7 +183,32 @@ def test_availability_external_baseline_offsets_taskless_member():
     assert av["busy"].free_in_days == S.BUSY_HORIZON_WORKDAYS
     assert av["busy"].active_count == 0
 
-def test_availability_takes_max_of_baseline_and_task_schedule():
+def test_availability_baseline_is_task_derived_for_tasked_members():
+    # a TASKED member's baseline comes from their ACTIVE tasks (the stale seed must not dominate the
+    # board's truth); an UNTASKED member still carries the external-commitment seed
     tasks = [_sched_task("t1", "b", status="planned", end="2026-06-09")]   # tiny task load
-    av = S.availability([_member("b", "mid", load=100)], tasks, ANCHOR)
-    assert av["b"].free_in_days == S.BUSY_HORIZON_WORKDAYS                  # baseline (10) > task (~1)
+    av = S.availability([_member("b", "mid", load=100), _member("idle", "mid", load=100)], tasks, ANCHOR)
+    assert av["b"].free_in_days < S.BUSY_HORIZON_WORKDAYS                   # task truth beats the seed
+    assert av["idle"].free_in_days == S.BUSY_HORIZON_WORKDAYS               # untasked → seed baseline stands
+
+
+def test_effective_load_done_frees_capacity_untasked_keeps_seed():
+    # the kanban is the truth: done work frees capacity; a member with no tasks at all keeps the
+    # static seed `load` (the pre-dispatch staffing/stretch knob)
+    sam, tony, ted = _member("sam", "mid", load=30), _member("tony", "senior", load=20), _member("ted", "senior", load=10)
+    tasks = [_task("a", "sam"), _task("b", "sam", est=3), _task("c", "tony", est=2)]
+    for t in tasks[:2]:
+        t.status = "done"
+    eff = S.effective_load([sam, tony, ted], tasks)
+    assert eff["sam"] == 0                       # all of sam's work done → freed
+    assert eff["tony"] == 20                     # 2 active days / 10-day horizon → 20%
+    assert eff["ted"] == 10                      # never tasked → seed stands
+
+
+def test_availability_all_done_means_free_now():
+    sam = _member("sam", "mid", load=30)
+    tasks = [_task("a", "sam"), _task("b", "sam")]
+    for t in tasks:
+        t.status = "done"
+    a = S.availability([sam], tasks, ANCHOR)["sam"]
+    assert a.free_in_days == 0 and a.active_count == 0 and a.queued_days == 0

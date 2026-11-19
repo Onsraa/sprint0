@@ -23,10 +23,12 @@ export const NOTIF_META: Record<string, NotifMeta> = {
   agreement_proposed:  { icon: "relay",    label: "Contract",   intent: "act",     act: "redirect", to: "gatecontract", cta: "Sign the Contract" },
   // tester · acceptance — redirect to Tester
   qa_failed:           { icon: "bolt",     label: "Acceptance", intent: "urgent",  act: "redirect", to: "qagate",       cta: "Open acceptance" },
+  acceptance_complete: { icon: "check",    label: "Acceptance", intent: "act",     act: "redirect", to: "qagate",       cta: "Close the project" },
   project_shipped:     { icon: "check",    label: "Shipped",    intent: "good" },
   // work · tasks
   task_assigned:       { icon: "board",    label: "Assigned",   intent: "neutral" },
   task_completed:      { icon: "check",    label: "Done",       intent: "good" },
+  task_review:         { icon: "board",    label: "Review",     intent: "act",     act: "redirect", to: "mywork", cta: "Open the board" },
   // reflow · reschedule — act inline (apply / reject)
   reschedule_proposed: { icon: "calendar", label: "Reschedule", intent: "act",     act: "inline" },
   reschedule_resolved: { icon: "calendar", label: "Reschedule", intent: "good" },

@@ -48,12 +48,13 @@ export function useView() {
 }
 
 /** Keep the active route valid for the persona — redirect an out-of-scope view home.
- *  No-ops when `role` is null (logged out), so it can be mounted unconditionally in the shell. */
-export function useRoleGate(role: Role | null) {
+ *  No-ops when `role` is null (logged out), so it can be mounted unconditionally in the shell.
+ *  `coversQa`: composable roles — whoever covers the qa lane keeps the Tester view, even a manager. */
+export function useRoleGate(role: Role | null, coversQa = false) {
   const { view, setView } = useView();
   useEffect(() => {
     if (role == null) return;
     const valid = roleToMode(role) === "manager" ? MANAGER_VIEWS : DEV_VIEWS;
-    if (!valid.includes(view)) setView(ROLE_HOME[role]);
-  }, [role, view, setView]);
+    if (!valid.includes(view) && !(coversQa && view === "qa")) setView(ROLE_HOME[role]);
+  }, [role, view, setView, coversQa]);
 }

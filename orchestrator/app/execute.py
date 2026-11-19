@@ -29,7 +29,12 @@ def focus_command_for(issue_id: str, title: str, clone_url: str = "") -> str:
     branch = handoff.branch_for(title, issue_id)
     slug = branch.split("/", 1)[-1]
     boot = f'curl -fsS "{_gateway_url()}/api/focus/{issue_id}?t={handoff.focus_token(issue_id)}" | bash'
-    tree = f"git worktree add ../{slug} {branch} && cd ../{slug} && {boot}"
+    # plain add (branch already local) → -b from origin/<branch> (fresh clone: the branch exists only
+    # remotely, and worktree add has no checkout-style remote DWIM) → `|| true` so a RE-RUN (dir exists /
+    # branch checked out) still cd's into the existing worktree and re-materializes the docs.
+    add = (f"{{ git worktree add ../{slug} {branch} 2>/dev/null || "
+           f"git worktree add -b {branch} ../{slug} origin/{branch} || true; }}")
+    tree = f"{add} && cd ../{slug} && {boot}"
     if clone_url:
         repo_dir = clone_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
         return f"git clone {clone_url} {repo_dir} && cd {repo_dir} && {tree}"
@@ -40,6 +45,12 @@ def focus_command(issue: Issue, clone_url: str = "") -> str:
     return focus_command_for(issue.id, issue.title, clone_url)
 
 _CI_YML = """# sprint0 CI gate — bad merges blocked here, before the QA-agent + human sign-off.
+# Pipelines are DISABLED while the jobs are placeholders: every focus-branch push was spawning a
+# 2-job pipeline that burned the free-tier compute quota and painted the repo red (ci_quota_exceeded).
+# Wire real lint/test commands, then flip `when: never` to branch/MR rules.
+workflow:
+  rules:
+    - when: never
 stages: [test]
 lint:
   stage: test
@@ -274,15 +285,19 @@ def scaffold_project(plan: PlanJSON, project_id: int, *, web_url: str = "", clon
         f"_Scaffolded by sprint0 — {plan.timeline_weeks}-week plan, "
         f"{sum(len(e.issues) for e in plan.epics)} issues._\n"
     )
-    gl.commit_files(
-        project_id,
-        [
-            {"path": "README.md", "action": "update", "content": readme},
-            {"path": ".gitlab-ci.yml", "content": _CI_YML},
-            *skeleton,
-        ],
-        branch=default_branch,
-    )
+    files = [
+        {"path": "README.md", "content": readme},
+        {"path": ".gitlab-ci.yml", "content": _CI_YML},
+        *skeleton,
+    ]
+    try:  # idempotent re-dispatch: classify each file against the repo's CURRENT tree, so a retry after a
+        # flake (the relay's 'Retry from Dispatch') updates what's there instead of 400-ing 'already exists'.
+        tree = gl.list_repo_tree(project_id, ref=default_branch)
+    except Exception:
+        tree = set()  # empty/unreadable repo → everything is new (README still exists from repo init)
+    for f in files:
+        f["action"] = "update" if f["path"] in tree else "create"
+    gl.commit_files(project_id, files, branch=default_branch)
     gl.create_labels(project_id, _plan_labels(plan))
     _invite_assignees(project_id, plan)  # native assignees must be project members first
     created = gl.create_issues(project_id, _issue_dicts(plan, clone_url))
@@ -292,7 +307,7 @@ def scaffold_project(plan: PlanJSON, project_id: int, *, web_url: str = "", clon
         branches = handoff.commit_context_branches(project_id, plan, default_branch=default_branch, reuse_seeds=reuse_seeds)
         qa = handoff.create_qa_issue(project_id, plan, staging_url=web_url)
         extra = {"context_branches": len(branches), "qa_issue_iid": qa.get("iid")}
-    return {"issues_created": len(created), **extra}
+    return {"issues_created": len(created), "issues": created, **extra}
 
 
 def execute_plan(plan: PlanJSON, project_name: str | None = None, with_handoff: bool = True, reuse_seeds: dict[str, list[dict]] | None = None) -> dict:
@@ -314,4 +329,4 @@ def extend_project(plan: PlanJSON, project_id: int, default_branch: str = "main"
     _invite_assignees(project_id, plan)
     created = gl.create_issues(project_id, _issue_dicts(plan, clone_url))
     branches = handoff.commit_context_branches(project_id, plan, default_branch=default_branch, reuse_seeds=reuse_seeds)
-    return {"issues_created": len(created), "context_branches": len(branches)}
+    return {"issues_created": len(created), "issues": created, "context_branches": len(branches)}

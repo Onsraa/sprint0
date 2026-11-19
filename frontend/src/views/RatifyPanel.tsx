@@ -15,6 +15,7 @@ import { AgreementCard } from "./AgreementCard";
 import { toast } from "sonner";
 import { Avatar, Badge, DiscDot, DISC, discLabel, StatusIcon, CapTag, Button } from "../components/ui";
 import { isDone, ownsGate } from "../lib/gate";
+import { GRADE_META } from "../lib/grade";
 import { LiveTrace } from "../components/LiveTrace";
 import { Icon, ZeroMark, type IconName } from "../lib/icon";
 import { useApp } from "../app/useApp";
@@ -41,13 +42,6 @@ export const GATE_META: Record<string, { label: string; tone: string; fg: string
 };
 /* safe lookup — an unknown status DEGRADES (renders its raw name), never crashes (backend statuses can grow) */
 export const gateMeta = (s: string) => GATE_META[s] ?? { label: s || "—", tone: "neutral", fg: "var(--text-tertiary)" };
-
-const GRADE_META: Record<string, { label: string; step: number; proven: boolean; hint: string }> = {
-  proposed:        { label: "Proposed",        step: 1, proven: false, hint: "drafted, never shipped from memory yet" },
-  shipped:         { label: "Shipped",         step: 2, proven: false, hint: "merged before, not yet battle-tested" },
-  prod_survived:   { label: "Prod-survived",   step: 3, proven: true,  hint: "survived in production" },
-  retro_validated: { label: "Retro-validated", step: 4, proven: true,  hint: "confirmed in a retro" },
-};
 
 export function GradeChip({ grade, showLabel = true }: { grade?: string; showLabel?: boolean }) {
   const m = GRADE_META[grade ?? ""] || GRADE_META.proposed;
@@ -442,7 +436,7 @@ function SetupGate({ planId, plan, interactive, done }: { planId: string | null;
    issues + the role:qa checklist are built from these very criteria). Mirrors SetupGate's frame. */
 function AcceptanceGate({ g, planId, interactive, done }: { g: any; planId: string | null; interactive: boolean; done: boolean }) {
   const qc = useQueryClient();
-  const { relaySummaries }: any = useApp();
+  const { me, relaySummaries }: any = useApp();
   const setShippedRelay = useUI((s) => s.setShippedRelay);
   const { data } = useQuery({ queryKey: ["acceptance", planId], queryFn: () => api.getAcceptance(planId as string), enabled: !!planId });
   const criteria = useMemo(() => data?.criteria ?? [], [data]);
@@ -465,7 +459,7 @@ function AcceptanceGate({ g, planId, interactive, done }: { g: any; planId: stri
       toast.success(shipped ? "Relay shipped — tasks created" : "Definition of done accepted — dispatching the feature.");
       // latch a done-state so the view shows "Shipped · go to tasks" instead of the stale "no gate here"
       // once the relay leaves the board (it's popped on a clean ship).
-      if (shipped) setShippedRelay({ project: relaySummaries.find((r: any) => r.plan_id === planId)?.project ?? "The feature", tasks: criteria.length });
+      if (shipped) setShippedRelay({ project: relaySummaries.find((r: any) => r.plan_id === planId)?.project ?? "The feature", tasks: criteria.length, planId });
       qc.invalidateQueries({ queryKey: qk.relay(planId as string) });
       qc.invalidateQueries({ queryKey: qk.allRelays() });
     },
@@ -474,7 +468,18 @@ function AcceptanceGate({ g, planId, interactive, done }: { g: any; planId: stri
   // dispatch truth comes from the RELAY, not the gate: the gate flips ratified the moment the tester
   // ratifies, but the feature is only "dispatched" once the validated scaffold ships (relay.dispatch).
   const { data: relayState } = useRelay(planId);
-  const dispatching = accept.isPending || (relayState as any)?.dispatch === "dispatching";
+  
+  const retryDispatch = useMutation({
+    mutationFn: () => api.dispatch(planId as string),
+    onSuccess: () => {
+      toast.success("Retrying dispatch...");
+      qc.invalidateQueries({ queryKey: qk.relay(planId as string) });
+      qc.invalidateQueries({ queryKey: qk.allRelays() });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Dispatch retry failed"),
+  });
+
+  const dispatching = accept.isPending || retryDispatch.isPending || (relayState as any)?.dispatch === "dispatching";
   const dispatchFailed = (relayState as any)?.dispatch === "failed";
   const kicker = dispatching ? " · dispatching" : dispatchFailed ? " · dispatch failed"
     : done ? " · accepted" : interactive ? " · your call" : " · awaiting the tester";
@@ -541,9 +546,16 @@ function AcceptanceGate({ g, planId, interactive, done }: { g: any; planId: stri
           {dispatchFailed && (
             <div style={{ display: "flex", gap: 9, padding: "10px 12px", borderRadius: "var(--r-md)", marginTop: 10, background: "var(--bg-secondary)", border: "0.5px solid var(--red)" }}>
               <Icon name="warn" size={14} style={{ color: "var(--red)", flexShrink: 0, marginTop: 1 }} />
-              <span style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45 }}>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.45 }}>
                 <b style={{ fontWeight: 600, color: "var(--text-primary)" }}>Dispatch failed — nothing shipped.</b> Your acceptance stands; the manager retries from Relays.
-              </span>
+                {me?.is_manager && (
+                  <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border-subtle)" }}>
+                    <Button variant="primary" size="md" onClick={() => retryDispatch.mutate()} disabled={retryDispatch.isPending}>
+                      {retryDispatch.isPending ? "Retrying…" : "Retry dispatch to GitLab"}
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
           {done && !dispatching && !dispatchFailed && <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 10 }}>Accepted — the feature was dispatched.</div>}

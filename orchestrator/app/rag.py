@@ -125,14 +125,18 @@ def _promote(history: list[dict], discipline: str | None = None) -> str:
     return "low"
 
 
-async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85) -> dict:
+async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85,
+                       project_id: int | None = None) -> dict:
     """Passport-increment-on-merge: push a history entry, then grow the merged DISCIPLINE's
     trust + the skill profile — the passport becomes living per-discipline (junior → UI/UX)."""
+    from datetime import datetime, timezone
     disc = _discipline_of(task_type)
+    entry = {"task_type": task_type, "score": score, "via": "sprint0-merge",
+             "project_id": project_id, "at": datetime.now(timezone.utc).isoformat()}
     async with MongoMCP() as m:
         await m.update_many(
             DEV_COLL, {"gitlab_username": gitlab_username},
-            {"$push": {"history": {"task_type": task_type, "score": score, "via": "sprint0-merge"}}},
+            {"$push": {"history": entry}},
         )
         rows = await m.find(
             DEV_COLL,
@@ -144,7 +148,10 @@ async def record_merge(gitlab_username: str, task_type: str, score: float = 0.85
         dev = rows[0]
         trust = dev.get("trust") or {}
         new_tier = _promote(dev.get("history", []), disc)
-        promoted = new_tier != trust.get(disc)
+        cur = trust.get(disc)
+        if _RANK.get(new_tier, 0) < _RANK.get(cur or "low", 0):
+            new_tier = cur  # monotonic: merges never demote a seeded/earned tier (mirrors grading.next_grade + grow_demo_member)
+        promoted = new_tier != cur
         trust[disc] = new_tier
         overall = max(trust.values(), key=lambda t: _RANK.get(t, 0), default="low")
         sets: dict = {"trust": trust, "trust_level": overall}

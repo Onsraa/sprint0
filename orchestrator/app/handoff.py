@@ -12,10 +12,15 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 
+import httpx
+
 from app import demo, gitlab as gl
+
+_log = logging.getLogger("sprint0.handoff")
 from app.const import QA_ROLE_LABEL, STAGING_URL
 from app.contracts import PlanJSON
 
@@ -71,7 +76,7 @@ def focus_script(generate: dict) -> str:
     return (
         "#!/usr/bin/env bash\n"
         "set -e\n"
-        '[ -d .git ] || { echo "sprint0: run from the repo root (no .git here)"; exit 1; }\n'
+        '[ -e .git ] || { echo "sprint0: run from the repo root (no .git here)"; exit 1; }\n'  # worktree .git is a FILE, not a dir
         "python3 - <<'PY'\n"
         "import base64, json, os, subprocess\n"
         f'gen = json.loads(base64.b64decode("{blob}").decode())\n'
@@ -99,8 +104,9 @@ def focus_script(generate: dict) -> str:
         'os.makedirs(".sprint0", exist_ok=True)\n'
         '_ = open(MAT, "w").write("\\n".join(written))\n'
         "PY\n"
-        "EXCLUDE=.git/info/exclude\n"
-        '[ -f "$EXCLUDE" ] && ! grep -q "sprint0 generated context" "$EXCLUDE" && '
+        'EXCLUDE="$(git rev-parse --git-path info/exclude)"\n'  # worktree-safe: resolves through the .git FILE
+        'mkdir -p "$(dirname "$EXCLUDE")" && touch "$EXCLUDE"\n'
+        'grep -q "sprint0 generated context" "$EXCLUDE" || '
         "printf '\\n# sprint0 generated context (local only, never commit)\\n"
         "/AGENTS.md\\n/CLAUDE.md\\n/CONTEXT.md\\n/CONTRACT.md\\n/.vscode/\\n/.sprint0/\\n' >> \"$EXCLUDE\"\n"
         'echo "sprint0: context ready. All files on disk; run/test normally. AGENTS.md + CONTEXT.md describe your slice."\n'
@@ -316,14 +322,22 @@ def commit_context_branches(
                 continue
             branch = branch_name(issue)
             try:
-                gl.create_branch(project_id, branch, ref=default_branch)
+                try:
+                    gl.create_branch(project_id, branch, ref=default_branch)
+                except httpx.HTTPStatusError as e:  # idempotent retry: the branch is already there from a prior dispatch
+                    if e.response.status_code == 400 and "already exists" in (e.response.text or "").lower():
+                        made.append(branch)
+                        continue
+                    raise
                 seeds = reuse_seeds.get(issue.id) or []
                 files = _stub_files(project_id, issue, default_branch, tree, {s["path"] for s in seeds})
                 if files:  # an all-existing-or-uncommentable slice yields no stubs → branch is just a ref off main
                     gl.commit_files(project_id, files, branch=branch, message=f"chore(sprint0): scaffold {issue.id} files")
                 made.append(branch)
-            except Exception:
-                pass  # skip branch/commit conflicts; best-effort for the demo
+            except Exception as exc:
+                # best-effort, but NOT silent: a GitLab flake here leaves the task without its focus branch,
+                # which downstream (demo_complete, /api/focus checkout) trips over with no trail.
+                _log.warning("focus branch FAILED for %s (%s): %s", issue.id, branch, exc)
     return made
 
 

@@ -78,6 +78,23 @@ def _avail(assignee: str, anchor_d: date, load: dict[str, int], blocked: frozens
     return add_workdays(anchor_d, busy, blocked)
 
 
+def effective_load(members: list[DeveloperProfile], tasks: list[Task]) -> dict[str, int]:
+    """Per-member CURRENT load % — derived from their ACTIVE tasks (the kanban is the truth: moving work to
+    done frees capacity). A member with no tasks at all keeps the static seed `load` (the pre-dispatch
+    external-commitment knob the wizard's staffing/stretch beats use). The PACKERS (schedule_tasks/reflow)
+    intentionally keep the static baseline: their active tasks are in the pack itself, so deriving load from
+    them there would double-count."""
+    tasked = {t.assignee for t in tasks if t.assignee}
+    out: dict[str, int] = {}
+    for m in members:
+        if m.username in tasked:
+            days = sum(t.estimate_days for t in tasks if t.assignee == m.username and t.status in _ACTIVE_STATUSES)
+            out[m.username] = min(100, round(days / BUSY_HORIZON_WORKDAYS * 100))
+        else:
+            out[m.username] = int(m.load or 0)
+    return out
+
+
 def _workdays_between(a: date, b: date) -> int:
     """Count of working days from `a` (inclusive) up to `b` (exclusive). a==b → 0. Assumes a<=b."""
     n, d = 0, a
@@ -92,7 +109,7 @@ def availability(members: list[DeveloperProfile], tasks: list[Task], anchor: str
     `available_on` = max(their external-commitment baseline via `_avail`, the day after their last
     scheduled active task). No active scheduled work and no baseline → free now. Pure + deterministic."""
     anchor_d = _anchor_date(anchor)
-    load = {m.username: m.load for m in members}
+    load = effective_load(members, tasks)   # task-derived (done frees capacity), seed only when untasked
     out: dict[str, Availability] = {}
     for m in members:
         u = m.username

@@ -43,18 +43,23 @@ const initials = (s: string) => (s || "?").split(/\s+/).map((w) => w[0]).filter(
  *    (trust as a string level, capability_tags, est/by/dep, code/accent, mr_title…)
  *    that don't line up with our strict Zod types — the adapter is the loose seam. ── */
 const LEVEL_NUM: Record<string, number> = { high: 88, medium: 58, low: 28 };
-// real merge → graded strength: record_merge stores only {task_type, score, via}; map the score
-// to the §12 grade ladder so the Passport's strength chip is real (project/date aren't tracked → "—").
+// real merge → graded strength: map record_merge's score to the §12 grade ladder for the strength chip.
 const scoreGrade = (s: number) => (s >= 0.9 ? "retro_validated" : s >= 0.82 ? "prod_survived" : s >= 0.7 ? "shipped" : "proposed");
 const toMockMember = (m: Member): any => ({
   ...m, trust: m.trust_level, gitlab: m.gitlab_username,
-  // per-discipline numeric radar for the Passport, derived from the real per-discipline trust levels
-  radar: Object.fromEntries(["uiux", "frontend", "backend", "devops", "qa"].map((d) =>
-    [d, LEVEL_NUM[(m.trust as Record<string, string> | undefined)?.[d] ?? m.trust_level] ?? 28])),
-  // real merge history → the Passport table shape (empty for fresh accounts → Passport seeds a preview)
-  merges: (m.history ?? []).map((h) => { const r = h as { task_type?: string; score?: number };
-    return { mr: r.task_type ?? "merge", project: "—", grade: scoreGrade(r.score ?? 0),
-      delta: "+" + Number(r.score ?? 0).toFixed(2), date: "—" }; }),
+  // per-discipline numeric radar from the REAL per-discipline trust. A lane the member has no earned
+  // tier in stays near zero — falling back to the overall trust_level painted every lane "Senior".
+  radar: Object.fromEntries(["uiux", "frontend", "backend", "devops", "qa"].map((d) => {
+    const tier = (m.trust as Record<string, string> | undefined)?.[d];
+    return [d, tier ? (LEVEL_NUM[tier] ?? 12) : 12];
+  })),
+  // real merge history → the Passport table shape (record_merge stamps project_id + at since 2026-06-11)
+  merges: (m.history ?? []).map((h) => {
+    const r = h as { task_type?: string; score?: number; project_id?: number | null; at?: string };
+    return { mr: r.task_type ?? "merge", project: r.project_id != null ? `#${r.project_id}` : "—",
+      grade: scoreGrade(r.score ?? 0), delta: "+" + Number(r.score ?? 0).toFixed(2),
+      date: r.at ? new Date(r.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—" };
+  }),
 });
 const toMockTask = (t: WorkTask): any => ({ ...t, est: t.estimate_days ?? 1, by: t.assigned_by === "ai" ? "ai" : t.assigned_by ?? "self", dep: t.depends_on ?? [], project: t.project_id, score: 0, gap_cover: false, capability_tags: (t as { capability_tags?: string[] }).capability_tags ?? [] });
 function toMockProject(p: ProjectSummary): any {
@@ -176,7 +181,7 @@ export function useApp() {
   const removeDecision = (id: string) => { api.deleteDecision(id).then(invDec); };
 
   // capability profiles — real shape matches
-  const { data: profilesData } = useProfiles();
+  const { data: profilesData } = useProfiles(role === "manager");
   const profiles = useMemo(() => profilesData?.profiles ?? [], [profilesData]);
   const confirm = useConfirmProfile();
   const confirmProfile = (id: string) => confirm.mutate(id);
@@ -230,7 +235,7 @@ export function useApp() {
   const resolveAttribution = (id: string, username: string) => { api.resolveAttribution(id, { username }).then(() => qc.invalidateQueries({ queryKey: ["attributions"] })); };
 
   // code-graph drift
-  const { data: driftRaw } = useQuery({ queryKey: ["drift"], queryFn: () => api.checkDrift().then((r) => r.reports), staleTime: 60_000 });
+  const { data: driftRaw } = useQuery({ queryKey: ["drift"], queryFn: () => api.checkDrift().then((r) => r.reports), staleTime: 60_000, enabled: role === "manager" });
   const drift = useMemo(() => (driftRaw ?? []).map((d, i) => ({ ...d, id: `dr${i}`, title: d.drift_from_description || d.violation, detail: d.violation || d.suggested_fix, paths: d.affected_files ?? [], scheduled: false })), [driftRaw]);
   const scheduleRefactor = (id: string) => {
     const idx = parseInt(id.replace("dr", ""), 10);

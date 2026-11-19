@@ -31,7 +31,7 @@ from app.canned import CANNED_DEVELOPERS
 from app.contracts import (
     AccessGrant, Agreement, InterfaceDraft, ApproveRequest, ArchitectureOptions, ChangeEvent, ClarifiedSpec, ClarifyResolution, Constraints,
     Decision, DeveloperProfile, DispatchRequest, FeatureRequest, IntegrationSignal, Notification, NotificationType, PlanJSON,
-    PlanRequest, ProjectRecord, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
+    PlanRequest, ProjectRecord, QAItemResult, QAReport, QAQueue, QAQueueEntry, RatifyRequest, RelayState, Task, UserSubscription,
     ContextScope, Discipline, DriftReport, GovernanceRule, GraphEdge, GraphNode, ImpactedTask, RescheduleProposal,
     SolutionCard, SolutionSet,
 )
@@ -56,6 +56,7 @@ from app.rag import (
     reset_demo_agreements, reset_demo_tasks, reset_demo_projects, reset_demo_graph, reset_demo_notifications,
     reset_demo_events, embed_queries, embed_document, code_chunks_for_project, upsert_code_chunk,
     save_state, delete_state, load_states, reset_demo_session,
+    MongoMCP, DEV_COLL,
 )
 from app.reason import (
     clarify_brief, close_project, delta_brief, judge_memory, link_gitlab, onboard_developer, propose_acceptance,
@@ -65,11 +66,35 @@ from app.reason import (
 
 app = FastAPI(title="sprint0", version="0.4.0")
 
+# Browser origins allowed to call this gateway — shared by CORSMiddleware AND the catch-all exception
+# handler below. A 500 raised past CORSMiddleware (which lives inside ServerErrorMiddleware, the
+# outermost layer) loses its Access-Control-Allow-Origin header, so the SPA sees a misleading CORS
+# error instead of the real status. We re-attach the header by hand on that error response.
+_ALLOWED_ORIGINS = [
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:5174", "http://127.0.0.1:5174",
+    # FRONTEND_ORIGIN may be a comma-list — a Cloud Run service answers on BOTH its URL formats
+    # (PROJECTNUM.REGION.run.app and SERVICE-HASH.REGION.a.run.app), so allow each.
+    *[o.strip() for o in os.getenv("FRONTEND_ORIGIN", "").split(",") if o.strip()],
+]
+
 
 @app.exception_handler(AIOutputError)
 async def _ai_output_error(_request, exc: AIOutputError) -> JSONResponse:
     """A model returned schema-invalid output → 502 (a clean upstream-failure signal), not a 500."""
     return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+    """Catch-all so an unexpected fault (e.g. Mongo/MCP unreachable) returns a clean JSON 500 the SPA
+    can surface — WITH the CORS header reflected, since this handler runs outside CORSMiddleware.
+    Starlette still re-raises `exc` afterward, so the full traceback reaches the server logs."""
+    headers: dict[str, str] = {}
+    origin = request.headers.get("origin")
+    if origin and origin in _ALLOWED_ORIGINS:
+        headers = {"Access-Control-Allow-Origin": origin, "Vary": "Origin"}
+    return JSONResponse(status_code=500, content={"detail": "internal error"}, headers=headers)
 
 
 class _LiveGateMiddleware:
@@ -94,13 +119,7 @@ class _LiveGateMiddleware:
 app.add_middleware(_LiveGateMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        "http://localhost:5174", "http://127.0.0.1:5174",
-        # FRONTEND_ORIGIN may be a comma-list — a Cloud Run service answers on BOTH its URL formats
-        # (PROJECTNUM.REGION.run.app and SERVICE-HASH.REGION.a.run.app), so allow each.
-        *[o.strip() for o in os.getenv("FRONTEND_ORIGIN", "").split(",") if o.strip()],
-    ],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -161,6 +180,7 @@ RESERVED: dict[str, dict] = {}  # plan_id → reserve result (project_id/web_url
 DELTA_PRIORITY: dict[str, str] = {}  # plan_id → feature priority (urgent → its tasks preempt planned work)
 PROJECTS: dict[int, PlanJSON] = {}  # project_id → live plan (for QA review + mid-prod, this session)
 REQA: dict[int, set] = {}  # project_id → reopened issue iids awaiting re-QA (the reject→fix→re-QA loop)
+VERDICTS: dict[int, dict[str, dict]] = {}  # project_id → {issue_id: {"verdict","by","at"}} — the Tester's HUMAN calls
 SOLUTIONS: dict[tuple[str, str], SolutionSet] = {}  # (plan_id, discipline) → cached reuse-or-innovate set (lazy)
 CHOSEN: dict[tuple[str, str], SolutionCard] = {}    # (plan_id, discipline) → the ratified solution pick
 FOCUS_CONTEXTS: dict[str, dict] = {}                 # issue_id → {docs, reused pointers} served by /api/focus (never committed)
@@ -283,6 +303,9 @@ async def _rehydrate_session() -> None:
     for pid, v in (await _load("reqa")).items():
         try: REQA[int(pid)] = set(v.get("v", []))
         except Exception: pass
+    for pid, v in (await _load("verdicts")).items():
+        try: VERDICTS[int(pid)] = dict(v.get("v", {}))
+        except Exception: pass
     _att = (await _load("attributions")).get("_all")
     if _att and isinstance(_att.get("v"), list):
         ATTRIBUTIONS[:] = _att["v"]
@@ -311,29 +334,23 @@ async def _routing_edges() -> list | None:
         return None
 
 
-_HEALTH_MONGO = None
-
-
-def _mongo_ok() -> bool:
-    """Cheap liveness ping of the MCP's backing store (Atlas Local). Lazy, pooled client, 800ms cap —
-    if Mongo is unreachable the MCP path is dead too, so this is the honest signal behind the UI dot."""
-    global _HEALTH_MONGO
-    uri = os.getenv("MONGODB_URI", "")
-    if not uri:
-        return False
+async def _mongo_ok() -> bool:
+    """Liveness check for the actual deployed Mongo path: the official MongoDB MCP server."""
+    was_live = demo.is_live()
     try:
-        if _HEALTH_MONGO is None:
-            from pymongo import MongoClient
-            _HEALTH_MONGO = MongoClient(uri, serverSelectionTimeoutMS=800)
-        _HEALTH_MONGO.admin.command("ping")
+        demo.set_live(True)
+        async with MongoMCP() as m:
+            await asyncio.wait_for(m.find(DEV_COLL, projection={"_id": 0, "username": 1}, limit=1), timeout=45)
         return True
     except Exception:
         return False
+    finally:
+        demo.set_live(was_live)
 
 
 @app.get("/health")
-def health() -> dict:
-    ok = _mongo_ok()
+async def health() -> dict:
+    ok = demo.DEMO_MODE or await _mongo_ok()
     return {"status": "ok" if ok else "degraded", "service": "sprint0", "mongo": ok, "ok": ok, "demo_mode": demo.DEMO_MODE}
 
 
@@ -369,7 +386,7 @@ async def demo_reset(_: DeveloperProfile = Depends(auth.current_member)) -> dict
     if not demo.is_demo():
         raise HTTPException(403, "reset is demo-mode only")
     for store in (BRIEFS, SPECS, ARCHS, PLANS, RELAYS, RESULTS, DELTA_TARGET, DELTA_PRIORITY,
-                  PROJECTS, REQA, SOLUTIONS, CHOSEN):
+                  PROJECTS, REQA, VERDICTS, SOLUTIONS, CHOSEN):
         store.clear()
     ATTRIBUTIONS.clear()
     reset_demo_tasks()        # drop session-created tasks (dispatched + drafts)
@@ -780,10 +797,13 @@ async def qa_queue(_: DeveloperProfile = Depends(auth.current_member)) -> QAQueu
     for pid, plan in PROJECTS.items():  # dispatched (relay popped): live acceptance + reopened items
         if pid in covered:
             continue
+        total = sum(len(e.issues) for e in plan.epics)
+        passed = sum(1 for v in (VERDICTS.get(pid) or {}).values() if v.get("verdict") == "pass")
+        reqa = sorted(REQA.get(pid, set()))
         entries.append(QAQueueEntry(
             project_id=pid, project_name=plan.project_name, plan_id="",
-            qa_status="pending", baton=False,
-            issue_count=sum(len(e.issues) for e in plan.epics), awaiting_reqa=sorted(REQA.get(pid, set())),
+            qa_status="passed" if total and passed >= total and not reqa else "pending", baton=False,
+            issue_count=total, passed_count=passed, awaiting_reqa=reqa,
         ))
     entries.sort(key=lambda e: (e.baton, e.issue_count), reverse=True)
     return QAQueue(count=len(entries), queue=entries)
@@ -931,10 +951,18 @@ async def resolve_clarify(brief_id: str, res: ClarifyResolution,
     spec = SPECS.get(brief_id)
     if spec is None:
         raise HTTPException(404, "clarify the brief first")
+    from app import trace
+    # Answers unchanged + already judged → return the prior judgment instead of re-rolling the LLM judge
+    # (a re-roll resamples the candidate set, so backing up and re-entering the memory panel kept
+    # shrinking/shifting the choices). Checked BEFORE the fold below — after it, everything matches.
+    if spec.memory_candidates and all(res.answers.get(a.id) in (None, a.resolution) for a in spec.ambiguities):
+        trace.clear(f"{brief_id}:memory"); trace.begin(f"{brief_id}:memory")
+        trace.step("server", "thought", "Answers unchanged — reusing the prior memory judgment")
+        trace.step("server", "result", f"{len(spec.memory_candidates)} candidate(s) kept from the prior run")
+        return spec
     for amb in spec.ambiguities:
         if amb.id in res.answers:
             amb.resolution = res.answers[amb.id]
-    from app import trace
     trace.clear(f"{brief_id}:memory"); trace.begin(f"{brief_id}:memory")   # phase-scoped run
     spec.memory_candidates = await judge_memory(spec)   # reuse judged on the RESOLVED spec, not the raw brief
     SPECS[brief_id] = spec
@@ -1473,6 +1501,8 @@ async def ratify_gate(
             rec = chosen.title.strip()                       # the ratified Contract pick — clean, human-readable
         elif req.ai_recommendation:
             rec = req.ai_recommendation.strip()
+        elif discipline == "qa":
+            rec = f"Accepted the definition of done for {plan.project_name}"
         else:
             _n = len(sl)
             rec = f"{(discipline or 'gate').capitalize()} slice · {_n} issue{'s' if _n != 1 else ''}"
@@ -1974,6 +2004,10 @@ async def _finalize_scaffold_locked(plan_id: str, plan: PlanJSON, *, project_id:
         result["project_id"] = pid
         if pid in PROJECTS:  # grow the live plan so QA + later deltas see the new issues
             PROJECTS[pid].epics.extend(plan.epics)
+        try:  # Living Project Graph: a delta's memory-grounded picks record reuse lineage too
+            await record_reuse_lineage(plan_id, plan, pid)
+        except Exception:
+            pass
         try:  # refresh the durable record so the NEXT feature-add grounds on current titles + files
             rec = await get_project_record(pid)
             if rec and rec.get("plan"):
@@ -2025,15 +2059,24 @@ async def _finalize_scaffold_locked(plan_id: str, plan: PlanJSON, *, project_id:
         real_pid = result["project_id"]
         now = datetime.now(timezone.utc).isoformat()
         await delete_tasks_for_project(_plan_pid(plan_id))  # drop this plan's placeholder draft tasks
-        iid_by_title = {i.get("title"): i.get("iid") for i in result.get("issues", [])}
+        # GitLab issues are titled "[{epic}] {issue}" (execute._issue_dicts) — strip the epic prefix so the
+        # lookup keys match the bare Task titles.
+        iid_by_title = {}
+        for i in result.get("issues", []):
+            t = i.get("title") or ""
+            bare = t.split("] ", 1)[1] if t.startswith("[") and "] " in t else t
+            iid_by_title[bare] = i.get("iid")
         objs = tasklib.materialize_tasks(plan, real_pid, now)
         feat_pri = DELTA_PRIORITY.get(plan_id)
+        await team.ensure_loaded()
+        _mgr = team.manager()
         for o in objs:
             o.status = "in_progress"
             o.gitlab_issue_iid = iid_by_title.get(o.title)
+            if not o.assignee and _mgr:  # orphan lane (no coverer) → the Tech Lead owns it, like its gate
+                o.assignee = _mgr.username
             if feat_pri:
                 o.priority = feat_pri
-        await team.ensure_loaded()
         avail = scheduler.blocked_days(_reflow_change_events(await all_events()))
         scheduler.schedule_tasks(objs, team.all_members(), now, availability=avail)  # availability-aware
         await save_tasks([o.model_dump() for o in objs])
@@ -2211,6 +2254,16 @@ async def reject_issue(
     res = await run_in_threadpool(handoff.reroute, project_id, iid, req.comment, req.to_runner)
     REQA.setdefault(project_id, set()).add(iid)
     await _persist("reqa", project_id, {"v": sorted(REQA[project_id])})  # durable re-QA queue
+    try:  # record the human FAIL verdict for the matching plan issue (iid → task.id); best-effort
+        _issue_id = next((d.get("id") for d in await tasks_for_project(project_id)
+                          if d.get("gitlab_issue_iid") == iid), None)
+        if _issue_id:
+            VERDICTS.setdefault(project_id, {})[_issue_id] = {
+                "verdict": "fail", "by": member.username,
+                "at": datetime.now(timezone.utc).isoformat()}
+            await _persist("verdicts", project_id, {"v": VERDICTS[project_id]})
+    except Exception:
+        pass
     if req.to_runner:  # surface the bounce as an actionable ticket on the runner's Inbox + watchers
         await notify(req.to_runner, "qa_failed", f"Tester bounced an item back to you (#{iid})",
                      body=(req.comment or "An acceptance check failed — reopened for a fix.")[:300],
@@ -2228,7 +2281,16 @@ async def add_feature(project_id: int, req: FeatureRequest, _: DeveloperProfile 
     if not record:
         raise HTTPException(404, "no project record — dispatch a plan first")
     plan = await delta_brief(req.text, record, req.constraints)
-    plan_id = f"plan_delta_{project_id}_{uuid.uuid4().hex[:6]}"
+    suffix = uuid.uuid4().hex[:6]
+    plan_id = f"plan_delta_{project_id}_{suffix}"
+    # Delta epics/issues come back planner-numbered from 1 ("epic-1-1"…) and COLLIDE with the parent
+    # project's task ids — save_tasks keys on (project_id, id), so a colliding delta task silently
+    # OVERWRITES an original task at dispatch. Scope every id (and depends_on ref) to this delta.
+    for _e in plan.epics:
+        _e.id = f"{_e.id}-{suffix}"
+        for _i in _e.issues:
+            _i.id = f"{_i.id}-{suffix}"
+            _i.depends_on = [f"{_d}-{suffix}" for _d in (_i.depends_on or [])]
     PLANS[plan_id] = plan
     RELAYS[plan_id] = relay.build_relay(plan)
     DELTA_TARGET[plan_id] = project_id
@@ -2257,6 +2319,10 @@ async def reschedule_preview(plan_id: str, _: DeveloperProfile = Depends(auth.cu
         raise HTTPException(404, "not a delta plan — nothing live to preview against")
     existing = [Task(**d) for d in await tasks_for_project(pid)]
     drafts = [Task(**d) for d in await tasks_for_project(_plan_pid(plan_id))]
+    if not drafts:  # draft tasks were cut (no pre-ratification tasks) → simulate from the plan itself
+        _p = PLANS.get(plan_id)
+        if _p is not None:
+            drafts = tasklib.materialize_tasks(_p, pid, datetime.now(timezone.utc).isoformat())
     for d in drafts:
         d.project_id = pid  # share the project's assignee calendar (in-memory only; never saved)
     prior = {t.id: t.scheduled_end for t in existing}
@@ -2272,9 +2338,10 @@ async def reschedule_preview(plan_id: str, _: DeveloperProfile = Depends(auth.cu
         if d.assignee:
             load[d.assignee] = load.get(d.assignee, 0.0) + d.estimate_days
     capacity = []  # per-person load before -> after (~10% per added task-day over a 2-week sprint)
+    eff = scheduler.effective_load(members, existing)  # task-derived: done work frees capacity (not the static seed)
     for u, days in sorted(load.items(), key=lambda x: -x[1]):
         m = by_user.get(u)
-        before = int(m.load) if m else 0
+        before = eff.get(u, int(m.load) if m else 0)
         capacity.append({"username": u, "name": (m.name if m else u), "before": before,
                          "after": before + round(days * 10), "added_days": round(days, 1)})
     at_risk = sum(1 for c in capacity if c["after"] > 100)
@@ -2518,7 +2585,9 @@ async def _on_task_status_change(t: Task, prev: str, actor: DeveloperProfile) ->
             reviewers = [m for m in members if any(relay.lane_stage(d) == "accept" for d in m.disciplines)] or [m for m in members if m.is_manager]
             for r in reviewers:
                 if r.username != actor.username:
-                    await notify(r.username, "ratify_needed", f"Ready for review: {t.title}",
+                    # task_review (NOT ratify_needed): this is a board review, not a gate — the bell must
+                    # route to the work board, not Gate × Contract (whose relay may already be gone).
+                    await notify(r.username, "task_review", f"Ready for review: {t.title}",
                                  body=f"@{actor.username} moved '{t.title}' to In Review.",
                                  ref={"task_id": t.id, "project_id": t.project_id}, actionable=True)
         elif t.status == "done":
@@ -2769,26 +2838,105 @@ async def reject_reschedule(proposal_id: str, member: DeveloperProfile = Depends
     return {"proposal_id": proposal_id, "status": "rejected"}
 
 
-@app.post("/api/projects/{project_id}/qa/run", response_model=QAReport)
-async def qa_run(project_id: int, _: DeveloperProfile = Depends(auth.current_member)) -> QAReport:
-    """Layered QA: the QA-agent prefills the acceptance checklist; reopened items are flagged."""
+async def _qa_states(project_id: int) -> dict[str, tuple[str, Optional[int]]]:
+    """issue_id → (state, iid) for the acceptance checklist. Deterministic task-join truth:
+    bounced (iid in REQA) > ready (task done/merged) > awaiting. A re-merge clears REQA
+    (POST /api/merge) so a bounced row falls back to ready."""
+    tasks = {d.get("id"): d for d in await tasks_for_project(project_id)}
+    reqa = REQA.get(project_id, set())
+    plan = PROJECTS.get(project_id)
+    out: dict[str, tuple[str, Optional[int]]] = {}
+    for e in (plan.epics if plan else []):
+        for i in e.issues:
+            t = tasks.get(i.id) or {}
+            iid = t.get("gitlab_issue_iid")
+            state = "bounced" if (iid is not None and iid in reqa) else ("ready" if t.get("status") == "done" else "awaiting")
+            out[i.id] = (state, iid)
+    return out
+
+
+@app.get("/api/projects/{project_id}/qa/checklist", response_model=QAReport)
+async def qa_checklist(project_id: int, _: DeveloperProfile = Depends(auth.current_member)) -> QAReport:
+    """The Tester's acceptance checklist — DETERMINISTIC and instant (no AI): each criterion row joins
+    its task's real state (awaiting / ready / bounced) with the tester's persisted human verdict.
+    The AI contributes async risk hints via /qa/hints — it never judges."""
+    plan = PROJECTS.get(project_id)
+    if plan is None:
+        raise HTTPException(404, "no live plan for this project — dispatch it first")
+    states = await _qa_states(project_id)
+    verdicts = VERDICTS.get(project_id, {})
+    items = [QAItemResult(
+        issue_id=i.id, title=i.title,
+        state=states.get(i.id, ("awaiting", None))[0],
+        criterion=handoff.acceptance_line(i),
+        verdict=(verdicts.get(i.id) or {}).get("verdict"),
+        runner=i.assignee, disc=i.discipline,
+        iid=states.get(i.id, ("awaiting", None))[1],
+    ) for e in plan.epics for i in e.issues]
+    report = QAReport(items=items, reopened=sorted(REQA.get(project_id, set())))
+    await team.ensure_loaded()
+    report.tester = relay.best_tester(team.all_members())  # who runs the gate, by passport (+why)
+    return report
+
+
+class VerdictRequest(BaseModel):
+    issue_id: str
+    verdict: Literal["pass"] = "pass"   # fail is recorded by the reject flow, never here
+
+
+@app.post("/api/projects/{project_id}/qa/verdict")
+async def qa_verdict(project_id: int, req: VerdictRequest,
+                     member: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """The HUMAN pass — the verify beat of the spine. Server-enforced reality: a row can only pass
+    when its task is done/merged and not bounced (409 otherwise). Same gate as reject: the qa owner
+    or the manager."""
+    await team.ensure_loaded()
+    if not (_is_qa_owner(member, team.all_members()) or member.is_manager):
+        raise HTTPException(403, "only the acceptance (qa) gate owner or the manager can record verdicts")
+    plan = PROJECTS.get(project_id)
+    if plan is None:
+        raise HTTPException(404, "no live plan for this project — dispatch it first")
+    if _find_issue(plan, req.issue_id) is None:
+        raise HTTPException(404, f"no issue {req.issue_id} on this project")
+    state, _iid = (await _qa_states(project_id)).get(req.issue_id, ("awaiting", None))
+    if state != "ready":
+        raise HTTPException(409, f"can't pass an item that is {state} — its task must be done/merged first")
+    VERDICTS.setdefault(project_id, {})[req.issue_id] = {
+        "verdict": "pass", "by": member.username, "at": datetime.now(timezone.utc).isoformat()}
+    await _persist("verdicts", project_id, {"v": VERDICTS[project_id]})
+    total = sum(len(e.issues) for e in plan.epics)
+    passed = sum(1 for v in VERDICTS[project_id].values() if v.get("verdict") == "pass")
+    all_passed = bool(total) and passed >= total
+    if all_passed:  # the gate's payoff: route the MANAGER to close → the outcome compounds into agency memory
+        mgr = next((x for x in team.all_members() if x.is_manager), None)
+        if mgr:
+            await notify(mgr.username, "acceptance_complete", f"Acceptance complete · {plan.project_name}",
+                         body="Every check passed. Close the project to write its outcome into agency memory.",
+                         ref={"project_id": project_id}, actionable=True)
+    return {"project_id": project_id, "issue_id": req.issue_id, "verdict": "pass",
+            "passed": passed, "total": total, "all_passed": all_passed}
+
+
+@app.post("/api/projects/{project_id}/qa/hints")
+async def qa_hints(project_id: int, _: DeveloperProfile = Depends(auth.current_member)) -> dict:
+    """Async AI risk hints for the checklist — NOTES only ("check token rotation by hand"), never
+    verdicts; the frontend overlays them after the deterministic rows have already rendered."""
     plan = PROJECTS.get(project_id)
     if plan is None:
         raise HTTPException(404, "no live plan for this project — dispatch it first")
     report = await qa_review(plan)
-    report.reopened = sorted(REQA.get(project_id, set()))
-    await team.ensure_loaded()
-    report.tester = relay.best_tester(team.all_members())  # who runs the gate, by passport (+why)
-    return report
+    return {"project_id": project_id, "hints": {it.issue_id: it.note for it in report.items if it.note}}
 
 
 class CloseRequest(BaseModel):
     outcome_notes: str = ""
 
 
-async def _validate_project_decisions(project_name: str) -> int:
+async def _validate_project_decisions(project_name: str, project_id: int | None = None) -> int:
     """Outcome Validation: a shipped project is the success signal → every Decision captured for it
-    (matched by project_name) becomes outcome_validated, and each owner is notified. Best-effort.
+    becomes outcome_validated, and each owner is notified. Matches by project_name PLUS — for delta
+    plans, whose Decisions carry the feature's own name ("X - Weekly Digest") — by the delta plan ids
+    targeting this project (DELTA_TARGET), so feature decisions validate with their parent. Best-effort.
     Returns how many decisions flipped to validated."""
     if not project_name:
         return 0
@@ -2796,7 +2944,14 @@ async def _validate_project_decisions(project_name: str) -> int:
     owners: set[str] = set()
     count = 0
     try:
-        for d in await decisions_for_project(project_name):
+        rows = list(await decisions_for_project(project_name))
+        if project_id is not None:
+            delta_plan_ids = {p for p, t in DELTA_TARGET.items() if t == project_id}
+            if delta_plan_ids:
+                seen = {d.get("id") for d in rows}
+                rows += [d for d in await all_decisions()
+                         if d.get("project_id") in delta_plan_ids and d.get("id") not in seen]
+        for d in rows:
             if not d.get("outcome_validated"):
                 # ship is the strongest validation signal: the slice merged + cleared QA → grade up
                 patch = {"outcome_validated": True, "updated_at": now, "merged": True,
@@ -2827,7 +2982,7 @@ async def close(project_id: int, req: CloseRequest, _: DeveloperProfile = Depend
         await update_project_record(project_id, {"status": "closed"})
     except Exception:
         pass
-    validated = await _validate_project_decisions(record.get("name", ""))
+    validated = await _validate_project_decisions(record.get("name", ""), project_id)
     return {**out, "decisions_validated": validated}
 
 
@@ -3330,8 +3485,12 @@ async def _credit_merge(gitlab_username: str, task_type: str, score: float, *,
         grown = team.grow_demo_member(gitlab_username, task_type)
         if grown:
             return grown
-    result = await record_merge(gitlab_username, task_type, score)
+    result = await record_merge(gitlab_username, task_type, score, project_id=project_id)
     if result:
+        try:
+            await team.refresh()  # the roster cache serves /api/me — without this the Passport never shows the growth
+        except Exception:
+            pass
         return result
     aid = f"att_{uuid.uuid4().hex[:8]}"
     ATTRIBUTIONS.append({

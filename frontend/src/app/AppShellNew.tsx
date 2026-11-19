@@ -64,13 +64,18 @@ const NAV = [
     section headers, so it maps leaves directly — NAV's heterogeneous `as const` tuple needs this shape). */
 type NavLeaf = { id: string; label: string; icon: string; kbd?: readonly string[]; roles: readonly string[] };
 
+/** Role allowlist + composable-coverage override: the Tester surface belongs to whoever COVERS qa —
+    a manager+tester (Teddy) keeps it even though their collapsed role is "manager". */
+const navVisible = (it: NavLeaf, role: string, me?: { disciplines?: string[] | null } | null) =>
+  it.roles.includes(role) || (it.id === "qagate" && !!me?.disciplines?.includes("qa"));
+
 export function AppShellNew() {
   const { member, authLoading, role } = useMe();
   const wizardOpen = useUI((s) => s.wizardOpen);
   const wizardKind = useUI((s) => s.wizardKind);
   const togglePalette = useUI((s) => s.togglePalette);
   useNotificationsWS(member?.username);
-  useRoleGate(member ? role : null);
+  useRoleGate(member ? role : null, !!member?.disciplines?.includes("qa"));
 
   if (authLoading) return <SessionLoading />;
   if (!member) return <Landing />;
@@ -104,10 +109,10 @@ function SessionLoading() {
 function Sidebar({ onPalette }: { onPalette: () => void }) {
   const collapsed = useUI((s) => s.navCollapsed);   // store, not local state → survives shell remount + reload
   const toggleNav = useUI((s) => s.toggleNav);
-  const { setView, role } = useApp();
+  const { setView, role, me } = useApp();
   // "g then key" nav shortcuts (collision-free vs ⌘) — only the views this role actually has are reachable.
   // gatecontract has no standing nav item but is a valid G,C / deep-link destination for every role.
-  const allowed = useMemo(() => new Set([...NAV.flatMap((grp) => grp.items as readonly NavLeaf[]).filter((it) => it.roles.includes(role)).map((it) => it.id), "gatecontract"]), [role]);
+  const allowed = useMemo(() => new Set([...NAV.flatMap((grp) => grp.items as readonly NavLeaf[]).filter((it) => navVisible(it, role, me)).map((it) => it.id), "gatecontract"]), [role, me]);
   useNavShortcuts(setView, (v) => allowed.has(v));
   return (
     <aside style={{ width: collapsed ? 54 : "var(--nav-w)", flexShrink: 0, height: "100vh", transition: "width var(--t-reg) var(--ease-out)" }}>
@@ -120,7 +125,7 @@ function Sidebar({ onPalette }: { onPalette: () => void }) {
 
 /* Full-width nav column. The collapse chevron is the shared IconButton. */
 function ExpandedNav({ onCollapse, onPalette }: { onCollapse: () => void; onPalette: () => void }) {
-  const { view, setView, role, chrome } = useApp();
+  const { view, setView, role, chrome, me } = useApp();
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", padding: "10px 8px 8px", gap: 4 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
@@ -135,7 +140,7 @@ function ExpandedNav({ onCollapse, onPalette }: { onCollapse: () => void; onPale
       )}
       <nav style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 4 }}>
         {NAV.map((grp, gi) => {
-          const items = grp.items.filter((it) => (it.roles as readonly string[]).includes(role));
+          const items = grp.items.filter((it) => navVisible(it as NavLeaf, role, me));
           if (!items.length) return null;
           return (
             <div key={gi} style={{ marginTop: grp.section ? 12 : 0 }}>
@@ -157,7 +162,7 @@ function ExpandedNav({ onCollapse, onPalette }: { onCollapse: () => void; onPale
    chevron sits at the bottom above the avatar (mirrors the design's Shell.jsx collapsed layer). */
 function CollapsedRail({ onExpand, onPalette }: { onExpand: () => void; onPalette: () => void }) {
   const { view, setView, role, chrome, me } = useApp();
-  const items = NAV.flatMap((g) => g.items as readonly NavLeaf[]).filter((it) => it.roles.includes(role));
+  const items = NAV.flatMap((g) => g.items as readonly NavLeaf[]).filter((it) => navVisible(it, role, me));
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", padding: "10px 0 8px", gap: 3 }}>
       <button onClick={onExpand} title="Expand sidebar" style={{ width: 36, height: 36, display: "grid", placeItems: "center", borderRadius: "var(--r-md)" }}>

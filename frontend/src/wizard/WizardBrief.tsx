@@ -176,8 +176,9 @@ export function WizardBrief() {
       async () => {
         const updated = await api.resolveClarify(briefId, answers);  // judges memory on the resolved spec
         setSpec(updated);
-        // seed the Use/Skip selection from the AI's verdicts (reuse → pre-selected)
-        setUsed(Object.fromEntries((updated.memory_candidates ?? []).map((c) => [memKey(c), c.used ?? false])));
+        // seed the Use/Skip selection from the AI's verdicts (reuse → pre-selected) — but a re-entry
+        // (back → weigh again) keeps the human's own toggles for candidates still present
+        setUsed((prev) => Object.fromEntries((updated.memory_candidates ?? []).map((c) => [memKey(c), prev[memKey(c)] ?? c.used ?? false])));
         setCards([]); setSelectedCardName(null); setChosenStack(null);  // cards (re)generate after the human grounds
         commitRef.current = () => setStep(2);
       },

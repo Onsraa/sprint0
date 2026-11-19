@@ -459,14 +459,14 @@ CANNED_CV = ParsedCV(
 # The 5 agents reachable from the public UI that were hitting Vertex live (QA gate, reschedule
 # strategist, Decision Card, conflict pass, user-solution regen). Themed to the FinTrack narrative.
 CANNED_QA_REPORT = QAReport.model_validate(
-    {
+    {   # demo feed for the HINTS pass only — risk NOTES, never verdicts (those are the tester's)
         "items": [
-            {"issue_id": "E1-1", "title": "JWT login + refresh endpoint", "verdict": "needs_human",
+            {"issue_id": "E1-1", "title": "JWT login + refresh endpoint",
              "note": "Auth on payment data — a human should eyeball token rotation on staging.",
              "runner": "sprint0-se", "disc": "backend"},
-            {"issue_id": "E3-1", "title": "Monthly spend chart", "verdict": "pass",
+            {"issue_id": "E3-1", "title": "Monthly spend chart",
              "note": "Straightforward dataviz, low risk.", "runner": "sprint0-fe", "disc": "frontend"},
-            {"issue_id": "E3-2", "title": "CI pipeline + Docker build", "verdict": "pass",
+            {"issue_id": "E3-2", "title": "CI pipeline + Docker build",
              "note": "Standard GitLab CI: lint, test, build image.", "runner": "sprint0-sse", "disc": "devops"},
         ],
         "reopened": [],

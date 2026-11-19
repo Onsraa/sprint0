@@ -697,9 +697,17 @@ export const api = {
     return jget(`/api/reuse-pack?projects=${encodeURIComponent(projects.join(","))}${d}`);
   },
 
-  /* QA */
-  qaRun(projectId: number): Promise<QAReport> {
-    return jpost(`/api/projects/${projectId}/qa/run`);
+  /* QA — deterministic checklist (instant), human verdicts, async AI hints */
+  qaChecklist(projectId: number): Promise<QAReport> {
+    return jget(`/api/projects/${projectId}/qa/checklist`);
+  },
+  // async AI risk hints (notes only — never verdicts); fired after the rows render
+  qaHints(projectId: number): Promise<{ project_id: number; hints: Record<string, string> }> {
+    return jpost(`/api/projects/${projectId}/qa/hints`);
+  },
+  // the human Pass — server 409s unless the row is ready (task done/merged, not bounced)
+  qaVerdict(projectId: number, issueId: string): Promise<{ project_id: number; issue_id: string; verdict: "pass"; passed: number; total: number; all_passed: boolean }> {
+    return jpost(`/api/projects/${projectId}/qa/verdict`, { issue_id: issueId, verdict: "pass" });
   },
   // cross-project Tester queue: every project with QA work outstanding (mirrors /api/relays)
   qaQueue(): Promise<QAQueue> {

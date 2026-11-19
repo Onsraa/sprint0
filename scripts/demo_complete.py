@@ -80,24 +80,50 @@ def _tasks_for(project_id: int, only: set[str] | None) -> list[dict]:
 
 
 def _complete(t: dict, stack: str, gemini: bool) -> None:
+    import time
+
     tid, title = t["id"], t.get("title", t["id"])
     assignee = t.get("assignee") or "sprint0-bot"
     disc = t.get("discipline") or "backend"
     pid = t["project_id"]
     branch = t.get("branch") or handoff.branch_for(title, tid)
-    files = (t.get("context_scope") or {}).get("files") or []
+    files = [f for f in ((t.get("context_scope") or {}).get("files") or [])
+             if f != ".gitlab-ci.yml"]  # main owns the managed CI file — touching it on a branch = guaranteed conflict
     target = files[0] if files else f"src/{handoff._slug(title) or tid.lower()}.ts"
     print(f"  [{tid}] {title}  →  {branch}  (@{assignee})")
 
-    # 1) a real change on the branch, authored as the assignee
-    gl.commit_files(pid, [{"path": target, "content": _filler(target, title, t.get("does", ""), stack, gemini),
-                           "action": "update"}],
-                    branch=branch, message=f"feat: {title}",
-                    author_email=f"{assignee}@sprint0.demo", author_name=assignee)
+    # 0) the focus branch is created best-effort at dispatch — a GitLab flake there means it's missing
+    try:
+        gl.create_branch(pid, branch, ref="main")
+        print(f"      (created missing branch {branch})")
+    except Exception:
+        pass  # already exists — the normal case
 
-    # 2) MR → main with the runner label, then merge
+    # 1) a real change on the branch, authored as the assignee ("update" 400s when the stub never landed → "create")
+    body = _filler(target, title, t.get("does", ""), stack, gemini)
+    for action in ("update", "create"):
+        try:
+            gl.commit_files(pid, [{"path": target, "content": body, "action": action}],
+                            branch=branch, message=f"feat: {title}",
+                            author_email=f"{assignee}@sprint0.demo", author_name=assignee)
+            break
+        except Exception:
+            if action == "create":
+                raise
+
+    # 2) MR → main with the runner label, then merge (GitLab computes mergeability async → retry the 405s)
     mr = gl.create_merge_request(pid, branch, "main", title=title, labels=[f"runner:{assignee}"])
-    gl.merge_merge_request(pid, mr["iid"])
+    last: Exception | None = None
+    for _ in range(6):
+        try:
+            gl.merge_merge_request(pid, mr["iid"])
+            last = None
+            break
+        except Exception as e:
+            last = e
+            time.sleep(5)
+    if last is not None:
+        raise last
     print(f"      merged !{mr['iid']}")
 
     # 3) nudge the gateway: passport + attribution + verify beat, then flip the task to done

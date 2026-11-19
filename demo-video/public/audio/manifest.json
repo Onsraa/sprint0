@@ -1,0 +1,70 @@
+{
+  "voice": "Zephyr",
+  "model": "gemini-2.5-flash-preview-tts",
+  "scenes": [
+    {
+      "id": "a0",
+      "title": "Under the hood",
+      "tempo": "dynamic",
+      "targetSec": 3,
+      "vo": "Here's how it works under the hood.",
+      "file": "audio/a0.wav",
+      "durationSec": 4.331
+    },
+    {
+      "id": "a1",
+      "title": "REASON / EXECUTE",
+      "tempo": "fast",
+      "targetSec": 13,
+      "vo": "One brief, two brains. REASON — Gemini on Vertex AI, through Google Cloud Agent Builder — emits a schema-validated plan. No tool loop, deterministic. EXECUTE — a FastAPI gateway — drives real GitLab calls.",
+      "file": "audio/a1.wav",
+      "durationSec": 12.451
+    },
+    {
+      "id": "a2",
+      "title": "MongoDB MCP — the memory",
+      "tempo": "centerpiece",
+      "targetSec": 20,
+      "vo": "Memory is MongoDB — spoken to through the official MongoDB MCP server. Every plan grounds live: rank-fusion merges vector search over Voyage embeddings with full-text search. Code retrieval goes further: each gate searches its own lane, matches on AI-written file summaries, and expands one hop along the import graph — a match brings its whole dependency cluster.",
+      "file": "audio/a2.wav",
+      "durationSec": 20.531
+    },
+    {
+      "id": "a3",
+      "title": "Ratify",
+      "tempo": "fast",
+      "targetSec": 13,
+      "vo": "The plan enters a relay. Each gate offers three contracts: reuse — pulled straight from memory — fresh, or write your own. A human ratifies every gate. One gate, one owner.",
+      "file": "audio/a3.wav",
+      "durationSec": 10.411
+    },
+    {
+      "id": "a4",
+      "title": "Verify",
+      "tempo": "fast",
+      "targetSec": 12,
+      "vo": "Ratification dispatches real GitLab work. Merges flow back: each one flips the tester's acceptance checklist from awaiting to ready — and interface contracts are verified against what actually shipped.",
+      "file": "audio/a4.wav",
+      "durationSec": 9.891
+    },
+    {
+      "id": "a5",
+      "title": "Compound",
+      "tempo": "build",
+      "targetSec": 13,
+      "vo": "Then it compounds. Shipped projects and ratified decisions write back through the same MCP into memory. Every merge bumps the owner's passport — per-skill trust. The next brief starts smarter.",
+      "file": "audio/a5.wav",
+      "durationSec": 9.891
+    },
+    {
+      "id": "a6",
+      "title": "Close",
+      "tempo": "calm",
+      "targetSec": 6,
+      "vo": "Memory, ratify, verify, compound. One loop — on Gemini, Google Cloud, and the MongoDB MCP.",
+      "file": "audio/a6.wav",
+      "durationSec": 6.651
+    }
+  ],
+  "totalSec": 74.2
+}

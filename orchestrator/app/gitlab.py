@@ -211,19 +211,44 @@ def merge_merge_request(project_id: int, mr_iid: int, retries: int = 8) -> dict:
         return r.json()
 
 
+def list_issue_titles(project_id: int) -> dict[str, dict]:
+    """title → {iid, title, web_url} for every issue on the project (open + closed), paginated. Lets a
+    retried scaffold skip issues it already created instead of duplicating them."""
+    out: dict[str, dict] = {}
+    with _client() as c:
+        for page in range(1, TREE_PAGE_CAP + 1):
+            r = c.get(f"/projects/{project_id}/issues",
+                      params={"state": "all", "per_page": TREE_PER_PAGE, "page": page})
+            r.raise_for_status()
+            batch = r.json()
+            for j in batch:
+                out[j["title"]] = {"iid": j["iid"], "title": j["title"], "web_url": j["web_url"]}
+            if len(batch) < TREE_PER_PAGE:
+                break
+    return out
+
+
 def create_issues(project_id: int, issues: list[dict]) -> list[dict]:
     """BATCHED issue creation — one call from the caller's view; loop is here.
-    Each issue: {title, description, labels[]}."""
+    Each issue: {title, description, labels[]}. IDEMPOTENT: an issue whose title already exists is reused
+    (its iid returned), so a retried dispatch never double-creates the relay's tickets."""
     out = []
+    try:
+        existing = list_issue_titles(project_id)  # skip dupes on a retry (best-effort; empty → create all)
+    except Exception:
+        existing = {}
     with _client() as c:
         for iss in issues:
+            if iss["title"] in existing:  # already created on a prior attempt → reuse its iid, don't duplicate
+                out.append(existing[iss["title"]])
+                continue
             body = {"title": iss["title"], "description": iss["description"], "labels": ",".join(iss.get("labels", []))}
             if iss.get("assignee_ids"):
                 body["assignee_ids"] = iss["assignee_ids"]  # native GitLab assignees (real avatars)
             r = c.post(f"/projects/{project_id}/issues", json=body)
             r.raise_for_status()
             j = r.json()
-            out.append({"iid": j["iid"], "web_url": j["web_url"]})
+            out.append({"iid": j["iid"], "title": j["title"], "web_url": j["web_url"]})
     return out
 
 

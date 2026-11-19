@@ -579,9 +579,9 @@ class Agreement(BaseModel):
 # THE notification vocabulary — single source for the model AND main.notify()'s signature (they had
 # drifted: notify() was missing dispatch_failed). Frontend mirror: src/features/notify/notifMeta.ts.
 NotificationType = Literal["ratify_needed", "access_requested", "access_granted", "qa_failed",
-                           "project_created", "relay_created",
+                           "project_created", "relay_created", "acceptance_complete",
                            "project_shipped", "reschedule_proposed", "reschedule_resolved", "task_assigned",
-                           "task_completed", "drift_flagged", "agreement_proposed", "dispatch_failed"]
+                           "task_completed", "task_review", "drift_flagged", "agreement_proposed", "dispatch_failed"]
 
 
 class Notification(BaseModel):
@@ -702,14 +702,19 @@ class Task(BaseModel):
     updated_at: str
 
 
-# ── QA: agent-prefilled acceptance checklist ──
+# ── QA: deterministic acceptance checklist — states from the Task store, verdicts from the HUMAN tester,
+#    the AI contributes risk NOTES only (it proposes, the tester ratifies — same spine as the gates) ──
 class QAItemResult(BaseModel):
     issue_id: str
     title: str
-    verdict: Literal["pass", "fail", "needs_human"]
-    note: str = ""
+    state: Literal["awaiting", "ready", "bounced"] = "awaiting"  # task-join truth: not merged / merged / in re-QA
+    criterion: str = ""             # the Tester's authored pass-condition (handoff.acceptance_line)
+    verdict: Optional[Literal["pass", "fail"]] = None  # the HUMAN's call — never AI; persisted in VERDICTS
+    note: str = ""                  # AI risk note (the hints agent writes here)
+    hint: Optional[str] = None      # async AI hint overlaid on a checklist row (frontend fills it in)
     runner: Optional[str] = None    # the responsible dev (issue.assignee) — reject reroutes here
     disc: Optional[Discipline] = None  # the gate this item belongs to — drives the QA route pills
+    iid: Optional[int] = None       # the REAL GitLab issue iid (server-overlaid from the Task store) — reject needs it
 
     @field_validator("note")
     @classmethod
@@ -738,9 +743,10 @@ class QAQueueEntry(BaseModel):
     project_id: int
     project_name: str
     plan_id: str
-    qa_status: str                                          # the qa gate's status
+    qa_status: str                                          # the qa gate's status ("passed" when every check passed)
     baton: bool = False                                     # qa holds the baton (it's this gate's turn)
     issue_count: int = 0                                    # issues in the accept stage
+    passed_count: int = 0                                   # issues the tester has PASSED (human verdicts)
     awaiting_reqa: list[int] = Field(default_factory=list)  # reopened iids awaiting re-QA
 
 

@@ -10,15 +10,10 @@ import { Icon } from "../lib/icon";
 import { Button, IconButton, Badge, DiscDot, discLabel, CapTag } from "../components/ui";
 import { ViewChrome } from "../components/ViewChrome";
 import type { Decision } from "../lib/schemas";
+import { GRADE_META } from "../lib/grade";
 
-/* §12 graded references — panel-local (mockup data2.jsx GRADE_ORDER / GRADE_META). */
+/* §12 graded references — ladder order panel-local; metadata shared (lib/grade). */
 const GRADE_ORDER = ["proposed", "shipped", "prod_survived", "retro_validated"];
-const GRADE_META: Record<string, { label: string; step: number; proven: boolean; hint: string }> = {
-  proposed: { label: "Proposed", step: 1, proven: false, hint: "not yet proven" },
-  shipped: { label: "Shipped", step: 2, proven: false, hint: "merged, not battle-tested" },
-  prod_survived: { label: "Prod-survived", step: 3, proven: true, hint: "survived in production" },
-  retro_validated: { label: "Retro-validated", step: 4, proven: true, hint: "confirmed in retro" },
-};
 /* panel-local: compact grade chip. */
 function GradeChip({ grade, showLabel = true }: { grade?: string; showLabel?: boolean }) {
   const m = grade ? GRADE_META[grade] : undefined;

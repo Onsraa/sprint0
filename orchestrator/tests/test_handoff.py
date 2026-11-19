@@ -117,7 +117,8 @@ def test_focus_script_inlines_payload_and_is_swap_safe():
     assert script.startswith("#!/usr/bin/env bash")
     blob = script.split('base64.b64decode("', 1)[1].split('")', 1)[0]
     assert json.loads(base64.b64decode(blob)) == gen           # payload round-trips out of the script
-    assert ".git/info/exclude" in script                       # keeps the materialized files untracked
+    assert 'git rev-parse --git-path info/exclude' in script   # keeps the materialized files untracked (worktree-safe)
+    assert "[ -e .git ]" in script and "[ -d .git ]" not in script   # a linked worktree's .git is a FILE
     assert ".sprint0/.materialized" in script and "ls-files" in script   # clean prior set + never clobber a tracked file
 
 
@@ -127,6 +128,7 @@ def test_issue_body_carries_the_gateway_bootstrap_command():
     from app import execute
     body = execute._issue_body(_iss("B1", "code", ["api/auth.py"]))
     assert "git worktree add ../b1 feat/b1" in body and "curl -fsS" in body and "/api/focus/B1?t=" in body
+    assert "origin/feat/b1" in body                      # fresh-clone fallback pinned in the issue body too
     assert "code ." not in body                          # editor auto-open removed
 
 

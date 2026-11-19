@@ -8,8 +8,10 @@ import { api } from "../../lib/api";
 import { qk } from "../../lib/query";
 import type { ProfilesResponse } from "../../lib/schemas";
 
-export function useProfiles() {
-  return useQuery({ queryKey: qk.profiles(), queryFn: () => api.profiles() });
+export function useProfiles(enabled = true) {
+  // The capability taxonomy only renders in the manager-only Profiles view; gate the fetch so it
+  // isn't issued for every persona on every screen (it's a live Mongo read).
+  return useQuery({ queryKey: qk.profiles(), queryFn: () => api.profiles(), enabled });
 }
 
 /** Manager confirm gate (decision A): promote a discovered profile proposed → confirmed. */

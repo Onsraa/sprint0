@@ -8,7 +8,8 @@
    CoverageStrip, GateCard, FlowConnector, IntegrationStrip) are ported verbatim.
    TierBadge + GATE_META are imported from the sibling RatifyPanel.tsx. */
 import { useState, useEffect, Fragment } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Availability, Avatar, Badge, DiscDot, DISC, discLabel, TrustDot, Button } from "../components/ui";
 import { isDone } from "../lib/gate";
 import { Icon } from "../lib/icon";
@@ -16,6 +17,8 @@ import { ViewChrome } from "../components/ViewChrome";
 import { useApp } from "../app/useApp";
 import { useUI } from "../lib/store";
 import { api } from "../lib/api";
+import { qk } from "../lib/query";
+import { useRelay } from "../features/relay/useRelay";
 import { RatifyPanel, TierBadge, gateMeta } from "./RatifyPanel";
 import { AgreementCard } from "./AgreementCard";
 
@@ -93,7 +96,7 @@ export function RelayBoard() {
                 </div>
               </div>
 
-              {allClear && <DispatchBanner gates={gates} />}
+              {allClear && <DispatchBanner gates={gates} planId={planId} me={me} />}
 
               <CoverageStrip />
 
@@ -232,24 +235,46 @@ function InterfaceContracts({ planId, me }: { planId: string | null; me: any }) 
 
 /* All gates cleared → the manager can scaffold the project. Dispatch pops the relay off the board
    (the useApp planId guard handles the now-stale pin) and the new tasks land in the work store. */
-function DispatchBanner({ gates }: { gates: any[] }) {
-  // The relay just CLOSED — every gate ratified. Scaffolding to GitLab fires AUTOMATICALLY (no manual dispatch).
+function DispatchBanner({ gates, planId, me }: { gates: any[]; planId: string | null; me: any }) {
+  const qc = useQueryClient();
+  const { data: relayState } = useRelay(planId);
+  const dispatchFailed = (relayState as any)?.dispatch === "failed";
+
+  const retryDispatch = useMutation({
+    mutationFn: () => api.dispatch(planId as string),
+    onSuccess: () => {
+      toast.success("Retrying dispatch...");
+      qc.invalidateQueries({ queryKey: qk.relay(planId as string) });
+      qc.invalidateQueries({ queryKey: qk.allRelays() });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Dispatch retry failed"),
+  });
+
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "15px 16px", marginBottom: 18,
-      borderRadius: "var(--r-lg)", border: "0.5px solid var(--text-primary)", background: "var(--bg-secondary)", boxShadow: "var(--shadow-1)" }}>
+      borderRadius: "var(--r-lg)", border: dispatchFailed ? "0.5px solid var(--red)" : "0.5px solid var(--text-primary)", background: "var(--bg-secondary)", boxShadow: "var(--shadow-1)" }}>
       <span style={{ width: 34, height: 34, borderRadius: "var(--r-md)", flexShrink: 0, display: "grid", placeItems: "center",
-        background: "var(--ink-fill)", color: "#fff" }}>
-        <Icon name="ratify" size={18} />
+        background: dispatchFailed ? "var(--red)" : "var(--ink-fill)", color: "#fff" }}>
+        <Icon name={dispatchFailed ? "warn" : "ratify"} size={18} />
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.2px" }}>Relay cleared — scaffolding to GitLab</span>
-          <Badge tone="green"><Icon name="check" size={10} />{gates.length}/{gates.length} ratified</Badge>
+          <span style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.2px", color: dispatchFailed ? "var(--red)" : "inherit" }}>
+            {dispatchFailed ? "Dispatch failed — nothing shipped" : "Relay cleared — scaffolding to GitLab"}
+          </span>
+          {!dispatchFailed && <Badge tone="green"><Icon name="check" size={10} />{gates.length}/{gates.length} ratified</Badge>}
         </div>
         <div className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.5 }}>
-          every lead signed their gate — sprint0 is scaffolding the issues, branches + tasks now.
+          {dispatchFailed 
+            ? "Your ratifications stand. A manager must retry the dispatch."
+            : "every lead signed their gate — sprint0 is scaffolding the issues, branches + tasks now."}
         </div>
       </div>
+      {dispatchFailed && me?.is_manager && (
+        <Button variant="primary" size="md" onClick={() => retryDispatch.mutate()} disabled={retryDispatch.isPending}>
+          {retryDispatch.isPending ? "Retrying…" : "Retry dispatch"}
+        </Button>
+      )}
     </div>
   );
 }

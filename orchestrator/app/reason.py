@@ -18,7 +18,7 @@ from app.agent import (
     generate_solutions,
 )
 from app.assign import assign_developers
-from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, MemoryCandidate, PlanJSON, QAReport, RegeneratedSlice, SolutionSet, TechStack
+from app.contracts import ArchitectureOptions, CapabilityProfile, ClarifiedSpec, Constraints, ContractProposalSet, MemoryCandidate, PlanJSON, QAReport, RegeneratedSlice, ReuseItem, SolutionSet, TechStack
 from app.rag import (
     DEV_COLL, PP_COLL, PP_INDEX, PP_TEXT_INDEX, MongoMCP,
     all_profiles, code_search_expanded, cosine_score, decisions_for_project, embed_document, embed_queries, embed_query,
@@ -132,8 +132,26 @@ def select_grounded(past: list[dict], code: list[dict], grounded: list[str] | No
         return past, code
     sel = set(grounded)
     kept_past = [p for p in past if p.get("name") in sel]
-    kept_code = [c for c in code if c.get("file_path") in sel or f"{c.get('project')} · {c.get('file_path')}" in sel]
+    kept_code = [c for c in code if c.get("file_path") in sel or f"{c.get('project')} · {c.get('file_path')}" in sel
+                 or c.get("project") in sel]  # candidate refs are PROJECT-level — keeping a project keeps its chunks
     return kept_past, kept_code
+
+
+def _snap_to_name(raw: str, names: list[str]) -> str | None:
+    """Snap a model-authored project ref onto the retrieved project's EXACT stored name — the ref is the
+    `select_grounded` key, so it must round-trip byte-identical ("TrailLog" → "traillog-2025"). Exact
+    normalized match first, then substring either way; None = no retrieved name fits (leave the ref alone)."""
+    k = _norm_tag(raw or "")
+    if not k:
+        return None
+    for n in names:
+        if k == _norm_tag(n):
+            return n
+    for n in names:
+        nk = _norm_tag(n)
+        if k in nk or nk in k:
+            return n
+    return None
 
 
 # The arch + plan phases retrieve PastProjects with the SAME query (the brief text) — cache the arch
@@ -157,13 +175,23 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
     async with MongoMCP() as m:
         qv = embed_query(brief_text)
         past = await m.hybrid_search(PP_COLL, PP_INDEX, PP_TEXT_INDEX, "brief_embedding", qv, brief_text, k=3, projection=_PP_PROJECTION)
-        _cache_grounding(brief_text, past)  # the plan phase reuses this exact retrieval (same query)
         roster = await m.find(DEV_COLL, projection=_DEV_PROJECTION, limit=20)
         try:  # ground the per-card `reuse` block in real reusable files (code-RAG + 1-hop import cluster)
             code = await code_search_expanded(m, qv, k=5)
         except Exception:
             code = []
+    from app import trace
+    raw_past, raw_code = past, code
     past, code = select_grounded(past, code, grounded)  # the human ratified WHICH candidates to ground on (Use/Skip)
+    if grounded and not past and not code:
+        # the human DID select memory but no ref matched the retrieval (model-authored ref drift) —
+        # grounding on nothing would silently force a fresh build against their explicit choice.
+        trace.step("server", "action", "Selection matched no retrieved memory", "grounding on all retrieved candidates instead")
+        past, code = raw_past, raw_code
+    # Cache the RATIFIED grounding (post-Use/Skip) — the plan phase reuses it, so a project the human
+    # SKIPPED must never ground the plan (it used to: the raw retrieval was cached pre-filter, and the
+    # plan's trace/grounded_on showed projects the human explicitly rejected).
+    _cache_grounding(brief_text, past)
     has_memory = bool(past or code)  # the human SELECTED memory to reuse → at least one card must honor it
     if has_memory:
         memory_note = ("the human already SELECTED this memory as a fit — treat it as relevant, do not re-judge it away")
@@ -186,9 +214,27 @@ async def propose_architectures(brief_text: str, constraints: Constraints | None
         f"DEV ROSTER:\n{_format_roster(roster)}\n\n"
         f"Propose EXACTLY 3 distinct architecture cards + your own ai_pick:\n{cards_rule}"
     )
-    from app import trace
     trace.step("gemini", "action", "Design architecture options", "ground the cards on the chosen memory, propose 2-3 stacks")
     opts = await generate_architectures(prompt)
+    if has_memory and not any(card.reuse for card in opts.cards):
+        # the model ignored the reuse rule (≥1 card MUST cite the selected memory) — retry once with the
+        # violation called out, then guarantee the floor deterministically: the human's selection must
+        # always surface on a card, never silently vanish.
+        trace.step("gemini", "action", "Reuse rule violated — regenerating", "no card cited the selected memory")
+        opts = await generate_architectures(
+            prompt + "\n\nYour previous attempt left every `reuse` block empty. RULE: at least one card "
+                     "MUST cite the selected memory in its `reuse` block (from_project + feature)."
+        )
+        if not any(card.reuse for card in opts.cards) and opts.cards:
+            proj = (past[0].get("name", "") if past else code[0].get("project", "")) or "agency memory"
+            feat = _sanitize(((past[0].get("outcome_notes") if past else None)
+                              or (code[0].get("summary") if code else None) or "proven implementation"))[:60]
+            card = opts.cards[1] if len(opts.cards) > 1 else opts.cards[-1]  # never card 1, the empty-reuse baseline
+            card.reuse.append(ReuseItem(from_project=proj, feature=feat, action="adapt",
+                                        reason="selected by the manager in the memory panel"))
+            if proj not in card.grounded_on:
+                card.grounded_on.append(proj)
+            trace.step("server", "action", "Enforce reuse grounding", f"injected {proj} into '{card.name}'")
     for card in opts.cards:  # text hygiene — no semicolons / em-dashes in the card prose
         card.summary, card.rationale = _sanitize(card.summary), _sanitize(card.rationale)
     trace.step("gemini", "result", f"{len(opts.cards)} stack card(s) · AI pick: {opts.ai_pick_name}")
@@ -258,8 +304,12 @@ async def judge_memory(spec: ClarifiedSpec, constraints: Constraints | None = No
     )
     trace.step("gemini", "action", "Judge reuse fit", "grade each candidate reuse / maybe / skip on the resolved spec")
     judgment = await generate_memory_judgment(prompt)
+    names = [p.get("name", "") for p in past if p.get("name")]
     for c in judgment.candidates:  # server default — strong-fit capabilities pre-selected; the human toggles in the UI
         c.used = c.fit == "strong"
+        snapped = _snap_to_name(c.ref, names) or _snap_to_name(c.project, names)
+        if snapped:  # ref is the select_grounded key — snap model drift back onto the exact stored name
+            c.ref = c.project = snapped
         if not c.year:
             c.year = _year_of(c.ref) or _year_of(c.project)  # year lives in the project name (traillog-2025)
         c.capability, c.what, c.reason = _sanitize(c.capability), _sanitize(c.what), _sanitize(c.reason)
@@ -586,8 +636,9 @@ def _build_delta_prompt(
 
 
 async def qa_review(plan: PlanJSON) -> QAReport:
-    """QA-agent first pass: prefill the acceptance checklist (pass / fail / needs-human) so the
-    human QA tester only adjudicates the flagged + risky items."""
+    """AI risk-hint pass: per-issue NOTES the Tester panel overlays on its checklist rows ("check
+    token rotation by hand"). Verdicts are HUMAN-only — recorded against real merge state by the
+    tester; this agent never emits them."""
     lines = [
         f"- id={i.id} | {i.title} | type={i.type} risk={i.risk} | {i.description[:160]}"
         for e in plan.epics for i in e.issues

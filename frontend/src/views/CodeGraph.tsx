@@ -58,6 +58,9 @@ export function CodeGraph() {
 
           {features.map((f) => {
             const deps = depsOf(f.path);
+            // copies = other canonical nodes carrying the SAME content hash — content-addressing makes this
+            // 0 by construction; computed (not hardcoded) so the claim stays honest if dedup ever regresses.
+            const copies = features.filter((o) => o.path !== f.path && o.content_hash && o.content_hash === f.content_hash).length;
             return (
               <div key={f.path} style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", padding: 18, background: "var(--bg-elevated)", marginBottom: 18 }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -68,7 +71,7 @@ export function CodeGraph() {
                   </div>
                   <div style={{ flexShrink: 0, textAlign: "center", border: "0.5px solid var(--border)", borderRadius: "var(--r-md)", padding: "8px 14px", background: "var(--bg-secondary)" }}>
                     <div className="mono" style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-1px" }}>{deps.length}</div>
-                    <div style={{ fontSize: 10.5, color: "var(--text-tertiary)", marginTop: 2 }}>reuse{deps.length === 1 ? "" : "s"} · 0 copies</div>
+                    <div style={{ fontSize: 10.5, color: "var(--text-tertiary)", marginTop: 2 }}>reuse{deps.length === 1 ? "" : "s"} · {copies} cop{copies === 1 ? "y" : "ies"}</div>
                   </div>
                 </div>
 

@@ -73,7 +73,9 @@ def grow_demo_member(gitlab_username: str, task_type: str) -> dict:
     nxt = {"low": "medium", "medium": "high", "high": "high"}
     before = m.trust.get(disc, m.trust_level)
     m.trust[disc] = nxt.get(before, "medium")
-    m.history.append({"task_type": task_type, "score": 0.85, "via": "sprint0-merge"})
+    from datetime import datetime, timezone
+    m.history.append({"task_type": task_type, "score": 0.85, "via": "sprint0-merge",
+                      "project_id": None, "at": datetime.now(timezone.utc).isoformat()})
     rank = {"low": 0, "medium": 1, "high": 2}
     m.trust_level = max(m.trust.values(), key=lambda t: rank.get(t, 0), default=m.trust_level)
     out = m.model_dump()

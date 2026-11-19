@@ -25,7 +25,9 @@ export function GateContract() {
   const shippedRelay = useUI((s) => s.shippedRelay);
   const setShippedRelay = useUI((s) => s.setShippedRelay);
   // a live gate is in play → drop any stale "just shipped" latch so the gate shows, not the done-state.
-  useEffect(() => { if (shippedRelay && (gates as any[]).length) setShippedRelay(null); }, [gates, shippedRelay, setShippedRelay]);
+  // Clear the shipped latch only when a DIFFERENT relay's gates render — at ship time the OLD gates are
+  // still in the cache for a tick, and clearing on "any gates" killed the done-state before it ever showed.
+  useEffect(() => { if (shippedRelay && (gates as any[]).length && planId !== shippedRelay.planId) setShippedRelay(null); }, [gates, shippedRelay, setShippedRelay, planId]);
   // the disciplines that actually have a gate in this relay, in relay order
   const present = useMemo(() => (gates as any[]).map((g) => g.discipline), [gates]);
   // Scope the lanes to the viewer: each gate belongs to ONE user (its owner) — the viewer sees only the

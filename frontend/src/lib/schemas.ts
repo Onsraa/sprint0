@@ -262,11 +262,17 @@ export const DispatchPreview = z.object({
 });
 export type DispatchPreview = z.infer<typeof DispatchPreview>;
 
+export const QAVerdict = z.enum(["pass", "fail"]);   // HUMAN verdicts only — the AI never judges
 export const QAItemResult = z.object({
   issue_id: z.string(), title: z.string(),
-  verdict: z.enum(["pass", "fail", "needs_human"]), note: z.string(),
+  state: z.enum(["awaiting", "ready", "bounced"]),    // deterministic task-join truth
+  criterion: z.string(),                              // the Tester's authored pass-condition
+  verdict: QAVerdict.nullish(),                       // the tester's call — null until made
+  note: z.string(),
+  hint: z.string().nullish(),                         // async AI risk hint (fills in post-render)
   runner: z.string().nullish(),   // responsible dev (issue.assignee) — reject reroutes here
   disc: z.string().nullish(),     // gate this item belongs to — drives the QA route pills
+  iid: z.number().nullish(),      // REAL GitLab issue iid (server-overlaid) — live issue_ids aren't numeric
 });
 export const TesterPick = z.object({
   username: z.string(), name: z.string(), discipline: z.string().nullish(),
@@ -281,7 +287,7 @@ export type QAReport = z.infer<typeof QAReport>;
 export const QAQueueEntry = z.object({   // one project/relay with QA work outstanding (cross-project Tester queue)
   project_id: z.number(), project_name: z.string(), plan_id: z.string(),
   qa_status: z.string(), baton: z.boolean(),
-  issue_count: z.number(), awaiting_reqa: z.array(z.number()),
+  issue_count: z.number(), passed_count: z.number(), awaiting_reqa: z.array(z.number()),
 });
 export type QAQueueEntry = z.infer<typeof QAQueueEntry>;
 export const QAQueue = z.object({ count: z.number(), queue: z.array(QAQueueEntry) });
@@ -466,7 +472,7 @@ export const InboxResponse = z.object({
 });
 export type InboxResponse = z.infer<typeof InboxResponse>;
 
-export const QAVerdict = z.enum(["pass", "fail", "needs_human"]);
+// QAVerdict moved up beside QAItemResult (zod consts are declaration-ordered)
 
 /* ── remaining type exports (so api.ts re-exports every wire type — zero panel churn) ── */
 export type TimeToMarket = z.infer<typeof TimeToMarket>;

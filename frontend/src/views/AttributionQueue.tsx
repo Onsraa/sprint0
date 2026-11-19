@@ -12,9 +12,10 @@ import { api } from "../lib/api";
 import type { Attribution } from "../lib/api";
 
 export function AttributionQueue() {
-  const { members } = useApp();
+  const { me, members } = useApp();
   const qc = useQueryClient();
-  const { data: list = [] } = useQuery({ queryKey: ["attributions"], queryFn: () => api.attributions() });
+  // manager-only data — guard the fetch (a non-manager persona 403s, and react-query would retry it 3×)
+  const { data: list = [] } = useQuery({ queryKey: ["attributions"], queryFn: () => api.attributions(), enabled: !!me?.is_manager, retry: false });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
